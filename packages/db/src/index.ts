@@ -1,6 +1,7 @@
 export {
   CONTROL_MIGRATIONS,
   type ControlDb,
+  DEV_CONTROL_DB_URL,
   migrateControlDb,
   openControlDb,
   TENANT_MIGRATIONS,

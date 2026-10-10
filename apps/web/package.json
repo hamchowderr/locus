@@ -7,9 +7,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "db:migrate": "node ../../packages/db/scripts/migrate.ts"
   },
   "dependencies": {
+    "@locus/auth": "workspace:*",
+    "@locus/db": "workspace:*",
+    "better-auth": "1.7.7",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"

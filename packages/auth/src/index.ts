@@ -11,3 +11,4 @@ export {
   type SessionContext,
   selectClient,
 } from "./client-access.ts";
+export { consoleEmail, emailFromEnv, resendEmail } from "./email.ts";
