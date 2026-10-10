@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/allow-attach-rebilling",
       "sessionParams": [
@@ -50,6 +51,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/bulk-disable-saas",
       "sessionParams": [
@@ -75,6 +77,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/bulk-enable-saas",
       "sessionParams": [
@@ -100,6 +103,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/enable-saas-location",
       "sessionParams": [
@@ -131,6 +135,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/generate-payment-link",
       "sessionParams": [
@@ -162,6 +167,7 @@ export default {
       "scopes": [
         "saas/company.read"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/get-agency-plans",
       "sessionParams": [
@@ -186,6 +192,7 @@ export default {
       "scopes": [
         "saas/company.read"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/get-location-subscription",
       "sessionParams": [
@@ -216,6 +223,7 @@ export default {
       "scopes": [
         "saas/company.read"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/get-location-wallet-balance",
       "sessionParams": [
@@ -246,6 +254,14 @@ export default {
       "scopes": [
         "saas/company.read"
       ],
+      "queryParams": [
+        "page"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/get-saas-locations",
       "sessionParams": [
@@ -270,6 +286,7 @@ export default {
       "scopes": [
         "saas/company.read"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/get-saas-plan",
       "sessionParams": [
@@ -294,6 +311,13 @@ export default {
       "scopes": [
         "saas/company.read"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/list-agency-wallet-transactions",
       "sessionParams": [
@@ -319,6 +343,13 @@ export default {
       "scopes": [
         "saas/location.read"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/list-location-wallet-transactions",
       "sessionParams": [
@@ -344,6 +375,10 @@ export default {
       "scopes": [
         "saas/company.read"
       ],
+      "queryParams": [
+        "customerId",
+        "subscriptionId"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/locations"
     },
@@ -360,6 +395,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/pause-location",
       "sessionParams": [
@@ -391,6 +427,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/remove-attached-config",
       "sessionParams": [
@@ -422,6 +459,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/update-location-wallet-balance",
       "sessionParams": [
@@ -453,6 +491,7 @@ export default {
       "scopes": [
         "saas/company.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/saas-api/update-rebilling",
       "sessionParams": [

@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "socialplanner/watermarks.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/add-watermark-on-image",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "socialplanner/oauth.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/attach-oauth-accounts",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "socialplanner/post.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/bulk-delete-social-planner-posts",
       "sessionParams": [
@@ -94,6 +97,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/clone-queue-item",
       "sessionParams": [
@@ -119,6 +123,7 @@ export default {
       "scopes": [
         "socialplanner/comments.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/create-comment",
       "sessionParams": [
@@ -144,6 +149,7 @@ export default {
       "scopes": [
         "socialplanner/comments.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/create-like",
       "sessionParams": [
@@ -168,6 +174,7 @@ export default {
       "scopes": [
         "socialplanner/post.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/create-post",
       "sessionParams": [
@@ -193,6 +200,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/create-queue",
       "sessionParams": [
@@ -218,6 +226,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/create-queue-item",
       "sessionParams": [
@@ -243,6 +252,7 @@ export default {
       "scopes": [
         "socialplanner/watermarks.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/create-watermark",
       "sessionParams": [
@@ -268,6 +278,9 @@ export default {
       "scopes": [
         "socialplanner/account.write"
       ],
+      "queryParams": [
+        "userId"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-account",
       "sessionParams": [
@@ -292,6 +305,7 @@ export default {
       "scopes": [
         "socialplanner/csv.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-csv",
       "sessionParams": [
@@ -316,6 +330,7 @@ export default {
       "scopes": [
         "socialplanner/csv.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-csv-post",
       "sessionParams": [
@@ -340,6 +355,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-current-active-post-and-schedule-next",
       "sessionParams": [
@@ -364,6 +380,7 @@ export default {
       "scopes": [
         "socialplanner/comments.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-like",
       "sessionParams": [
@@ -388,6 +405,7 @@ export default {
       "scopes": [
         "socialplanner/post.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-post",
       "sessionParams": [
@@ -411,6 +429,9 @@ export default {
       ],
       "scopes": [
         "socialplanner/category.write"
+      ],
+      "queryParams": [
+        "sessionId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-queue-item",
@@ -436,6 +457,7 @@ export default {
       "scopes": [
         "socialplanner/watermarks.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/delete-watermark",
       "sessionParams": [
@@ -460,6 +482,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/discard-edit-session",
       "sessionParams": [
@@ -485,6 +508,7 @@ export default {
       "scopes": [
         "socialplanner/post.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/edit-post",
       "sessionParams": [
@@ -510,6 +534,17 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "q"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/fetch-available-categories",
       "sessionParams": [
@@ -534,6 +569,7 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/fetch-calendar-list",
       "sessionParams": [
@@ -559,6 +595,7 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/fetch-edit-session-calendar",
       "sessionParams": [
@@ -584,6 +621,7 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/fetch-queue-by-id",
       "sessionParams": [
@@ -608,6 +646,13 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/fetch-queue-items",
       "sessionParams": [
@@ -633,6 +678,13 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/fetch-queues",
       "sessionParams": [
@@ -658,6 +710,13 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/fetch-slots",
       "sessionParams": [
@@ -683,6 +742,7 @@ export default {
       "scopes": [
         "socialplanner/account.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-account",
       "sessionParams": [
@@ -707,6 +767,17 @@ export default {
       "scopes": [
         "socialplanner/watermarks.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "skip",
+        "name"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-all-watermarks",
       "sessionParams": [
@@ -731,6 +802,7 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-categories-id",
       "sessionParams": [
@@ -755,6 +827,17 @@ export default {
       "scopes": [
         "socialplanner/category.readonly"
       ],
+      "queryParams": [
+        "searchText",
+        "limit",
+        "skip"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-categories-location-id",
       "sessionParams": [
@@ -779,6 +862,13 @@ export default {
       "scopes": [
         "socialplanner/comments.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-comment-list",
       "sessionParams": [
@@ -804,6 +894,11 @@ export default {
       "scopes": [
         "socialplanner/oauth.readonly"
       ],
+      "queryParams": [
+        "searchText",
+        "pageNo",
+        "limit"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-community-users",
       "sessionParams": [
@@ -828,6 +923,16 @@ export default {
       "scopes": [
         "socialplanner/csv.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-csv-post",
       "sessionParams": [
@@ -851,6 +956,9 @@ export default {
       ],
       "scopes": [
         "socialplanner/oauth.readonly"
+      ],
+      "queryParams": [
+        "search"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-oauth-accounts",
@@ -876,6 +984,7 @@ export default {
       "scopes": [
         "socialplanner/post.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-post",
       "sessionParams": [
@@ -900,6 +1009,13 @@ export default {
       "scopes": [
         "socialplanner/post.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-posts",
       "sessionParams": [
@@ -925,6 +1041,7 @@ export default {
       "scopes": [
         "socialplanner/statistics.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-statistics",
       "sessionParams": [
@@ -950,6 +1067,7 @@ export default {
       "scopes": [
         "socialplanner/tag.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-tags-by-ids",
       "sessionParams": [
@@ -975,6 +1093,17 @@ export default {
       "scopes": [
         "socialplanner/tag.readonly"
       ],
+      "queryParams": [
+        "searchText",
+        "limit",
+        "skip"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-tags-location-id",
       "sessionParams": [
@@ -999,6 +1128,19 @@ export default {
       "scopes": [
         "socialplanner/csv.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "includeUsers",
+        "isFromTemplate",
+        "userId"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-upload-status",
       "sessionParams": [
@@ -1023,6 +1165,7 @@ export default {
       "scopes": [
         "socialplanner/watermarks.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/get-watermark",
       "sessionParams": [
@@ -1047,6 +1190,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/reset-queue-item",
       "sessionParams": [
@@ -1072,6 +1216,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/save-edit-session",
       "sessionParams": [
@@ -1097,6 +1242,7 @@ export default {
       "scopes": [
         "socialplanner/csv.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/set-accounts",
       "sessionParams": [
@@ -1122,6 +1268,7 @@ export default {
       "scopes": [
         "socialplanner/csv.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/start-csv-finalize",
       "sessionParams": [
@@ -1147,6 +1294,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/start-edit-session",
       "sessionParams": [
@@ -1172,6 +1320,16 @@ export default {
       "scopes": [
         "socialplanner/oauth.readonly"
       ],
+      "queryParams": [
+        "userId",
+        "page",
+        "reconnect"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/start-oauth",
       "sessionParams": [
@@ -1196,6 +1354,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/update-queue",
       "sessionParams": [
@@ -1221,6 +1380,7 @@ export default {
       "scopes": [
         "socialplanner/category.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/update-queue-item",
       "sessionParams": [
@@ -1246,6 +1406,7 @@ export default {
       "scopes": [
         "socialplanner/watermarks.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/update-watermark",
       "sessionParams": [
@@ -1271,6 +1432,7 @@ export default {
       "scopes": [
         "socialplanner/csv.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/upload-csv",
       "sessionParams": [
@@ -1296,6 +1458,7 @@ export default {
       "scopes": [
         "socialplanner/account.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/social-planner/validate-community-user-membership",
       "sessionParams": [

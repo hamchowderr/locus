@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/create-affiliate",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/create-commission",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/create-customer-lead",
       "sessionParams": [
@@ -94,6 +97,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/create-payout-method",
       "sessionParams": [
@@ -119,6 +123,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/delete-affiliate-media",
       "sessionParams": [
@@ -143,6 +148,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/delete-commission",
       "sessionParams": [
@@ -167,6 +173,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/delete-customer",
       "sessionParams": [
@@ -191,6 +198,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/delete-payout-method",
       "sessionParams": [
@@ -215,6 +223,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/deny-commission",
       "sessionParams": [
@@ -239,6 +248,7 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/get-affiliate",
       "sessionParams": [
@@ -263,6 +273,7 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/get-campaign",
       "sessionParams": [
@@ -287,6 +298,22 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "query",
+        "parentId",
+        "campaignId",
+        "mediaType",
+        "skip",
+        "limit",
+        "sortByType",
+        "showGlobal"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-affiliate-media",
       "sessionParams": [
@@ -311,6 +338,21 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "query",
+        "active",
+        "campaignId",
+        "skip",
+        "limit",
+        "fromDate",
+        "toDate"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-affiliates",
       "sessionParams": [
@@ -335,6 +377,19 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "query",
+        "skip",
+        "limit",
+        "onlyActiveLiveMode",
+        "trackTypes"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-campaigns",
       "sessionParams": [
@@ -359,6 +414,22 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "campaignId",
+        "affiliateId",
+        "status",
+        "query",
+        "skip",
+        "limit",
+        "fromDate",
+        "toDate"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-commissions",
       "sessionParams": [
@@ -383,6 +454,7 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-country-bank-mappings",
       "sessionParams": [
@@ -407,6 +479,20 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "query",
+        "status",
+        "campaignId",
+        "skip",
+        "limit",
+        "commissionStatus"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-customers",
       "sessionParams": [
@@ -431,6 +517,16 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-payout-methods",
       "sessionParams": [
@@ -455,6 +551,22 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "status",
+        "query",
+        "affiliateId",
+        "campaignId",
+        "skip",
+        "limit",
+        "start",
+        "end"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/list-payouts",
       "sessionParams": [
@@ -479,6 +591,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/mark-payout-method-primary",
       "sessionParams": [
@@ -503,6 +616,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/move-affiliate-campaign",
       "sessionParams": [
@@ -528,6 +642,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-affiliate",
       "sessionParams": [
@@ -553,6 +668,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-affiliate-media",
       "sessionParams": [
@@ -578,6 +694,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-affiliate-referral-id",
       "sessionParams": [
@@ -603,6 +720,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-affiliate-status",
       "sessionParams": [
@@ -628,6 +746,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-affiliate-suspension",
       "sessionParams": [
@@ -653,6 +772,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-commission-status",
       "sessionParams": [
@@ -678,6 +798,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-customer-state",
       "sessionParams": [
@@ -703,6 +824,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/update-payout-method",
       "sessionParams": [
@@ -728,6 +850,7 @@ export default {
       "scopes": [
         "affiliate-manager.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/upload-affiliate-tax-form",
       "sessionParams": [
@@ -753,6 +876,10 @@ export default {
       "scopes": [
         "affiliate-manager.readonly"
       ],
+      "queryParams": [
+        "campaignId",
+        "email"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/validate-customer-lead",
       "sessionParams": [
@@ -776,6 +903,9 @@ export default {
       ],
       "scopes": [
         "affiliate-manager.readonly"
+      ],
+      "queryParams": [
+        "referralId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/affiliate-manager/validate-referral-id",

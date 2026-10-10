@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "countdown-timer/timer.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/countdown-timer/create-countdown-timer",
       "body": "json"
@@ -36,6 +37,7 @@ export default {
       "scopes": [
         "countdown-timer/timer.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/countdown-timer/delete-countdown-timer"
     },
@@ -51,6 +53,9 @@ export default {
       ],
       "scopes": [
         "countdown-timer/timer.readonly"
+      ],
+      "queryParams": [
+        "contactId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/countdown-timer/get-countdown-timer"
@@ -68,6 +73,7 @@ export default {
       "scopes": [
         "countdown-timer/timer.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/countdown-timer/list-countdown-timer-templates"
     },
@@ -84,6 +90,20 @@ export default {
       "scopes": [
         "countdown-timer/timer.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "skip",
+        "type",
+        "status",
+        "name",
+        "isExpired"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/countdown-timer/list-countdown-timers"
     },
@@ -100,6 +120,7 @@ export default {
       "scopes": [
         "countdown-timer/timer.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/countdown-timer/update-countdown-timer",
       "body": "json"

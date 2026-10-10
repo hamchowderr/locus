@@ -19,6 +19,17 @@ export default {
       "scopes": [
         "forms.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "type"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/forms/get-forms",
       "sessionParams": [
@@ -43,6 +54,20 @@ export default {
       "scopes": [
         "forms.readonly"
       ],
+      "queryParams": [
+        "page",
+        "limit",
+        "formId",
+        "q",
+        "startAt",
+        "endAt"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page",
+        "size": "limit"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/forms/get-forms-submissions",
       "sessionParams": [
@@ -66,6 +91,9 @@ export default {
       ],
       "scopes": [
         "forms.write"
+      ],
+      "queryParams": [
+        "contactId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/forms/upload-to-custom-fields",

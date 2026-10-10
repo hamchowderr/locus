@@ -10,6 +10,16 @@ import type { GhlVersion, HttpMethod, SessionParam, TokenKind } from "@locus/ghl
 
 export type BodyType = "json" | "multipart" | "form";
 
+/**
+ * How a read operation pages, detected from its documented parameters. `query_data` walks
+ * `offset` and `page` styles to the end itself; `cursor` styles need per-operation knowledge of
+ * the response and are reported as possibly incomplete instead of being followed.
+ */
+export type Pagination =
+  | { style: "offset"; in: "query" | "body"; limit: string; offset: string }
+  | { style: "page"; in: "query" | "body"; page: string; size?: string }
+  | { style: "cursor"; in: "query" | "body"; params: string[] };
+
 export interface ParsedOperation {
   id: string;
   title: string;
@@ -20,6 +30,9 @@ export interface ParsedOperation {
   tokens: TokenKind[];
   scopes: string[];
   sessionParams: SessionParam[];
+  /** Documented query parameters the caller may set (session parameters excluded). */
+  queryParams: string[];
+  pagination?: Pagination;
   body?: BodyType;
   deprecated: boolean;
   docs: string;
@@ -143,6 +156,9 @@ function parseOperation(service: string, block: string[], warnings: string[]): P
     ...sessionParamsIn("body", bodyParams),
   ];
 
+  const sessionNames = new Set(sessionParams.map((p) => p.name));
+  const pagination = detectPagination("query", queryParams) ?? detectPagination("body", bodyParams);
+
   return {
     id: `${service}.${slug}`,
     title,
@@ -153,6 +169,8 @@ function parseOperation(service: string, block: string[], warnings: string[]): P
     tokens,
     scopes,
     sessionParams,
+    queryParams: queryParams.map((p) => p.name).filter((name) => !sessionNames.has(name)),
+    ...(pagination ? { pagination } : {}),
     ...(body ? { body } : {}),
     deprecated: /\bdeprecated\b/i.test(description),
     docs,
@@ -239,6 +257,19 @@ function sessionParamsIn(where: SessionParam["in"], params: Param[]): SessionPar
     if (value) result.push({ in: where, name: p.name, value, required: p.required });
   }
   return result;
+}
+
+function detectPagination(where: "query" | "body", params: Param[]): Pagination | undefined {
+  const has = (name: string) => params.some((p) => p.name === name);
+  const offset = ["offset", "skip"].find(has);
+  if (has("limit") && offset) return { style: "offset", in: where, limit: "limit", offset };
+  if (has("page")) {
+    const size = ["limit", "pageSize", "pageLimit"].find(has);
+    return { style: "page", in: where, page: "page", ...(size ? { size } : {}) };
+  }
+  const cursor = ["after", "cursor", "startAfter", "startAfterId"].filter(has);
+  if (cursor.length > 0) return { style: "cursor", in: where, params: cursor };
+  return undefined;
 }
 
 function takeWhile(lines: string[], from: number, keep: (line: string) => boolean): string[] {

@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/create-custom-field",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "locations/customValues.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/create-custom-value",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "locations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/create-location",
       "sessionParams": [
@@ -94,6 +97,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/create-recurring-task",
       "sessionParams": [
@@ -119,6 +123,7 @@ export default {
       "scopes": [
         "locations/tags.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/create-tag",
       "sessionParams": [
@@ -144,6 +149,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/delete-an-email-sms-template",
       "sessionParams": [
@@ -168,6 +174,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/delete-custom-field",
       "sessionParams": [
@@ -192,6 +199,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/delete-custom-value",
       "sessionParams": [
@@ -215,6 +223,9 @@ export default {
       ],
       "scopes": [
         "locations.internal-access-only"
+      ],
+      "queryParams": [
+        "deleteTwilioAccount"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/delete-location",
@@ -240,6 +251,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/delete-recurring-task",
       "sessionParams": [
@@ -264,6 +276,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/delete-tag",
       "sessionParams": [
@@ -288,6 +301,19 @@ export default {
       "scopes": [
         "locations/templates.readonly"
       ],
+      "queryParams": [
+        "deleted",
+        "skip",
+        "limit",
+        "type",
+        "originId"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-all-or-email-sms-templates",
       "sessionParams": [
@@ -312,6 +338,7 @@ export default {
       "scopes": [
         "locations.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-conversation-channel",
       "sessionParams": [
@@ -336,6 +363,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-custom-field",
       "sessionParams": [
@@ -359,6 +387,9 @@ export default {
       ],
       "scopes": [
         "locations/customFields.readonly"
+      ],
+      "queryParams": [
+        "model"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-custom-fields",
@@ -384,6 +415,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-custom-value",
       "sessionParams": [
@@ -408,6 +440,7 @@ export default {
       "scopes": [
         "locations/customValues.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-custom-values",
       "sessionParams": [
@@ -433,6 +466,7 @@ export default {
       "scopes": [
         "locations.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-location",
       "sessionParams": [
@@ -457,6 +491,7 @@ export default {
       "scopes": [
         "locations/write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-location-permissions",
       "sessionParams": [
@@ -481,6 +516,7 @@ export default {
       "scopes": [
         "locations/tags.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-location-tags",
       "sessionParams": [
@@ -505,6 +541,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-recurring-task-by-id",
       "sessionParams": [
@@ -529,6 +566,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-tag-by-id",
       "sessionParams": [
@@ -553,6 +591,7 @@ export default {
       "scopes": [
         "locations.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/get-timezones",
       "sessionParams": [
@@ -577,6 +616,7 @@ export default {
       "scopes": [
         "locations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/put-location",
       "sessionParams": [
@@ -609,6 +649,18 @@ export default {
       "scopes": [
         "locations.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "order",
+        "email"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/search-locations",
       "sessionParams": [
@@ -633,6 +685,13 @@ export default {
       "scopes": [
         "locations/tasks.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/task-search",
       "sessionParams": [
@@ -658,6 +717,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/update-custom-field",
       "sessionParams": [
@@ -683,6 +743,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/update-custom-value",
       "sessionParams": [
@@ -708,6 +769,7 @@ export default {
       "scopes": [
         "locations/write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/update-location-permissions",
       "sessionParams": [
@@ -733,6 +795,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/update-recurring-task",
       "sessionParams": [
@@ -758,6 +821,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/update-tag",
       "sessionParams": [
@@ -783,6 +847,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/locations/upload-file-custom-fields",
       "sessionParams": [

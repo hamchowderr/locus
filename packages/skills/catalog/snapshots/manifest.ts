@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/snapshots/create-snapshot-share-link",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/snapshots/get-custom-snapshots",
       "sessionParams": [
@@ -68,6 +70,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/snapshots/get-latest-snapshot-push",
       "sessionParams": [
@@ -97,6 +100,12 @@ export default {
       ],
       "scopes": [
         "none"
+      ],
+      "queryParams": [
+        "from",
+        "to",
+        "lastDoc",
+        "limit"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/snapshots/get-snapshot-push",

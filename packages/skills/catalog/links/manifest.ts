@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "links.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/links/create-link",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "links.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/links/delete-link"
     },
@@ -60,6 +62,7 @@ export default {
       "scopes": [
         "links.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/links/get-link-by-id",
       "sessionParams": [
@@ -84,6 +87,7 @@ export default {
       "scopes": [
         "links.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/links/get-links",
       "sessionParams": [
@@ -108,6 +112,17 @@ export default {
       "scopes": [
         "links.readonly"
       ],
+      "queryParams": [
+        "query",
+        "skip",
+        "limit"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/links/search-trigger-links",
       "sessionParams": [
@@ -132,6 +147,7 @@ export default {
       "scopes": [
         "links.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/links/update-link",
       "body": "json"
