@@ -6,7 +6,7 @@ import {
   selectClient,
   setMemberClients,
 } from "@locus/auth";
-import { ConnectError, syncLocations } from "@locus/connect";
+import { ConnectError, importStaffAccess, syncLocations } from "@locus/connect";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { connectDeps } from "@/lib/connect";
@@ -177,4 +177,19 @@ export async function syncClients() {
     throw error;
   }
   redirect(`/connect?synced=${result.added}&reactivated=${result.reactivated}`);
+}
+
+/** Copies each staff member's client list from GHL, once. Owners and admins only. */
+export async function importStaff() {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fteam");
+  let query = "";
+  try {
+    const report = await importStaffAccess(connectDeps(), sessionContext(current));
+    query = `imported=${report.updated.length}&ghlOnly=${report.ghlOnly}`;
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof ConnectError) back("/team", error);
+    throw error;
+  }
+  redirect(`/team?${query}`);
 }

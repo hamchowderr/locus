@@ -16,10 +16,18 @@ Connecting an agency's GoHighLevel company to Locus, and keeping its clients in 
   the raw body. `INSTALL` syncs; `UNINSTALL` of a sub-account suspends it (its data stays —
   offboarding is deliberate); `UNINSTALL` of the agency suspends everything and drops the tokens.
 
+- `importStaffAccess` — owners and admins, on request: copies each staff member's client list
+  from GHL's agency users (matched by email). A restricted GHL user's sub-accounts become their
+  list; an unrestricted GHL admin gets every current client. Owners, admins and roles are never
+  changed, and nothing syncs afterwards — GHL is an import source, not an authority. Sub-account
+  users (the clients' own logins) aren't staff and are ignored.
+
 ## Without a GoHighLevel account
 
 `GHL_MODE=stub` (the default outside production) uses `createStubGhl()`: a pretend agency with
-three sub-accounts that answers the three OAuth endpoints as GHL's live docs describe them.
+three sub-accounts and two staff users (`avery@stub-agency.test`, an admin, and
+`sam@stub-agency.test`, restricted to two clients), answering the OAuth and users-search endpoints
+as GHL's live docs describe them.
 
 ## To check against the real app once it's registered
 

@@ -19,6 +19,12 @@ export {
   NEUTRAL_AUTHORIZE_BASE,
   refreshGrant,
 } from "./ghl-oauth.ts";
+export {
+  type GhlStaffUser,
+  importStaffAccess,
+  listAgencyStaff,
+  type StaffImportReport,
+} from "./staff.ts";
 export { createStubGhl, STUB_AGENCY, STUB_CODE, type StubAgency } from "./stub.ts";
 export {
   type GhlAppWebhook,
