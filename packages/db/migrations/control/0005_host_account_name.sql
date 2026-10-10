@@ -1,0 +1,1 @@
+ALTER TABLE `host_connection` ADD `account_name` text;
