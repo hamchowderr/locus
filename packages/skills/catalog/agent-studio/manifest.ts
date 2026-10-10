@@ -19,6 +19,9 @@ export default {
       "scopes": [
         "agent-studio.write"
       ],
+      "queryParams": [
+        "source"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/create-agent",
       "sessionParams": [
@@ -44,6 +47,9 @@ export default {
       "scopes": [
         "agent-studio.write"
       ],
+      "queryParams": [
+        "source"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/delete-agent",
       "sessionParams": [
@@ -67,6 +73,9 @@ export default {
       ],
       "scopes": [
         "agent-studio.write"
+      ],
+      "queryParams": [
+        "source"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/execute-agent",
@@ -93,6 +102,9 @@ export default {
       "scopes": [
         "agent-studio.write"
       ],
+      "queryParams": [
+        "source"
+      ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/execute-agent-deprecated",
       "sessionParams": [
@@ -118,6 +130,7 @@ export default {
       "scopes": [
         "managed-agents.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/execute-managed-agent",
       "sessionParams": [
@@ -143,6 +156,9 @@ export default {
       "scopes": [
         "agent-studio.readonly"
       ],
+      "queryParams": [
+        "source"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/get-agent-by-id",
       "sessionParams": [
@@ -166,6 +182,9 @@ export default {
       ],
       "scopes": [
         "agent-studio.readonly"
+      ],
+      "queryParams": [
+        "source"
       ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/get-agent-by-id-deprecated",
@@ -191,6 +210,18 @@ export default {
       "scopes": [
         "agent-studio.readonly"
       ],
+      "queryParams": [
+        "isPublished",
+        "limit",
+        "offset",
+        "source"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/get-agents",
       "sessionParams": [
@@ -215,6 +246,17 @@ export default {
       "scopes": [
         "agent-studio.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "source"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/get-agents-deprecated",
       "sessionParams": [
@@ -239,6 +281,7 @@ export default {
       "scopes": [
         "managed-agents.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/get-managed-agent",
       "sessionParams": [
@@ -263,6 +306,17 @@ export default {
       "scopes": [
         "managed-agents.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "query"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/list-managed-agents",
       "sessionParams": [
@@ -286,6 +340,9 @@ export default {
       ],
       "scopes": [
         "agent-studio.write"
+      ],
+      "queryParams": [
+        "source"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/promote-and-publish",
@@ -312,6 +369,9 @@ export default {
       "scopes": [
         "agent-studio.write"
       ],
+      "queryParams": [
+        "source"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/update-agent-metadata",
       "sessionParams": [
@@ -336,6 +396,9 @@ export default {
       ],
       "scopes": [
         "agent-studio.write"
+      ],
+      "queryParams": [
+        "source"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/agent-studio/update-agent-version",

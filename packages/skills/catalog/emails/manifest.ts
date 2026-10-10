@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "emails/campaigns.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/create-email-campaign",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "emails/templates.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/create-email-template",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "emails/templates.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/create-template-folder",
       "sessionParams": [
@@ -94,6 +97,7 @@ export default {
       "scopes": [
         "emails/campaigns.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/delete-campaign",
       "sessionParams": [
@@ -118,6 +122,7 @@ export default {
       "scopes": [
         "emails/templates.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/delete-email-template",
       "sessionParams": [
@@ -142,6 +147,7 @@ export default {
       "scopes": [
         "emails/campaigns.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/get-bulk-action-campaign",
       "sessionParams": [
@@ -165,6 +171,9 @@ export default {
       ],
       "scopes": [
         "emails/stats.readonly"
+      ],
+      "queryParams": [
+        "subSourceId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/get-campaign-stats",
@@ -190,6 +199,7 @@ export default {
       "scopes": [
         "emails/campaigns.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/get-email-campaign",
       "sessionParams": [
@@ -214,6 +224,7 @@ export default {
       "scopes": [
         "emails/templates.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/get-email-template",
       "sessionParams": [
@@ -238,6 +249,7 @@ export default {
       "scopes": [
         "emails/campaigns.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/get-workflow-campaign",
       "sessionParams": [
@@ -262,6 +274,7 @@ export default {
       "scopes": [
         "emails/templates.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/import-email-template",
       "sessionParams": [
@@ -287,6 +300,20 @@ export default {
       "scopes": [
         "emails/campaigns.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search",
+        "dateFrom",
+        "dateTo",
+        "status"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/list-bulk-action-campaigns",
       "sessionParams": [
@@ -311,6 +338,18 @@ export default {
       "scopes": [
         "emails/campaigns.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search",
+        "status"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/list-email-campaigns",
       "sessionParams": [
@@ -335,6 +374,22 @@ export default {
       "scopes": [
         "emails/templates.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search",
+        "sortBy",
+        "sortOrder",
+        "archived",
+        "folderId",
+        "include"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/list-email-templates",
       "sessionParams": [
@@ -359,6 +414,18 @@ export default {
       "scopes": [
         "emails/campaigns.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search",
+        "status"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/list-workflow-campaigns",
       "sessionParams": [
@@ -383,6 +450,7 @@ export default {
       "scopes": [
         "emails/campaigns.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/schedule-campaign",
       "sessionParams": [
@@ -408,6 +476,7 @@ export default {
       "scopes": [
         "emails/campaigns.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/update-email-campaign",
       "sessionParams": [
@@ -433,6 +502,7 @@ export default {
       "scopes": [
         "emails/templates.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/emails/update-email-template",
       "sessionParams": [

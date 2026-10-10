@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "associations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/create-association",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "associations/relation.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/create-relation",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "associations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/delete-association"
     },
@@ -85,6 +88,7 @@ export default {
       "scopes": [
         "associations/relation.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/delete-relation",
       "sessionParams": [
@@ -109,6 +113,16 @@ export default {
       "scopes": [
         "associations.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/find-associations",
       "sessionParams": [
@@ -133,6 +147,7 @@ export default {
       "scopes": [
         "associations.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/get-association-by-id"
     },
@@ -149,6 +164,7 @@ export default {
       "scopes": [
         "associations.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/get-association-by-object-keys",
       "sessionParams": [
@@ -173,6 +189,7 @@ export default {
       "scopes": [
         "associations.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/get-association-key-by-key-name",
       "sessionParams": [
@@ -197,6 +214,17 @@ export default {
       "scopes": [
         "associations/relation.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "associationIds"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/get-relations-by-record-id",
       "sessionParams": [
@@ -221,6 +249,7 @@ export default {
       "scopes": [
         "associations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/associations/update-association",
       "body": "json"

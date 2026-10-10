@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "funnels/redirect.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/funnels/create-redirect",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "funnels/redirect.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/funnels/delete-redirect-by-id",
       "sessionParams": [
@@ -68,6 +70,17 @@ export default {
       "scopes": [
         "funnels/redirect.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/funnels/fetch-redirects-list",
       "sessionParams": [
@@ -92,6 +105,20 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [
+        "type",
+        "category",
+        "offset",
+        "limit",
+        "parentId",
+        "name"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/funnels/get-funnels",
       "sessionParams": [
@@ -116,6 +143,18 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [
+        "funnelId",
+        "name",
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/funnels/get-pages-by-funnel-id",
       "sessionParams": [
@@ -139,6 +178,10 @@ export default {
       ],
       "scopes": [
         "none"
+      ],
+      "queryParams": [
+        "funnelId",
+        "name"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/funnels/get-pages-count-by-funnel-id",
@@ -164,6 +207,7 @@ export default {
       "scopes": [
         "funnels/redirect.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/funnels/update-redirect-by-id",
       "sessionParams": [

@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "chat-widget.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/chat-widget/clone-chat-widget",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "chat-widget.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/chat-widget/create-chat-widget",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "chat-widget.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/chat-widget/delete-chat-widget",
       "sessionParams": [
@@ -93,6 +96,7 @@ export default {
       "scopes": [
         "chat-widget.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/chat-widget/get-chat-widget-by-id",
       "sessionParams": [
@@ -117,6 +121,21 @@ export default {
       "scopes": [
         "chat-widget.readonly"
       ],
+      "queryParams": [
+        "offset",
+        "limit",
+        "chatType",
+        "excludeChatType",
+        "voiceAiAgentId",
+        "creationSource",
+        "excludeCreationSource"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/chat-widget/list-chat-widgets",
       "sessionParams": [
@@ -141,6 +160,7 @@ export default {
       "scopes": [
         "chat-widget.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/chat-widget/patch-chat-widget",
       "sessionParams": [
@@ -166,6 +186,7 @@ export default {
       "scopes": [
         "chat-widget.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/chat-widget/update-chat-widget",
       "sessionParams": [

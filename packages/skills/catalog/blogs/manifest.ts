@@ -19,6 +19,10 @@ export default {
       "scopes": [
         "blogs/check-slug.readonly"
       ],
+      "queryParams": [
+        "urlSlug",
+        "postId"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/check-url-slug-exists",
       "sessionParams": [
@@ -43,6 +47,7 @@ export default {
       "scopes": [
         "blogs/post.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/create-blog-post",
       "sessionParams": [
@@ -68,6 +73,17 @@ export default {
       "scopes": [
         "blogs/author.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "searchTerm"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/get-all-blog-authors-by-location",
       "sessionParams": [
@@ -92,6 +108,17 @@ export default {
       "scopes": [
         "blogs/category.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "searchTerm"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/get-all-categories-by-location",
       "sessionParams": [
@@ -116,6 +143,19 @@ export default {
       "scopes": [
         "blogs/posts.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "searchTerm",
+        "status",
+        "blogId"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/get-blog-post",
       "sessionParams": [
@@ -140,6 +180,7 @@ export default {
       "scopes": [
         "blogs/posts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/get-blog-post-by-id",
       "sessionParams": [
@@ -164,6 +205,17 @@ export default {
       "scopes": [
         "blogs/list.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "searchTerm"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/get-blogs",
       "sessionParams": [
@@ -188,6 +240,7 @@ export default {
       "scopes": [
         "blogs/post-update.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/blogs/update-blog-post",
       "sessionParams": [

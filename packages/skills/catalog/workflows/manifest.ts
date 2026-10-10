@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "workflows.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/workflows/get-workflow",
       "sessionParams": [

@@ -49,6 +49,7 @@ Query parameters:
 - altId* string - location Id
 - altType* string (enum: location) - Alt Type
 - limit number (default: 20) - Page size
+- skip number - Rows to skip
 
 ### Create Widget
 POST /widgets/{locationId}/items/{itemId}
@@ -138,6 +139,14 @@ describe("parseDocs", () => {
       scopes: ["widgets.list", "widgets.readonly"],
       deprecated: true,
     });
+  });
+
+  test("records caller query parameters and the pagination style", () => {
+    expect(op("list-widgets")).toMatchObject({
+      queryParams: ["limit", "skip"],
+      pagination: { style: "offset", in: "query", limit: "limit", offset: "skip" },
+    });
+    expect(op("get-widget")?.pagination).toBeUndefined();
   });
 
   test("marks altId + altType as session parameters", () => {

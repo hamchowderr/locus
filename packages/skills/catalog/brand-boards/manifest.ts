@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "brand-boards/voices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/create-brand-voice",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "brand-boards/design-kit.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/create-design-kit",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "brand-boards/voices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/delete-brand-voice",
       "sessionParams": [
@@ -93,6 +96,7 @@ export default {
       "scopes": [
         "brand-boards/design-kit.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/delete-design-kit",
       "sessionParams": [
@@ -117,6 +121,7 @@ export default {
       "scopes": [
         "brand-boards/voices.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/get-brand-voice",
       "sessionParams": [
@@ -141,6 +146,7 @@ export default {
       "scopes": [
         "brand-boards/design-kit.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/get-design-kit",
       "sessionParams": [
@@ -165,6 +171,18 @@ export default {
       "scopes": [
         "brand-boards/voices.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search",
+        "deleted"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/list-brand-voices",
       "sessionParams": [
@@ -189,6 +207,18 @@ export default {
       "scopes": [
         "brand-boards/design-kit.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search",
+        "deleted"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/list-design-kits",
       "sessionParams": [
@@ -213,6 +243,7 @@ export default {
       "scopes": [
         "brand-boards/voices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/set-default-brand-voice",
       "sessionParams": [
@@ -237,6 +268,7 @@ export default {
       "scopes": [
         "brand-boards/design-kit.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/set-default-design-kit",
       "sessionParams": [
@@ -261,6 +293,7 @@ export default {
       "scopes": [
         "brand-boards/voices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/update-brand-voice",
       "sessionParams": [
@@ -286,6 +319,7 @@ export default {
       "scopes": [
         "brand-boards/design-kit.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/brand-boards/update-design-kit",
       "sessionParams": [

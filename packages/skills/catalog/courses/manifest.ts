@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/create-category",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/create-course",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/create-enrollment",
       "sessionParams": [
@@ -94,6 +97,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/create-lesson",
       "sessionParams": [
@@ -119,6 +123,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/create-lesson-assignment",
       "sessionParams": [
@@ -144,6 +149,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/create-lesson-quiz",
       "sessionParams": [
@@ -169,6 +175,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/create-offer",
       "sessionParams": [
@@ -194,6 +201,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/delete-assignment",
       "sessionParams": [
@@ -218,6 +226,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/delete-category",
       "sessionParams": [
@@ -242,6 +251,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/delete-course",
       "sessionParams": [
@@ -266,6 +276,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/delete-enrollment",
       "sessionParams": [
@@ -291,6 +302,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/delete-lesson",
       "sessionParams": [
@@ -315,6 +327,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/delete-offer",
       "sessionParams": [
@@ -339,6 +352,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/delete-quiz",
       "sessionParams": [
@@ -363,6 +377,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-assessment",
       "sessionParams": [
@@ -387,6 +402,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-category",
       "sessionParams": [
@@ -411,6 +427,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-course",
       "sessionParams": [
@@ -435,6 +452,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-lesson",
       "sessionParams": [
@@ -459,6 +477,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-lesson-assignment",
       "sessionParams": [
@@ -483,6 +502,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-lesson-quiz",
       "sessionParams": [
@@ -507,6 +527,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-offer",
       "sessionParams": [
@@ -531,6 +552,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/get-quiz-questions",
       "sessionParams": [
@@ -551,6 +573,7 @@ export default {
       "version": "v3",
       "tokens": [],
       "scopes": [],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/import-courses",
       "sessionParams": [
@@ -576,6 +599,11 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [
+        "status",
+        "pageSize",
+        "pageNumber"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-assessments",
       "sessionParams": [
@@ -599,6 +627,10 @@ export default {
       ],
       "scopes": [
         "courses.readonly"
+      ],
+      "queryParams": [
+        "contactId",
+        "productIds"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-bulk-progress",
@@ -624,6 +656,7 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-categories",
       "sessionParams": [
@@ -647,6 +680,9 @@ export default {
       ],
       "scopes": [
         "courses.readonly"
+      ],
+      "queryParams": [
+        "contactId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-category-progress",
@@ -672,6 +708,11 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [
+        "contactId",
+        "pageSize",
+        "pageNumber"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-completions",
       "sessionParams": [
@@ -696,6 +737,18 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "cursor",
+        "search"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "cursor"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-courses",
       "sessionParams": [
@@ -720,6 +773,17 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "cursor"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "cursor"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-enrollments",
       "sessionParams": [
@@ -743,6 +807,9 @@ export default {
       ],
       "scopes": [
         "courses.readonly"
+      ],
+      "queryParams": [
+        "categoryId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-lessons",
@@ -768,6 +835,19 @@ export default {
       "scopes": [
         "courses.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "cursor",
+        "search",
+        "visibility"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "cursor"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/list-offers",
       "sessionParams": [
@@ -792,6 +872,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/review-assessment",
       "sessionParams": [
@@ -817,6 +898,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/sequence-categories",
       "sessionParams": [
@@ -842,6 +924,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/sequence-lessons",
       "sessionParams": [
@@ -867,6 +950,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/update-assignment",
       "sessionParams": [
@@ -892,6 +976,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/update-category",
       "sessionParams": [
@@ -917,6 +1002,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/update-course",
       "sessionParams": [
@@ -942,6 +1028,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/update-lesson",
       "sessionParams": [
@@ -967,6 +1054,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/update-offer",
       "sessionParams": [
@@ -992,6 +1080,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/update-quiz",
       "sessionParams": [
@@ -1017,6 +1106,7 @@ export default {
       "scopes": [
         "courses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/courses/upsert-quiz-questions",
       "sessionParams": [

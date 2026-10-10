@@ -13,9 +13,9 @@ export interface GhlSession {
 }
 
 export interface GhlRequestInput {
-  path?: Record<string, string>;
-  query?: Record<string, string | number | boolean | undefined>;
-  body?: Record<string, unknown>;
+  path?: Record<string, string> | undefined;
+  query?: Record<string, string | number | boolean | undefined> | undefined;
+  body?: Record<string, unknown> | undefined;
 }
 
 export interface GhlRequestOptions {

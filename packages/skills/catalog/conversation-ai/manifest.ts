@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/create-action",
       "body": "json"
@@ -36,6 +37,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/create-agent",
       "body": "json"
@@ -53,6 +55,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/create-agent-working-hours",
       "body": "json"
@@ -70,6 +73,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/delete-action"
     },
@@ -86,6 +90,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/delete-agent"
     },
@@ -102,6 +107,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/delete-agent-working-hours"
     },
@@ -118,6 +124,7 @@ export default {
       "scopes": [
         "conversation-ai.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/get-action-by-id"
     },
@@ -134,6 +141,7 @@ export default {
       "scopes": [
         "conversation-ai.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/get-agent"
     },
@@ -150,6 +158,7 @@ export default {
       "scopes": [
         "conversation-ai.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/get-agent-actions"
     },
@@ -166,6 +175,7 @@ export default {
       "scopes": [
         "conversation-ai.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/get-agent-working-hours"
     },
@@ -181,6 +191,10 @@ export default {
       ],
       "scopes": [
         "conversation-ai.readonly"
+      ],
+      "queryParams": [
+        "messageId",
+        "source"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/get-generation-details"
@@ -198,6 +212,7 @@ export default {
       "scopes": [
         "conversation-ai.readonly"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/list-actions"
     },
@@ -214,6 +229,18 @@ export default {
       "scopes": [
         "conversation-ai.readonly"
       ],
+      "queryParams": [
+        "startAfter",
+        "limit",
+        "query"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "startAfter"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/search-agent"
     },
@@ -230,6 +257,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/update-action",
       "body": "json"
@@ -247,6 +275,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/update-agent",
       "body": "json"
@@ -264,6 +293,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/update-agent-working-hours",
       "body": "json"
@@ -281,6 +311,7 @@ export default {
       "scopes": [
         "conversation-ai.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversation-ai/update-followup-settings",
       "body": "json"

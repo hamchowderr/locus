@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "voice-ai-agent-goals.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/create-action",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "voice-ai-agents.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/create-agent",
       "sessionParams": [
@@ -69,6 +71,9 @@ export default {
       "scopes": [
         "voice-ai-agent-goals.write"
       ],
+      "queryParams": [
+        "agentId"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/delete-action",
       "sessionParams": [
@@ -93,6 +98,7 @@ export default {
       "scopes": [
         "voice-ai-agents.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/delete-agent",
       "sessionParams": [
@@ -117,6 +123,7 @@ export default {
       "scopes": [
         "voice-ai-agent-goals.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/get-action",
       "sessionParams": [
@@ -141,6 +148,7 @@ export default {
       "scopes": [
         "voice-ai-agents.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/get-agent",
       "sessionParams": [
@@ -165,6 +173,17 @@ export default {
       "scopes": [
         "voice-ai-agents.readonly"
       ],
+      "queryParams": [
+        "page",
+        "pageSize",
+        "query"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page",
+        "size": "pageSize"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/get-agents",
       "sessionParams": [
@@ -189,6 +208,7 @@ export default {
       "scopes": [
         "voice-ai-dashboard.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/get-call-log",
       "sessionParams": [
@@ -213,6 +233,24 @@ export default {
       "scopes": [
         "voice-ai-dashboard.readonly"
       ],
+      "queryParams": [
+        "agentId",
+        "contactId",
+        "callType",
+        "startDate",
+        "endDate",
+        "actionType",
+        "sortBy",
+        "sort",
+        "page",
+        "pageSize"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page",
+        "size": "pageSize"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/get-call-logs",
       "sessionParams": [
@@ -237,6 +275,7 @@ export default {
       "scopes": [
         "voice-ai-agents.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/patch-agent",
       "sessionParams": [
@@ -262,6 +301,7 @@ export default {
       "scopes": [
         "voice-ai-agent-goals.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/voice-ai/update-action",
       "sessionParams": [

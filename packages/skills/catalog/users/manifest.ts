@@ -20,6 +20,7 @@ export default {
       "scopes": [
         "users.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/users/create-user",
       "sessionParams": [
@@ -46,6 +47,7 @@ export default {
       "scopes": [
         "users.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/users/delete-user"
     },
@@ -62,6 +64,13 @@ export default {
       "scopes": [
         "users.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/users/filter-users-by-email",
       "sessionParams": [
@@ -88,6 +97,7 @@ export default {
       "scopes": [
         "users.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/users/get-user"
     },
@@ -105,6 +115,23 @@ export default {
       "scopes": [
         "users.readonly"
       ],
+      "queryParams": [
+        "query",
+        "skip",
+        "limit",
+        "type",
+        "role",
+        "ids",
+        "sort",
+        "sortDirection",
+        "enabled2waySync"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/users/search-users",
       "sessionParams": [
@@ -136,6 +163,7 @@ export default {
       "scopes": [
         "users.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/users/update-user",
       "sessionParams": [

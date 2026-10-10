@@ -15,6 +15,7 @@ export default {
       "version": "v3",
       "tokens": [],
       "scopes": [],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/bulk-edit",
       "sessionParams": [
@@ -46,6 +47,7 @@ export default {
       "scopes": [
         "products.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/bulk-update",
       "sessionParams": [
@@ -77,6 +79,7 @@ export default {
       "scopes": [
         "products.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/bulk-update-product-review",
       "sessionParams": [
@@ -109,6 +112,7 @@ export default {
       "scopes": [
         "products/prices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/create-price-for-product",
       "sessionParams": [
@@ -135,6 +139,7 @@ export default {
       "scopes": [
         "products.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/create-product",
       "sessionParams": [
@@ -160,6 +165,7 @@ export default {
       "scopes": [
         "products/collection.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/create-product-collection",
       "sessionParams": [
@@ -192,6 +198,7 @@ export default {
       "scopes": [
         "products/prices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/delete-price-by-id-for-product",
       "sessionParams": [
@@ -217,6 +224,9 @@ export default {
       "scopes": [
         "products.write"
       ],
+      "queryParams": [
+        "sendWishlistStatus"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/delete-product-by-id",
       "sessionParams": [
@@ -241,6 +251,7 @@ export default {
       "scopes": [
         "products/collection.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/delete-product-collection",
       "sessionParams": [
@@ -270,6 +281,9 @@ export default {
       ],
       "scopes": [
         "products.write"
+      ],
+      "queryParams": [
+        "productId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/delete-product-review",
@@ -302,6 +316,17 @@ export default {
       "scopes": [
         "products/prices.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-list-inventory",
       "sessionParams": [
@@ -333,6 +358,7 @@ export default {
       "scopes": [
         "products/prices.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-price-by-id-for-product",
       "sessionParams": [
@@ -358,6 +384,9 @@ export default {
       "scopes": [
         "products.readonly"
       ],
+      "queryParams": [
+        "sendWishlistStatus"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-product-by-id",
       "sessionParams": [
@@ -382,6 +411,18 @@ export default {
       "scopes": [
         "products/collection.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "collectionIds",
+        "name"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-product-collection",
       "sessionParams": [
@@ -412,6 +453,9 @@ export default {
       "scopes": [
         "products/collection.readonly"
       ],
+      "queryParams": [
+        "altId"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-product-collection-id"
     },
@@ -428,6 +472,23 @@ export default {
       "scopes": [
         "products.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "sortField",
+        "sortOrder",
+        "rating",
+        "startDate",
+        "endDate",
+        "productId",
+        "storeId"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-product-reviews",
       "sessionParams": [
@@ -458,6 +519,10 @@ export default {
       "scopes": [
         "products.readonly"
       ],
+      "queryParams": [
+        "search",
+        "collectionIds"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-product-store-stats",
       "sessionParams": [
@@ -487,6 +552,13 @@ export default {
       ],
       "scopes": [
         "products.readonly"
+      ],
+      "queryParams": [
+        "rating",
+        "startDate",
+        "endDate",
+        "productId",
+        "storeId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/get-reviews-count",
@@ -519,6 +591,25 @@ export default {
       "scopes": [
         "products.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "search",
+        "collectionIds",
+        "collectionSlug",
+        "expand",
+        "productIds",
+        "storeId",
+        "includedInStore",
+        "availableInStore",
+        "sortOrder"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/list-invoices",
       "sessionParams": [
@@ -544,6 +635,17 @@ export default {
       "scopes": [
         "products/prices.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "ids"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/list-prices-for-product",
       "sessionParams": [
@@ -568,6 +670,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/update-display-priority",
       "sessionParams": [
@@ -600,6 +703,7 @@ export default {
       "scopes": [
         "products/prices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/update-inventory",
       "sessionParams": [
@@ -632,6 +736,7 @@ export default {
       "scopes": [
         "products/prices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/update-price-by-id-for-product",
       "sessionParams": [
@@ -658,6 +763,7 @@ export default {
       "scopes": [
         "products.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/update-product-by-id",
       "sessionParams": [
@@ -683,6 +789,7 @@ export default {
       "scopes": [
         "products/collection.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/update-product-collection",
       "sessionParams": [
@@ -714,6 +821,7 @@ export default {
       "scopes": [
         "products.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/update-product-review",
       "sessionParams": [
@@ -745,6 +853,7 @@ export default {
       "scopes": [
         "products.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/products/update-store-status",
       "sessionParams": [

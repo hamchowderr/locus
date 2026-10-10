@@ -1,4 +1,7 @@
 import type { GhlOperation } from "@locus/ghl";
+import type { Pagination } from "./docs/parse.ts";
+
+export type { Pagination };
 
 /** A GHL operation plus what an agent needs to choose it. */
 export interface SkillOperation extends GhlOperation {
@@ -6,6 +9,9 @@ export interface SkillOperation extends GhlOperation {
   /** First sentence of GHL's description. */
   readonly summary: string;
   readonly deprecated: boolean;
+  /** Documented query parameters the caller may set (session parameters excluded). */
+  readonly queryParams: readonly string[];
+  readonly pagination?: Pagination;
   /** GHL's docs page for the operation. */
   readonly docs: string;
 }
@@ -22,3 +28,4 @@ export interface SkillManifest {
 }
 
 export { catalog, docsSource } from "./generated/catalog.ts";
+export { isRead, operationById, POST_READS, skillByCategory, skillDocs } from "./lookup.ts";
