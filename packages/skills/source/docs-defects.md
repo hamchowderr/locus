@@ -13,3 +13,4 @@ operation misbehaves.
 - locations / "Fetch Timezones": path parameter {locationId} is undocumented
 - users / "Delete User": path parameter {userId} is undocumented
 - users / "Update User": path parameter {userId} is undocumented
+- contacts.search-contacts-advanced: corrected by hand — 2026-10-10, live sub-account: without locationId in the body → 422 "locationId can't be undefined"; page + pageLimit return non-overlapping pages with `total`; limit/skip → 422 "property limit should not exist". The docs show the body as a free-form object.

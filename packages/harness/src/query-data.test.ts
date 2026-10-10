@@ -155,14 +155,16 @@ describe("runQuery", () => {
     const messages = Array.from({ length: 100 }, (_, i) => ({ id: `m${i}` }));
     const ghl = createFakeGhl({
       "GET /conversations/messages/export": { body: { messages, nextCursor: "abc" } },
-      "POST /contacts/search": { body: { contacts: [{ id: "c1" }], total: 900 } },
+      "POST /social-media-posting/category/queues/list/calendar": {
+        body: { calendars: [{ id: "q1" }] },
+      },
     });
 
     const result = await runQuery(
       {
         sources: [
           { as: "messages", operation: "conversations.export-messages-by-location" },
-          { as: "found", operation: "contacts.search-contacts-advanced", params: { body: {} } },
+          { as: "found", operation: "social-planner.fetch-calendar-list", params: { body: {} } },
         ],
         sql: "SELECT (SELECT COUNT(*) FROM messages) AS m, (SELECT COUNT(*) FROM found) AS c",
       },

@@ -12,6 +12,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { OVERRIDES } from "../src/docs/overrides.ts";
 import { type ParsedDocs, type ParsedService, parseDocs } from "../src/docs/parse.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,7 +29,7 @@ interface SourceMeta {
 
 const check = process.argv.includes("--check");
 const meta = JSON.parse(readFileSync(join(SOURCE, "meta.json"), "utf8")) as SourceMeta;
-const docs = parseDocs(readFileSync(join(SOURCE, "v3-llms-full.txt"), "utf8"));
+const docs = applyOverrides(parseDocs(readFileSync(join(SOURCE, "v3-llms-full.txt"), "utf8")));
 
 /** Files regenerated on every run, keyed by absolute path. */
 const files = new Map<string, string>();
@@ -68,6 +69,25 @@ if (check) {
     console.log(`${docs.warnings.length} docs defects recorded in source/docs-defects.md`);
   }
   for (const dir of stale) console.warn(`not in GHL's docs any more, review and delete: ${dir}`);
+}
+
+/** Applies `OVERRIDES` and records each one as a docs defect. Unknown ids fail generation. */
+function applyOverrides(parsed: ParsedDocs): ParsedDocs {
+  const remaining = new Set(Object.keys(OVERRIDES));
+  for (const service of parsed.services) {
+    for (const op of service.operations) {
+      const override = OVERRIDES[op.id];
+      if (!override) continue;
+      remaining.delete(op.id);
+      if (override.sessionParams) op.sessionParams = override.sessionParams;
+      if (override.pagination) op.pagination = override.pagination;
+      parsed.warnings.push(`${op.id}: corrected by hand — ${override.evidence}`);
+    }
+  }
+  if (remaining.size > 0) {
+    throw new Error(`overrides for operations not in the docs: ${[...remaining].join(", ")}`);
+  }
+  return parsed;
 }
 
 function manifestFile(service: ParsedService, docs: ParsedDocs): string {
