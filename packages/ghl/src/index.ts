@@ -4,7 +4,7 @@ export {
   type GhlVersion,
   type HttpMethod,
   isWrite,
-  type LocationParam,
+  type SessionParam,
   type TokenKind,
 } from "./operation.ts";
 export {

@@ -1,4 +1,4 @@
-import type { GhlOperation, TokenKind } from "./operation.ts";
+import type { GhlOperation, SessionParam, TokenKind } from "./operation.ts";
 
 export const GHL_BASE_URL = "https://services.leadconnectorhq.com";
 
@@ -8,6 +8,8 @@ export interface GhlSession {
   tokenKind: TokenKind;
   /** The client this session acts on. Required for any operation that names a location. */
   locationId?: string;
+  /** The agency this session belongs to. */
+  companyId?: string;
 }
 
 export interface GhlRequestInput {
@@ -46,26 +48,34 @@ export async function ghlRequest<T = unknown>(
   input: GhlRequestInput = {},
   options: GhlRequestOptions = {},
 ): Promise<T> {
-  if (session.tokenKind !== operation.token) {
+  const needsAuth = operation.tokens.length > 0;
+  if (needsAuth && !operation.tokens.includes(session.tokenKind)) {
     throw new GhlUsageError(
-      `${operation.id} needs a ${operation.token} token, got a ${session.tokenKind} token`,
+      `${operation.id} needs a ${operation.tokens.join(" or ")} token, got a ${session.tokenKind} token`,
     );
   }
-  rejectCallerLocationId(operation, input);
+  if (operation.body && operation.body !== "json") {
+    throw new GhlUsageError(
+      `${operation.id}: ${operation.body} request bodies are not supported yet`,
+    );
+  }
+  rejectCallerSessionParams(operation, input);
 
   const pathParams = { ...input.path };
   const query = { ...input.query };
-  const body = input.body ? { ...input.body } : undefined;
+  let body = input.body ? { ...input.body } : undefined;
 
-  if (operation.location) {
-    if (!session.locationId) {
-      throw new GhlUsageError(`${operation.id} acts on a client but the session names none`);
+  for (const param of operation.sessionParams ?? []) {
+    const value = sessionValue(param, session);
+    if (value === undefined) {
+      if (param.required) {
+        throw new GhlUsageError(`${operation.id} needs ${param.value} but the session names none`);
+      }
+      continue;
     }
-    const { in: where, name } = operation.location;
-    if (where === "path") pathParams[name] = session.locationId;
-    else if (where === "query") query[name] = session.locationId;
-    else if (body) body[name] = session.locationId;
-    else throw new GhlUsageError(`${operation.id} expects locationId in a body it was not given`);
+    if (param.in === "path") pathParams[param.name] = value;
+    else if (param.in === "query") query[param.name] = value;
+    else body = { ...body, [param.name]: value };
   }
 
   const url = new URL(fillPath(operation, pathParams), options.baseUrl ?? GHL_BASE_URL);
@@ -74,10 +84,10 @@ export async function ghlRequest<T = unknown>(
   }
 
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${session.token}`,
     Version: operation.version,
     Accept: "application/json",
   };
+  if (needsAuth) headers.Authorization = `Bearer ${session.token}`;
   if (body) headers["Content-Type"] = "application/json";
 
   const res = await (options.fetch ?? fetch)(url, {
@@ -92,13 +102,40 @@ export async function ghlRequest<T = unknown>(
   return payload as T;
 }
 
-function rejectCallerLocationId(operation: GhlOperation, input: GhlRequestInput): void {
-  for (const source of [input.path, input.query, input.body]) {
-    if (source && "locationId" in source) {
+/**
+ * `locationId` is refused everywhere, whatever the operation declares — it is the tenancy
+ * boundary, so a caller naming it is a bug even where GHL would ignore it. The operation's other
+ * session parameters (`altId`, `companyId`, …) are refused where the operation expects them.
+ */
+function rejectCallerSessionParams(operation: GhlOperation, input: GhlRequestInput): void {
+  const sources = { path: input.path, query: input.query, body: input.body };
+  const refused = (where: keyof typeof sources, name: string) =>
+    sources[where] !== undefined && Object.hasOwn(sources[where], name);
+
+  for (const where of ["path", "query", "body"] as const) {
+    if (refused(where, "locationId")) {
       throw new GhlUsageError(
         `${operation.id}: locationId comes from the session, never from the caller`,
       );
     }
+  }
+  for (const param of operation.sessionParams ?? []) {
+    if (refused(param.in, param.name)) {
+      throw new GhlUsageError(
+        `${operation.id}: ${param.name} comes from the session, never from the caller`,
+      );
+    }
+  }
+}
+
+function sessionValue(param: SessionParam, session: GhlSession): string | undefined {
+  switch (param.value) {
+    case "locationId":
+      return session.locationId;
+    case "companyId":
+      return session.companyId;
+    case "altType":
+      return "location";
   }
 }
 

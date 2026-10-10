@@ -9,9 +9,9 @@ const searchOpportunities = defineOperation({
   method: "GET",
   path: "/opportunities/search",
   version: "v3",
-  token: "location",
+  tokens: ["location"],
   scopes: ["opportunities.readonly"],
-  location: { in: "query", name: "locationId" },
+  sessionParams: [{ in: "query", name: "locationId", value: "locationId", required: true }],
 });
 
 const getContact = defineOperation({
@@ -19,7 +19,7 @@ const getContact = defineOperation({
   method: "GET",
   path: "/contacts/{contactId}",
   version: "v3",
-  token: "location",
+  tokens: ["location"],
   scopes: ["contacts.readonly"],
 });
 
@@ -28,7 +28,42 @@ const deleteFacebookPage = defineOperation({
   method: "DELETE",
   path: "/ad-publishing/facebook/pages/{pageId}",
   version: "v4",
-  token: "location",
+  tokens: ["location"],
+  scopes: [],
+});
+
+const listInvoices = defineOperation({
+  id: "invoices.list-invoices",
+  method: "GET",
+  path: "/invoices/",
+  version: "v3",
+  tokens: ["location", "agency"],
+  scopes: ["invoices.readonly"],
+  sessionParams: [
+    { in: "query", name: "altId", value: "locationId", required: true },
+    { in: "query", name: "altType", value: "altType", required: true },
+  ],
+});
+
+const listCompanyUsers = defineOperation({
+  id: "users.search-users",
+  method: "GET",
+  path: "/users/search",
+  version: "v3",
+  tokens: ["agency"],
+  scopes: ["users.readonly"],
+  sessionParams: [
+    { in: "query", name: "companyId", value: "companyId", required: true },
+    { in: "query", name: "locationId", value: "locationId", required: false },
+  ],
+});
+
+const publicTemplates = defineOperation({
+  id: "courses.public-import",
+  method: "POST",
+  path: "/courses/courses-exporter/public/import",
+  version: "v3",
+  tokens: [],
   scopes: [],
 });
 
@@ -89,6 +124,42 @@ describe("ghlRequest", () => {
 
     await ghlRequest(getContact, session, { path: { contactId: "a/b" } }, ghl);
     expect(ghl.requests.at(-1)?.url.pathname).toBe("/contacts/a%2Fb");
+  });
+
+  test("fills altId and altType from the session and refuses them from the caller", async () => {
+    const ghl = createFakeGhl({ "GET /invoices/": { body: { invoices: [] } } });
+
+    await ghlRequest(listInvoices, session, { query: { limit: 10 } }, ghl);
+    const params = ghl.requests[0]?.url.searchParams;
+    expect(params?.get("altId")).toBe("loc-A");
+    expect(params?.get("altType")).toBe("location");
+
+    await expect(
+      ghlRequest(listInvoices, session, { query: { altId: "loc-B" } }, ghl),
+    ).rejects.toThrow(/altId comes from the session/);
+  });
+
+  test("accepts any token kind the operation lists, and fills companyId for agencies", async () => {
+    const ghl = createFakeGhl({
+      "GET /invoices/": { body: {} },
+      "GET /users/search": { body: {} },
+    });
+    const agency = { token: "tok-agency", tokenKind: "agency", companyId: "co-1" } as const;
+
+    await ghlRequest(listInvoices, { ...agency, locationId: "loc-A" }, {}, ghl);
+    await ghlRequest(listCompanyUsers, agency, {}, ghl);
+
+    const users = ghl.requests[1]?.url.searchParams;
+    expect(users?.get("companyId")).toBe("co-1");
+    expect(users?.has("locationId")).toBe(false);
+  });
+
+  test("sends no Authorization header to an operation that takes no auth", async () => {
+    const ghl = createFakeGhl({ "POST /courses/courses-exporter/public/import": { body: {} } });
+
+    await ghlRequest(publicTemplates, session, { body: { url: "x" } }, ghl);
+
+    expect(ghl.requests[0]?.headers.authorization).toBeUndefined();
   });
 
   test("normalises both GHL error shapes", async () => {

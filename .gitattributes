@@ -1,0 +1,6 @@
+# Generated from GHL's docs by packages/skills/scripts/generate.ts — collapsed in PR diffs.
+packages/skills/source/** linguist-generated=true
+packages/skills/catalog/**/manifest.ts linguist-generated=true
+packages/skills/catalog/**/operations.md linguist-generated=true
+packages/skills/catalog/**/reference.md linguist-generated=true
+packages/skills/src/generated/** linguist-generated=true
