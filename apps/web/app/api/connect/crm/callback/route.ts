@@ -13,7 +13,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const jar = await cookies();
   const expected = jar.get(STATE_COOKIE)?.value;
-  jar.delete({ name: STATE_COOKIE, path: "/api/connect/ghl" });
+  jar.delete({ name: STATE_COOKIE, path: "/api/connect/crm" });
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
   if (!expected || !state || state !== expected || !code) return back("error=state");
