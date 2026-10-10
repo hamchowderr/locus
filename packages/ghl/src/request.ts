@@ -24,14 +24,16 @@ export interface GhlRequestOptions {
 }
 
 export class GhlError extends Error {
-  constructor(
-    readonly operationId: string,
-    readonly status: number,
-    message: string,
-    readonly code?: string,
-  ) {
+  readonly operationId: string;
+  readonly status: number;
+  readonly code: string | undefined;
+
+  constructor(operationId: string, status: number, message: string, code?: string) {
     super(`${operationId}: ${status} ${message}`);
     this.name = "GhlError";
+    this.operationId = operationId;
+    this.status = status;
+    this.code = code;
   }
 }
 

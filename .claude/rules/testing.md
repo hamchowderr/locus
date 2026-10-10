@@ -16,7 +16,13 @@ AIMock-first: every agent, tool and skill ships with a deterministic test.
    model decision into the right GHL request. Runs on every CI run. No network, no real model.
 2. **Selection evals** — a real model; proves the harness picks the right skills and actions for
    a prompt. Gated and token-budgeted, not in CI.
-3. **Live smoke** — the GHL test sub-account. Manual.
+3. **Live smoke** — a real GHL sub-account. Manual, never in CI:
+   `LOCUS_LIVE=1 pnpm --filter @locus/harness test:live` with `GHL_API_KEY` (a Private
+   Integration Token) and `GHL_LOCATION_ID` set; add `NODE_USE_ENV_PROXY=1` in a proxied cloud
+   session. Today's account is a **real client's production account** (KnowBS): read-only, assert
+   against GHL's own totals rather than fixed numbers, never print or commit its data. Writes
+   wait for the test-mode ledger and the trigger review in the vault note
+   `KnowBS/GHL Account Inventory`.
 
 AIMock decides what the "model" does, so it can never test skill *choice* — that is level 2.
 
