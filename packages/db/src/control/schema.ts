@@ -113,6 +113,8 @@ export const hostConnection = sqliteTable("host_connection", {
     .references(() => organization.id, { onDelete: "cascade" }),
   provider: text("provider", { enum: hosts }).notNull(),
   teamId: text("team_id").notNull(),
+  /** The team's name or the account's username, for display. */
+  accountName: text("account_name"),
   secretRef: text("secret_ref").notNull(),
   connectedAt: integer("connected_at", { mode: "timestamp_ms" }).notNull(),
 });

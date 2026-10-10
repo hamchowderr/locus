@@ -5,15 +5,18 @@ import { locus, NotConfigured } from "./locus.ts";
 
 const production = process.env.NODE_ENV === "production";
 
-/** `GHL_MODE=stub` (the default outside production) plays a pretend agency; `live` is GHL. */
-export function ghlMode(): "stub" | "live" {
-  const mode = process.env.GHL_MODE ?? (production ? "live" : "stub");
-  if (mode === "stub" && production) throw new NotConfigured("GHL_MODE=stub in production");
-  if (mode !== "stub" && mode !== "live") throw new NotConfigured(`GHL_MODE=${mode}`);
+/** `<NAME>=stub` (the default outside production) plays a pretend account; `live` is real. */
+export function serviceMode(variable: "GHL_MODE" | "GITHUB_MODE" | "VERCEL_MODE"): "stub" | "live" {
+  const mode = process.env[variable] ?? (production ? "live" : "stub");
+  if (mode === "stub" && production) throw new NotConfigured(`${variable}=stub in production`);
+  if (mode !== "stub" && mode !== "live") throw new NotConfigured(`${variable}=${mode}`);
   return mode;
 }
 
-function required(name: string): string {
+/** `GHL_MODE=stub` plays a pretend agency with three sub-accounts. */
+export const ghlMode = () => serviceMode("GHL_MODE");
+
+export function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new NotConfigured(`${name} is not set`);
   return value;
@@ -46,12 +49,22 @@ function appConfig(): GhlAppConfig {
 let stubFetch: typeof fetch | undefined;
 
 /** Building these fails only on configuration (a mode, a missing key or token): a 503. */
-function configured<T>(build: () => T): T {
+export function configured<T>(build: () => T): T {
   try {
     return build();
   } catch (error) {
     throw new NotConfigured((error as Error).message);
   }
+}
+
+/** Agencies' credentials: sealed in the control database in production. */
+export function secretStore(db: ReturnType<typeof locus>["db"]) {
+  return configured(() =>
+    secretsFromEnv({
+      localFile: ".data/secrets.json",
+      encrypted: (cipher) => new DbSecretStore(db, cipher),
+    }),
+  );
 }
 
 /** Everything the connect flow needs, from the environment. Server-side only. */
@@ -61,12 +74,7 @@ export function connectDeps(): ConnectDeps {
   const { db } = locus();
   return {
     db,
-    secrets: configured(() =>
-      secretsFromEnv({
-        localFile: ".data/secrets.json",
-        encrypted: (cipher) => new DbSecretStore(db, cipher),
-      }),
-    ),
+    secrets: secretStore(db),
     provisioner: configured(() => provisionerFromEnv(".data/tenants")),
     ghl: appConfig(),
     ...(mode === "stub" ? { http: { fetch: stubFetch, baseUrl: "https://stub.ghl.local" } } : {}),

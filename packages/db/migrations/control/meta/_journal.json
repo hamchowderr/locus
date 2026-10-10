@@ -36,6 +36,13 @@
       "when": 1791671285088,
       "tag": "0004_secret_store",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791675748741,
+      "tag": "0005_host_account_name",
+      "breakpoints": true
     }
   ]
 }
