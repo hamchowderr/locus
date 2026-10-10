@@ -1,5 +1,5 @@
 import { type ConnectDeps, createStubGhl, type GhlAppConfig, STUB_CODE } from "@locus/connect";
-import { DbSecretStore, LocalProvisioner } from "@locus/db";
+import { DbSecretStore, provisionerFromEnv } from "@locus/db";
 import { secretsFromEnv } from "@locus/secrets";
 import { locus, NotConfigured } from "./locus.ts";
 
@@ -45,13 +45,10 @@ function appConfig(): GhlAppConfig {
 
 let stubFetch: typeof fetch | undefined;
 
-/** Every way this can fail is configuration (mode, a missing or malformed key), so it's a 503. */
-function secretStore(db: ReturnType<typeof locus>["db"]) {
+/** Building these fails only on configuration (a mode, a missing key or token): a 503. */
+function configured<T>(build: () => T): T {
   try {
-    return secretsFromEnv({
-      localFile: ".data/secrets.json",
-      encrypted: (cipher) => new DbSecretStore(db, cipher),
-    });
+    return build();
   } catch (error) {
     throw new NotConfigured((error as Error).message);
   }
@@ -59,14 +56,18 @@ function secretStore(db: ReturnType<typeof locus>["db"]) {
 
 /** Everything the connect flow needs, from the environment. Server-side only. */
 export function connectDeps(): ConnectDeps {
-  if (production) throw new NotConfigured("the Turso provisioner is not wired yet");
   const mode = ghlMode();
   stubFetch ??= createStubGhl();
   const { db } = locus();
   return {
     db,
-    secrets: secretStore(db),
-    provisioner: new LocalProvisioner(".data/tenants"),
+    secrets: configured(() =>
+      secretsFromEnv({
+        localFile: ".data/secrets.json",
+        encrypted: (cipher) => new DbSecretStore(db, cipher),
+      }),
+    ),
+    provisioner: configured(() => provisionerFromEnv(".data/tenants")),
     ghl: appConfig(),
     ...(mode === "stub" ? { http: { fetch: stubFetch, baseUrl: "https://stub.ghl.local" } } : {}),
   };
