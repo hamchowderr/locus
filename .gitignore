@@ -19,3 +19,9 @@ next-env.d.ts
 
 # Ledgers of test-write runs against real GHL accounts
 .locus-test-runs/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
