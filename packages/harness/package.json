@@ -9,7 +9,8 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "test:live": "LOCUS_LIVE=1 vitest run src/live.test.ts"
+    "test:live": "LOCUS_LIVE=1 vitest run src/live.test.ts",
+    "test:live-writes": "LOCUS_LIVE_WRITES=1 vitest run src/live-writes.test.ts"
   },
   "dependencies": {
     "@libsql/client": "0.18.0",

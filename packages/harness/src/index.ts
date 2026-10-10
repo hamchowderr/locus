@@ -12,4 +12,16 @@ export {
   runQuery,
   type SourceReport,
 } from "./query-data.ts";
+export {
+  type CleanupReport,
+  cleanupRun,
+  createTestWriteGuard,
+  fileLedger,
+  type Ledger,
+  type LedgerEntry,
+  memoryLedger,
+  type RecordKind,
+  TEST_TAG_PREFIX,
+  type WriteGuard,
+} from "./test-mode.ts";
 export { createLocusTools, type ToolDeps } from "./tools.ts";
