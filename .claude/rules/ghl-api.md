@@ -42,7 +42,8 @@ paths:
   `v3`; GHL already points some deprecated ones at `v4`.
 - `locationId`, `altId`/`altType` and `companyId` are filled from the session by
   `ghlRequest`. Never pass them as input — it throws. See the tenancy rule.
-- Only JSON bodies are sent so far; multipart and form operations throw until implemented.
+- JSON and form-encoded bodies are sent (form only for GHL's OAuth endpoints); multipart
+  operations throw until implemented.
 - Errors arrive as `{statusCode, message}` or, on a few endpoints, AIP-style `{error: {...}}`;
   both become `GhlError`.
 - Rate limits: 100 requests / 10 s and 200k / day, per app per location. One shared budget

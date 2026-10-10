@@ -33,7 +33,15 @@ export function createFakeGhl(routes: FakeRoutes): FakeGhl {
     const url = new URL(input instanceof Request ? input.url : input.toString());
     const method = (init?.method ?? "GET").toUpperCase();
     const headers = Object.fromEntries(new Headers(init?.headers).entries());
-    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+    const raw = typeof init?.body === "string" ? init.body : undefined;
+    const form = headers["content-type"]?.startsWith("application/x-www-form-urlencoded");
+    // Form bodies (GHL's OAuth endpoints) are recorded as a plain object of their fields.
+    const body =
+      raw === undefined
+        ? undefined
+        : form
+          ? Object.fromEntries(new URLSearchParams(raw))
+          : JSON.parse(raw);
     const recorded: RecordedRequest = { method, url, headers, body };
     requests.push(recorded);
 

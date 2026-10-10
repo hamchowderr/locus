@@ -45,6 +45,26 @@ const listInvoices = defineOperation({
   ],
 });
 
+const getAccessToken = defineOperation({
+  id: "oauth.get-access-token",
+  method: "POST",
+  path: "/oauth/token",
+  version: "v3",
+  tokens: [],
+  scopes: [],
+  body: "form",
+});
+
+const uploadMedia = defineOperation({
+  id: "medias.upload-media-content",
+  method: "POST",
+  path: "/medias/upload-file",
+  version: "v3",
+  tokens: ["location"],
+  scopes: ["medias.write"],
+  body: "multipart",
+});
+
 const listCompanyUsers = defineOperation({
   id: "users.search-users",
   method: "GET",
@@ -177,5 +197,47 @@ describe("ghlRequest", () => {
     const aip = ghlRequest(getContact, session, { path: { contactId: "aip" } }, ghl);
     await expect(aip).rejects.toBeInstanceOf(GhlError);
     await expect(aip).rejects.toMatchObject({ status: 400, code: "INVALID_ARGUMENT" });
+  });
+
+  test("sends form-encoded bodies as form fields, with no Authorization header", async () => {
+    const ghl = createFakeGhl({ "POST /oauth/token": { body: { access_token: "t" } } });
+    await ghlRequest(
+      getAccessToken,
+      { token: "", tokenKind: "agency" },
+      {
+        body: {
+          client_id: "id",
+          grant_type: "authorization_code",
+          code: "c&d",
+          redirect_uri: undefined,
+        },
+      },
+      { fetch: ghl.fetch },
+    );
+    const [req] = ghl.requests;
+    expect(req?.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+    expect(req?.headers.authorization).toBeUndefined();
+    expect(req?.body).toEqual({ client_id: "id", grant_type: "authorization_code", code: "c&d" });
+  });
+
+  test("refuses nested values in a form body and multipart bodies, before sending", async () => {
+    const ghl = createFakeGhl({});
+    await expect(
+      ghlRequest(
+        getAccessToken,
+        { token: "", tokenKind: "agency" },
+        { body: { a: { b: 1 } } },
+        { fetch: ghl.fetch },
+      ),
+    ).rejects.toBeInstanceOf(GhlUsageError);
+    await expect(
+      ghlRequest(
+        uploadMedia,
+        { token: "t", tokenKind: "location" },
+        { body: {} },
+        { fetch: ghl.fetch },
+      ),
+    ).rejects.toBeInstanceOf(GhlUsageError);
+    expect(ghl.requests).toHaveLength(0);
   });
 });

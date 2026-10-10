@@ -12,7 +12,9 @@
       "!packages/skills/catalog",
       "!packages/skills/source",
       "!packages/skills/src/generated",
-      "!.claude/skills/mastra"
+      "!.claude/skills/mastra",
+      "!packages/db/src/control/auth-schema.ts",
+      "!packages/db/migrations"
     ]
   },
   "formatter": {

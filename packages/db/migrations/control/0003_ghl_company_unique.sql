@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `agency_ghl_connection_ghl_company_id_unique` ON `agency_ghl_connection` (`ghl_company_id`);
