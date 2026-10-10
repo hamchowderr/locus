@@ -1,7 +1,7 @@
 /**
  * Live writes against a real GHL sub-account, inside test-write mode. Off unless
- * LOCUS_LIVE_WRITES=1 — and only turn it on once the account's published workflow triggers have
- * been reviewed (vault: `KnowBS/GHL Account Inventory`).
+ * LOCUS_LIVE_WRITES=1. Run by hand, never in CI; the account and its rules are in the vault
+ * note `KnowBS/GHL Account Inventory`.
  *
  * Creates one fake contact with a note and a task, then deletes all of it and checks it is gone.
  * The ledger is written to `.locus-test-runs/<run>.jsonl`, so if this test dies half way,

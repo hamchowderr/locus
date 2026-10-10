@@ -25,8 +25,9 @@ AIMock-first: every agent, tool and skill ships with a deterministic test.
    `packages/harness/src/test-mode.ts`): fake `Locus Test` contacts, `locus-test-*` tags only,
    writes limited to records the run created, every record ledgered in `.locus-test-runs/`.
    Clean up with `node packages/harness/scripts/cleanup-test-run.ts <run> --delete` from the repo
-   root. `test:live-writes` (`LOCUS_LIVE_WRITES=1`) stays off until the account's published
-   workflow triggers are reviewed in the vault note `KnowBS/GHL Account Inventory`.
+   root. `test:live-writes` (`LOCUS_LIVE_WRITES=1`) is manual, never CI. The account owner waived
+   a review of its published workflow triggers (vault note `KnowBS/GHL Account Inventory`), so
+   these rules are what keep a test write from reaching a real person — don't loosen them.
 
 AIMock decides what the "model" does, so it can never test skill *choice* — that is level 2.
 
