@@ -1,6 +1,6 @@
 import type { ControlDb, TenantProvisioner } from "@locus/db";
-import { location, member, memberLocation, session } from "@locus/db/control";
-import { and, eq } from "drizzle-orm";
+import { location, member, memberLocation, session, user } from "@locus/db/control";
+import { and, eq, inArray } from "drizzle-orm";
 
 /**
  * Staff client access: which clients (GHL locations) a signed-in member may work on.
@@ -49,6 +49,8 @@ export class ClientAccessDenied extends Error {
 const UNRESTRICTED_ROLES = new Set(["owner", "admin"]);
 const issued = new WeakSet<AuthorizedClient>();
 
+const unrestricted = (role: string) => rolesOf(role).some((r) => UNRESTRICTED_ROLES.has(r));
+
 /** Better Auth stores several roles as one comma-separated string. */
 export function rolesOf(role: string): string[] {
   return role
@@ -84,7 +86,7 @@ export async function authorizeClient(
   if (!loc) throw new ClientAccessDenied("no such client in the session's agency");
   if (loc.status !== "active") throw new ClientAccessDenied(`client is ${loc.status}`);
 
-  if (!rolesOf(m.role).some((r) => UNRESTRICTED_ROLES.has(r))) {
+  if (!unrestricted(m.role)) {
     const [grant] = await db
       .select()
       .from(memberLocation)
@@ -104,7 +106,7 @@ export async function listAccessibleClients(
 ): Promise<LocationRow[]> {
   const { member: m, organizationId } = await membership(db, ctx);
   const inAgency = and(eq(location.organizationId, organizationId), eq(location.status, "active"));
-  if (rolesOf(m.role).some((r) => UNRESTRICTED_ROLES.has(r))) {
+  if (unrestricted(m.role)) {
     return db.select().from(location).where(inAgency);
   }
   const rows = await db
@@ -152,4 +154,87 @@ export async function mintClientDbToken(
 ): Promise<string> {
   if (!issued.has(client)) throw new ClientAccessDenied("client was not authorized");
   return provisioner.mintToken(client.location.tursoDbName, opts);
+}
+
+export interface TeamMember {
+  memberId: string;
+  name: string;
+  email: string;
+  role: string;
+  /** Whether the role already reaches every client, so the list below doesn't apply. */
+  unrestricted: boolean;
+  locationIds: string[];
+}
+
+async function requireManager(db: ControlDb, ctx: SessionContext) {
+  const found = await membership(db, ctx);
+  if (!unrestricted(found.member.role)) {
+    throw new ClientAccessDenied("only owners and admins manage client access");
+  }
+  return found;
+}
+
+/** The agency's members and the clients each may work on. Owners and admins only. */
+export async function listTeam(db: ControlDb, ctx: SessionContext): Promise<TeamMember[]> {
+  const { organizationId } = await requireManager(db, ctx);
+  const members = await db
+    .select({ memberId: member.id, name: user.name, email: user.email, role: member.role })
+    .from(member)
+    .innerJoin(user, eq(member.userId, user.id))
+    .where(eq(member.organizationId, organizationId));
+  const grants = members.length
+    ? await db
+        .select()
+        .from(memberLocation)
+        .where(
+          inArray(
+            memberLocation.memberId,
+            members.map((m) => m.memberId),
+          ),
+        )
+    : [];
+  return members.map((m) => ({
+    ...m,
+    unrestricted: unrestricted(m.role),
+    locationIds: grants.filter((g) => g.memberId === m.memberId).map((g) => g.locationId),
+  }));
+}
+
+/**
+ * Replaces the list of clients a member may work on. Owners and admins only; the member and
+ * every client must belong to the caller's active agency, or nothing changes.
+ */
+export async function setMemberClients(
+  db: ControlDb,
+  ctx: SessionContext,
+  memberId: string,
+  locationIds: string[],
+): Promise<void> {
+  const { organizationId } = await requireManager(db, ctx);
+  const [target] = await db
+    .select()
+    .from(member)
+    .where(and(eq(member.id, memberId), eq(member.organizationId, organizationId)));
+  if (!target) throw new ClientAccessDenied("no such member in the session's agency");
+
+  const wanted = [...new Set(locationIds)];
+  if (wanted.length) {
+    const found = await db
+      .select({ id: location.id })
+      .from(location)
+      .where(and(eq(location.organizationId, organizationId), inArray(location.id, wanted)));
+    if (found.length !== wanted.length) {
+      throw new ClientAccessDenied("no such client in the session's agency");
+    }
+  }
+
+  const clear = db.delete(memberLocation).where(eq(memberLocation.memberId, memberId));
+  if (wanted.length === 0) {
+    await clear;
+    return;
+  }
+  await db.batch([
+    clear,
+    db.insert(memberLocation).values(wanted.map((locationId) => ({ memberId, locationId }))),
+  ]);
 }

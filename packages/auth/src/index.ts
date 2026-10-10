@@ -5,10 +5,13 @@ export {
   ClientAccessDenied,
   type LocationRow,
   listAccessibleClients,
+  listTeam,
   mintClientDbToken,
   resolveActiveClient,
   rolesOf,
   type SessionContext,
   selectClient,
+  setMemberClients,
+  type TeamMember,
 } from "./client-access.ts";
 export { consoleEmail, emailFromEnv, resendEmail } from "./email.ts";

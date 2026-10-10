@@ -23,6 +23,8 @@ before any GHL or Turso token for it exists.
   `ClientAccessDenied` (403) with one message, so a foreign client and a missing one look alike.
 - `selectClient` stores the choice as the session's `activeLocationId` — the only place a client
   id comes from the user. `resolveActiveClient` re-checks it on every call.
+- `listTeam` / `setMemberClients`: owners and admins see the team and replace a member's client
+  list; the member and every client must be in the caller's active agency, or nothing changes.
 - `mintClientDbToken` takes the result of the check, not a location id, so a token cannot be
   minted without it.
 
@@ -34,5 +36,4 @@ production is an error, never a silent fallback to the console.
 
 ## Not here yet
 
-- Inviting staff and editing a member's client list from the app.
 - The Stripe plugin.

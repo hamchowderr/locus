@@ -30,4 +30,7 @@ auth API answers 503 — it never falls back to development defaults. Secrets co
 ## Pages
 
 `/sign-up` · `/sign-in` · `/onboarding` (create the agency) · `/clients` (pick the client to work
-on — the access check runs before it is stored on the session) · `/`
+on — the access check runs before it is stored on the session) · `/team` (owners and admins:
+invite staff, choose each member's clients) · `/invite/[id]` (accept; verified email required) · `/`
+
+`?next=` on sign-in and sign-up only ever accepts a path on this site (`lib/next-path.ts`).
