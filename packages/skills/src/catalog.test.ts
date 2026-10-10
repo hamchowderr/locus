@@ -47,13 +47,16 @@ describe.each(catalog.map((skill) => [skill.category, skill.operations] as const
       const send = () =>
         ghlRequest(op, session, { path, ...(op.body ? { body: {} } : {}) }, { fetch: ghl.fetch });
 
-      if (op.body && op.body !== "json") {
+      if (op.body === "multipart") {
         await expect(send()).rejects.toBeInstanceOf(GhlUsageError);
         return;
       }
       await send();
 
       const [req] = ghl.requests;
+      if (op.body === "form") {
+        expect(req?.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+      }
       expect(req?.method).toBe(op.method);
       expect(req?.headers.version).toBe(op.version);
       expect(req?.headers.authorization).toBe(op.tokens.length > 0 ? "Bearer tok-test" : undefined);

@@ -84,7 +84,8 @@ export const agencyGhlConnection = sqliteTable("agency_ghl_connection", {
   organizationId: text("organization_id")
     .primaryKey()
     .references(() => organization.id, { onDelete: "cascade" }),
-  ghlCompanyId: text("ghl_company_id").notNull(),
+  /** One Locus agency per GHL company, so a company's clients can't appear in two agencies. */
+  ghlCompanyId: text("ghl_company_id").notNull().unique(),
   /** Space-delimited, as GHL returns it. */
   scopes: text("scopes").notNull(),
   /** e.g. "/locus/ghl/<organizationId>". */
