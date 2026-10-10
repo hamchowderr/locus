@@ -13,8 +13,12 @@
   },
   "dependencies": {
     "@locus/auth": "workspace:*",
+    "@locus/connect": "workspace:*",
     "@locus/db": "workspace:*",
+    "@locus/ghl": "workspace:*",
+    "@locus/secrets": "workspace:*",
     "better-auth": "1.7.7",
+    "drizzle-orm": "0.45.4",
     "next": "16.4.0",
     "react": "19.3.0",
     "react-dom": "19.3.0"
