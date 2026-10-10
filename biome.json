@@ -11,7 +11,8 @@
       "**",
       "!packages/skills/catalog",
       "!packages/skills/source",
-      "!packages/skills/src/generated"
+      "!packages/skills/src/generated",
+      "!.claude/skills/mastra"
     ]
   },
   "formatter": {
