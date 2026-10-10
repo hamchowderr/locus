@@ -535,6 +535,20 @@ export default {
       "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/search-contacts-advanced",
+      "pagination": {
+        "style": "page",
+        "in": "body",
+        "page": "page",
+        "size": "pageLimit"
+      },
+      "sessionParams": [
+        {
+          "in": "body",
+          "name": "locationId",
+          "value": "locationId",
+          "required": true
+        }
+      ],
       "body": "json"
     },
     {
