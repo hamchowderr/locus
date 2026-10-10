@@ -1,0 +1,26 @@
+{
+  "name": "@locus/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "generate:schema": "auth generate --config src/cli-config.ts --output ../db/src/control/auth-schema.ts --yes"
+  },
+  "dependencies": {
+    "@better-auth/drizzle-adapter": "1.7.7",
+    "@libsql/client": "0.18.0",
+    "@locus/db": "workspace:*",
+    "better-auth": "1.7.7",
+    "drizzle-orm": "0.45.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "auth": "1.7.7",
+    "vitest": "5.0.3"
+  }
+}

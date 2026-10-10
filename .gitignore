@@ -15,5 +15,7 @@ next-env.d.ts
 *.db-journal
 .DS_Store
 
+.data/
+
 # Ledgers of test-write runs against real GHL accounts
 .locus-test-runs/
