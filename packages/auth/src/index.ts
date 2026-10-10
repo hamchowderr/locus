@@ -7,6 +7,7 @@ export {
   listAccessibleClients,
   listTeam,
   mintClientDbToken,
+  requireAgencyManager,
   resolveActiveClient,
   rolesOf,
   type SessionContext,

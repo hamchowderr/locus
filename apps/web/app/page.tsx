@@ -53,6 +53,10 @@ export default async function Home() {
       <p>
         <Link href="/team" className="underline">
           Team
+        </Link>{" "}
+        ·{" "}
+        <Link href="/connect" className="underline">
+          GoHighLevel
         </Link>
       </p>
       <form action={signOut}>
