@@ -56,10 +56,8 @@ export async function ghlRequest<T = unknown>(
       `${operation.id} needs a ${operation.tokens.join(" or ")} token, got a ${session.tokenKind} token`,
     );
   }
-  if (operation.body && operation.body !== "json") {
-    throw new GhlUsageError(
-      `${operation.id}: ${operation.body} request bodies are not supported yet`,
-    );
+  if (operation.body === "multipart") {
+    throw new GhlUsageError(`${operation.id}: multipart request bodies are not supported yet`);
   }
   rejectCallerSessionParams(operation, input);
 
@@ -90,12 +88,28 @@ export async function ghlRequest<T = unknown>(
     Accept: "application/json",
   };
   if (needsAuth) headers.Authorization = `Bearer ${session.token}`;
-  if (body) headers["Content-Type"] = "application/json";
+  let encoded: string | undefined;
+  if (body && operation.body === "form") {
+    // OAuth endpoints take application/x-www-form-urlencoded: flat string fields only.
+    const form = new URLSearchParams();
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined) continue;
+      if (typeof value === "object") {
+        throw new GhlUsageError(`${operation.id}: form field "${key}" must be a plain value`);
+      }
+      form.set(key, String(value));
+    }
+    headers["Content-Type"] = "application/x-www-form-urlencoded";
+    encoded = form.toString();
+  } else if (body) {
+    headers["Content-Type"] = "application/json";
+    encoded = JSON.stringify(body);
+  }
 
   const res = await (options.fetch ?? fetch)(url, {
     method: operation.method,
     headers,
-    ...(body ? { body: JSON.stringify(body) } : {}),
+    ...(encoded === undefined ? {} : { body: encoded }),
   });
 
   const text = await res.text();

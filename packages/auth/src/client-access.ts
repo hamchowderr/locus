@@ -166,7 +166,8 @@ export interface TeamMember {
   locationIds: string[];
 }
 
-async function requireManager(db: ControlDb, ctx: SessionContext) {
+/** The session's agency, if the caller is one of its owners or admins. Otherwise a 403. */
+export async function requireAgencyManager(db: ControlDb, ctx: SessionContext) {
   const found = await membership(db, ctx);
   if (!unrestricted(found.member.role)) {
     throw new ClientAccessDenied("only owners and admins manage client access");
@@ -176,7 +177,7 @@ async function requireManager(db: ControlDb, ctx: SessionContext) {
 
 /** The agency's members and the clients each may work on. Owners and admins only. */
 export async function listTeam(db: ControlDb, ctx: SessionContext): Promise<TeamMember[]> {
-  const { organizationId } = await requireManager(db, ctx);
+  const { organizationId } = await requireAgencyManager(db, ctx);
   const members = await db
     .select({ memberId: member.id, name: user.name, email: user.email, role: member.role })
     .from(member)
@@ -210,7 +211,7 @@ export async function setMemberClients(
   memberId: string,
   locationIds: string[],
 ): Promise<void> {
-  const { organizationId } = await requireManager(db, ctx);
+  const { organizationId } = await requireAgencyManager(db, ctx);
   const [target] = await db
     .select()
     .from(member)

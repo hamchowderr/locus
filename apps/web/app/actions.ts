@@ -1,8 +1,15 @@
 "use server";
 
-import { ClientAccessDenied, selectClient, setMemberClients } from "@locus/auth";
+import {
+  ClientAccessDenied,
+  requireAgencyManager,
+  selectClient,
+  setMemberClients,
+} from "@locus/auth";
+import { ConnectError, syncLocations } from "@locus/connect";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { connectDeps } from "@/lib/connect";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
 
@@ -154,4 +161,20 @@ export async function saveMemberClients(form: FormData) {
     throw error;
   }
   redirect("/team?saved=1");
+}
+
+/** Picks up sub-accounts installed in GHL since the last sync. Owners and admins only. */
+export async function syncClients() {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fconnect");
+  let result = { added: 0, reactivated: 0 };
+  try {
+    const { organizationId } = await requireAgencyManager(locus().db, sessionContext(current));
+    result = await syncLocations(connectDeps(), organizationId);
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof ConnectError)
+      back("/connect", error);
+    throw error;
+  }
+  redirect(`/connect?synced=${result.added}&reactivated=${result.reactivated}`);
 }
