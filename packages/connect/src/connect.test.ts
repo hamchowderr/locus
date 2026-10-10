@@ -3,10 +3,16 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ClientAccessDenied, listAccessibleClients, type SessionContext } from "@locus/auth";
-import { type ControlDb, LocalProvisioner, migrateControlDb, openControlDb } from "@locus/db";
+import {
+  type ControlDb,
+  DbSecretStore,
+  LocalProvisioner,
+  migrateControlDb,
+  openControlDb,
+} from "@locus/db";
 import { agencyGhlConnection, location, member, organization, user } from "@locus/db/control";
 import { GhlError } from "@locus/ghl";
-import { MemorySecretStore } from "@locus/secrets";
+import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
 import { createFakeGhl } from "@locus/testing";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -117,6 +123,22 @@ describe("connecting GoHighLevel", () => {
     const tables = await db.$client.execute(
       "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'",
     );
+    for (const { name } of tables.rows) {
+      const rows = await db.$client.execute(`select * from "${name}"`);
+      expect(JSON.stringify(rows.rows)).not.toMatch(/stub-(agency|refresh)-token/);
+    }
+  });
+
+  it("with the production store, every table holds the tokens only sealed", async () => {
+    const cipher = SecretCipher.fromEnv({ LOCUS_SECRETS_KEY: generateSecretsKey() });
+    const sealedDeps = { ...deps, secrets: new DbSecretStore(db, cipher) };
+    await connectAgency(sealedDeps, ctx("owner", "agency-a"), STUB_CODE);
+    expect((await agencyToken(sealedDeps, "agency-a")).token).toContain("stub-agency-token-");
+
+    const tables = await db.$client.execute(
+      "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'",
+    );
+    expect(tables.rows.map((r) => r.name)).toContain("secret");
     for (const { name } of tables.rows) {
       const rows = await db.$client.execute(`select * from "${name}"`);
       expect(JSON.stringify(rows.rows)).not.toMatch(/stub-(agency|refresh)-token/);

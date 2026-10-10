@@ -25,11 +25,14 @@ provider: open the verification link from the log.
 | `GHL_MODE` | `stub` (a pretend agency with three sub-accounts) | `live` |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID`, `GHL_SCOPES` | — | the Marketplace app's; scopes space-separated |
 | `GHL_WEBHOOK_PUBLIC_KEY` | only to test webhooks | GHL's Ed25519 key, base64 SPKI or PEM |
-| `LOCUS_SECRETS` | `local` (`.data/secrets.json`) | `infisical` — not wired yet |
+| `LOCUS_SECRETS` | `local` (`.data/secrets.json`) | `encrypted` — agencies' tokens sealed in the control database |
+| `LOCUS_SECRETS_KEY` | only for `encrypted` | required: 32 random bytes, base64 (`openssl rand -base64 32`) |
+| `LOCUS_SECRETS_KEY_PREVIOUS` | — | earlier keys, comma-separated, while rotating |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
-auth API answers 503 — it never falls back to development defaults. Secrets come from Infisical
-(`/locus`).
+auth API answers 503 — it never falls back to development defaults. Otaku's own secrets (the
+values in this table) come from Infisical (`/locus`); agencies' tokens are sealed in the control
+database with `LOCUS_SECRETS_KEY`, which is itself one of those Infisical values.
 
 ## Pages
 

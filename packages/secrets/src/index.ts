@@ -1,9 +1,14 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
+import { SecretCipher } from "./cipher.ts";
+
+export { generateSecretsKey, SecretCipher, SecretUnreadable } from "./cipher.ts";
+
 /**
- * Where credentials live. The database stores only a path into this (`secretRef`), never a
- * value — a leaked control database must not leak a single token.
+ * Where credentials live, addressed by path (`secretRef`, e.g. `/locus/ghl/<organizationId>`).
+ * In production that is the control database, sealed with `SecretCipher`: a leaked database
+ * alone must not leak a single token, and nobody browsing Infisical sees agencies' tokens.
  */
 export interface SecretStore {
   get(path: string): Promise<string | undefined>;
@@ -13,7 +18,7 @@ export interface SecretStore {
 
 const PATH = /^\/locus(\/[A-Za-z0-9_-]+)+$/;
 
-function checkPath(path: string): string {
+export function checkPath(path: string): string {
   if (!PATH.test(path)) throw new Error(`Not a Locus secret path: ${path}`);
   return path;
 }
@@ -35,7 +40,7 @@ export class MemorySecretStore implements SecretStore {
 
 /**
  * Local development only: a JSON file readable by the owner alone. Refuses to run in
- * production, where secrets come from Infisical.
+ * production, where agencies' tokens are sealed in the control database.
  */
 export class LocalSecretStore implements SecretStore {
   readonly file: string;
@@ -79,16 +84,24 @@ export class LocalSecretStore implements SecretStore {
   }
 }
 
+export interface SecretStoreOptions {
+  /** The development file for `local`. */
+  localFile: string;
+  /** Builds the database-backed store for `encrypted`; it lives in `@locus/db`. */
+  encrypted: (cipher: SecretCipher) => SecretStore;
+}
+
 /**
- * `LOCUS_SECRETS=local` (the default outside production) or `infisical`. Infisical is not
- * wired yet, so production has no secret store until it is.
+ * `LOCUS_SECRETS=local` (the default outside production) or `encrypted` (the default, and the
+ * only choice, in production): agencies' tokens sealed with `LOCUS_SECRETS_KEY` in the control
+ * database. The key itself lives in Infisical `/locus`.
  */
 export function secretsFromEnv(
-  localFile: string,
+  options: SecretStoreOptions,
   env: Record<string, string | undefined> = process.env,
 ): SecretStore {
-  const mode = env.LOCUS_SECRETS ?? (env.NODE_ENV === "production" ? "infisical" : "local");
-  if (mode === "local") return new LocalSecretStore(localFile, env);
-  if (mode === "infisical") throw new Error("The Infisical secret store is not wired yet");
-  throw new Error(`LOCUS_SECRETS must be "local" or "infisical" (got ${mode})`);
+  const mode = env.LOCUS_SECRETS ?? (env.NODE_ENV === "production" ? "encrypted" : "local");
+  if (mode === "local") return new LocalSecretStore(options.localFile, env);
+  if (mode === "encrypted") return options.encrypted(SecretCipher.fromEnv(env));
+  throw new Error(`LOCUS_SECRETS must be "local" or "encrypted" (got ${mode})`);
 }
