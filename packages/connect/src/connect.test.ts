@@ -26,7 +26,7 @@ const ghl: GhlAppConfig = {
   clientId: "client-id",
   clientSecret: "client-secret",
   appId: "app-id",
-  redirectUri: "https://locus.test/api/connect/ghl/callback",
+  redirectUri: "https://locus.test/api/connect/crm/callback",
   scopes: ["locations.readonly", "oauth.readonly", "oauth.write"],
 };
 

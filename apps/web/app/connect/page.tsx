@@ -94,7 +94,7 @@ export default async function Connect({
         </p>
       )}
       <a
-        href="/api/connect/ghl/start"
+        href="/api/connect/crm/start"
         className="block w-full rounded-md border border-neutral-300 px-4 py-2 text-center text-sm font-medium"
       >
         {connection ? "Reconnect GoHighLevel" : "Connect GoHighLevel"}

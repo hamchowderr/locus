@@ -16,12 +16,12 @@ export async function GET() {
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",
-      path: "/api/connect/ghl",
+      path: "/api/connect/crm",
       maxAge: 600,
     });
     const target =
       ghlMode() === "stub"
-        ? `${baseUrl()}/api/connect/ghl/stub-authorize?state=${encodeURIComponent(state)}`
+        ? `${baseUrl()}/api/connect/crm/stub-authorize?state=${encodeURIComponent(state)}`
         : authorizeUrl(ghl, state);
     return NextResponse.redirect(target);
   } catch (error) {
