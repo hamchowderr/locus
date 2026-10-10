@@ -14,3 +14,5 @@ next-env.d.ts
 *.db
 *.db-journal
 .DS_Store
+
+.data/
