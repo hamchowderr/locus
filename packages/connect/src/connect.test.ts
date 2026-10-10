@@ -18,6 +18,7 @@ import {
   ghlSecretRef,
 } from "./agency.ts";
 import { authorizeUrl, exchangeCode, type GhlAppConfig } from "./ghl-oauth.ts";
+import { importStaffAccess, listAgencyStaff } from "./staff.ts";
 import { createStubGhl, STUB_AGENCY, STUB_CODE, type StubAgency } from "./stub.ts";
 import { handleGhlWebhook, verifyGhlSignature } from "./webhook.ts";
 
@@ -262,5 +263,69 @@ describe("GHL webhooks", () => {
       "unknown-agency",
     );
     expect(await registry("agency-a")).toEqual([]);
+  });
+});
+
+describe("importing staff access from GHL", () => {
+  beforeEach(async () => {
+    await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
+  });
+
+  it("gives a restricted GHL user's sub-accounts to the matching Locus member", async () => {
+    await addMember("sam", "agency-a", "member");
+    await db.update(user).set({ email: "Sam@Stub-Agency.test" }).where(eq(user.id, "sam"));
+    const report = await importStaffAccess(deps, ctx("owner", "agency-a"));
+    expect(report.updated).toEqual([
+      { email: "Sam@Stub-Agency.test", clients: 2, everyClient: false },
+    ]);
+    const names = (await listAccessibleClients(db, ctx("sam", "agency-a"))).map((l) => l.name);
+    expect(names.sort()).toEqual(["Harbor Realty", "Sunrise Dental"]);
+  });
+
+  it("gives every client to a member GHL lets see everything, and never changes roles", async () => {
+    await addMember("avery", "agency-a", "member");
+    await db.update(user).set({ email: "avery@stub-agency.test" }).where(eq(user.id, "avery"));
+    const report = await importStaffAccess(deps, ctx("owner", "agency-a"));
+    expect(report.updated[0]).toMatchObject({ clients: 3, everyClient: true });
+    const [row] = await db.select().from(member).where(eq(member.id, "avery@agency-a"));
+    expect(row?.role).toBe("member");
+  });
+
+  it("leaves owners, admins and members missing from GHL alone, and counts GHL-only staff", async () => {
+    await db.update(user).set({ email: "avery@stub-agency.test" }).where(eq(user.id, "owner"));
+    const report = await importStaffAccess(deps, ctx("owner", "agency-a"));
+    expect(report.managers).toEqual(["avery@stub-agency.test"]);
+    expect(report.notInGhl).toEqual(["staff@agency.test"]);
+    expect(report.ghlOnly).toBe(1);
+    expect(report.updated).toEqual([]);
+  });
+
+  it("only lets owners and admins import", async () => {
+    await expect(importStaffAccess(deps, ctx("staff", "agency-a"))).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+  });
+
+  it("asks GHL for agency staff only, all pages", async () => {
+    agency.users = Array.from({ length: 150 }, (_, i) => ({
+      id: `u${i}`,
+      name: `u${i}`,
+      email: `u${i}@stub-agency.test`,
+      roles: { type: "agency", role: "user", locationIds: [], restrictSubAccount: true },
+    }));
+    agency.users.push({
+      id: "client-owner",
+      name: "Client Owner",
+      email: "owner@sunrise.test",
+      roles: {
+        type: "account",
+        role: "admin",
+        locationIds: ["stub-location-1"],
+        restrictSubAccount: true,
+      },
+    });
+    const staff = await listAgencyStaff(deps, await agencyToken(deps, "agency-a"));
+    expect(staff).toHaveLength(150);
+    expect(staff.some((u) => u.email === "owner@sunrise.test")).toBe(false);
   });
 });

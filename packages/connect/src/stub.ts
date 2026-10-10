@@ -1,12 +1,19 @@
 /**
  * `GHL_MODE=stub`: a pretend GHL agency, so the connect flow can be built and run without a
  * GoHighLevel account or the Marketplace app. It answers the three OAuth endpoints Locus uses,
- * as the live docs describe them, for one fixture company.
+ * as the live docs describe them, for one fixture company — plus users search for its staff.
  */
 
 export interface StubAgency {
   companyId: string;
   locations: { _id: string; name: string }[];
+  /** Agency staff, as GHL's users search returns them. */
+  users: {
+    id: string;
+    name: string;
+    email: string;
+    roles: { type: string; role: string; locationIds: string[]; restrictSubAccount: boolean };
+  }[];
 }
 
 export const STUB_AGENCY: StubAgency = {
@@ -15,6 +22,26 @@ export const STUB_AGENCY: StubAgency = {
     { _id: "stub-location-1", name: "Sunrise Dental" },
     { _id: "stub-location-2", name: "Peak Fitness" },
     { _id: "stub-location-3", name: "Harbor Realty" },
+  ],
+  // Invite these addresses in Locus, then "Import client access from GoHighLevel".
+  users: [
+    {
+      id: "stub-user-1",
+      name: "Avery Admin",
+      email: "avery@stub-agency.test",
+      roles: { type: "agency", role: "admin", locationIds: [], restrictSubAccount: false },
+    },
+    {
+      id: "stub-user-2",
+      name: "Sam Restricted",
+      email: "sam@stub-agency.test",
+      roles: {
+        type: "agency",
+        role: "user",
+        locationIds: ["stub-location-1", "stub-location-3"],
+        restrictSubAccount: true,
+      },
+    },
   ],
 };
 
@@ -74,6 +101,17 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
           ...(next ? { nextPageToken: next } : {}),
         },
       });
+    }
+
+    if (method === "GET" && url.pathname === "/users/search") {
+      if (url.searchParams.get("companyId") !== agency.companyId) {
+        return Response.json({ statusCode: 403, message: "Wrong company" }, { status: 403 });
+      }
+      const type = url.searchParams.get("type");
+      const matching = agency.users.filter((u) => !type || u.roles.type === type);
+      const skip = Number(url.searchParams.get("skip") ?? 0);
+      const limit = Number(url.searchParams.get("limit") ?? 25);
+      return Response.json({ users: matching.slice(skip, skip + limit), count: matching.length });
     }
 
     return Response.json(
