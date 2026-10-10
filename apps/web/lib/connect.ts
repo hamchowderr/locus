@@ -24,7 +24,7 @@ export function baseUrl(): string {
 }
 
 function appConfig(): GhlAppConfig {
-  const redirectUri = `${baseUrl()}/api/connect/ghl/callback`;
+  const redirectUri = `${baseUrl()}/api/connect/crm/callback`;
   if (ghlMode() === "stub") {
     return {
       clientId: "stub-client",
@@ -61,10 +61,13 @@ export function connectDeps(): ConnectDeps {
 
 /** In stub mode the "GHL approval page" is a local route that approves straight away. */
 export function stubAuthorizeTarget(state: string): string {
-  const callback = new URL("/api/connect/ghl/callback", baseUrl());
+  const callback = new URL("/api/connect/crm/callback", baseUrl());
   callback.searchParams.set("code", STUB_CODE);
   callback.searchParams.set("state", state);
   return callback.toString();
 }
 
-export const STATE_COOKIE = "locus_ghl_state";
+export const STATE_COOKIE = "locus_crm_state";
+
+// GHL refuses redirect and webhook URLs that mention HighLevel ("The redirect url contains a
+// Highlevel reference"), so the routes that GHL calls are named `crm`, never `ghl`.
