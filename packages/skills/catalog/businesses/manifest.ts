@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "businesses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/businesses/create-business",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "businesses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/businesses/delete-business"
     },
@@ -60,6 +62,7 @@ export default {
       "scopes": [
         "businesses.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/businesses/get-business"
     },
@@ -76,6 +79,16 @@ export default {
       "scopes": [
         "businesses.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "skip"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/businesses/get-businesses-by-location",
       "sessionParams": [
@@ -100,6 +113,7 @@ export default {
       "scopes": [
         "businesses.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/businesses/update-business",
       "body": "json"

@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "files.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/files/get-file-by-slug"
     }

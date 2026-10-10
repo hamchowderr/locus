@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "companies.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/companies/get-company",
       "sessionParams": [

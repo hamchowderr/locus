@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "payments/custom-provider.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/create-config",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "payments/coupons.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/create-coupon",
       "sessionParams": [
@@ -75,6 +77,7 @@ export default {
       "scopes": [
         "payments/custom-provider.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/create-integration",
       "sessionParams": [
@@ -100,6 +103,7 @@ export default {
       "scopes": [
         "payments/integration.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/create-integration-provider",
       "sessionParams": [
@@ -131,6 +135,7 @@ export default {
       "scopes": [
         "payments/orders.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/create-order-fulfillment",
       "sessionParams": [
@@ -162,6 +167,7 @@ export default {
       "scopes": [
         "payments/custom-provider.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/custom-provider-marketplace-app-update-capabilities",
       "sessionParams": [
@@ -193,6 +199,7 @@ export default {
       "scopes": [
         "payments/coupons.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/delete-coupon",
       "sessionParams": [
@@ -224,6 +231,7 @@ export default {
       "scopes": [
         "payments/custom-provider.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/delete-integration",
       "sessionParams": [
@@ -248,6 +256,7 @@ export default {
       "scopes": [
         "payments/custom-provider.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/disconnect-config",
       "sessionParams": [
@@ -273,6 +282,7 @@ export default {
       "scopes": [
         "payments/custom-provider.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/fetch-config",
       "sessionParams": [
@@ -296,6 +306,10 @@ export default {
       ],
       "scopes": [
         "payments/coupons.readonly"
+      ],
+      "queryParams": [
+        "id",
+        "code"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/get-coupon",
@@ -327,6 +341,9 @@ export default {
       "scopes": [
         "payments/orders.readonly"
       ],
+      "queryParams": [
+        "altId"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/get-order-by-id",
       "sessionParams": [
@@ -351,6 +368,7 @@ export default {
       "scopes": [
         "payments/subscriptions.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/get-subscription-by-id",
       "sessionParams": [
@@ -381,6 +399,7 @@ export default {
       "scopes": [
         "payments/transactions.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/get-transaction-by-id",
       "sessionParams": [
@@ -417,6 +436,18 @@ export default {
       "scopes": [
         "payments/coupons.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "status",
+        "search"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/list-coupons",
       "sessionParams": [
@@ -447,6 +478,16 @@ export default {
       "scopes": [
         "payments/integration.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/list-integration-providers",
       "sessionParams": [
@@ -477,6 +518,7 @@ export default {
       "scopes": [
         "payments/orders.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/list-order-fulfillment",
       "sessionParams": [
@@ -507,6 +549,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/list-order-notes",
       "sessionParams": [
@@ -537,6 +580,26 @@ export default {
       "scopes": [
         "payments/orders.readonly"
       ],
+      "queryParams": [
+        "altId",
+        "status",
+        "paymentStatus",
+        "paymentMode",
+        "startAt",
+        "endAt",
+        "search",
+        "contactId",
+        "funnelProductIds",
+        "sourceId",
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/list-orders",
       "sessionParams": [
@@ -561,6 +624,25 @@ export default {
       "scopes": [
         "payments/subscriptions.readonly"
       ],
+      "queryParams": [
+        "entityId",
+        "paymentMode",
+        "startAt",
+        "endAt",
+        "entitySourceType",
+        "search",
+        "contactId",
+        "id",
+        "limit",
+        "offset",
+        "getPaymentsCollectedCount"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/list-subscriptions",
       "sessionParams": [
@@ -591,6 +673,25 @@ export default {
       "scopes": [
         "payments/transactions.readonly"
       ],
+      "queryParams": [
+        "paymentMode",
+        "startAt",
+        "endAt",
+        "entitySourceType",
+        "entitySourceSubType",
+        "search",
+        "subscriptionId",
+        "entityId",
+        "contactId",
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/list-transactions",
       "sessionParams": [
@@ -627,6 +728,7 @@ export default {
       "scopes": [
         "payments/orders.collectPayment"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/record-order-payment",
       "sessionParams": [
@@ -658,6 +760,7 @@ export default {
       "scopes": [
         "payments/coupons.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/payments/update-coupon",
       "sessionParams": [

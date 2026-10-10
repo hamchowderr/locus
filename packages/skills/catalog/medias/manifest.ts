@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/medias/bulk-delete-media-objects",
       "sessionParams": [
@@ -50,6 +51,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/medias/bulk-update-media-objects",
       "sessionParams": [
@@ -81,6 +83,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/medias/create-media-folder",
       "sessionParams": [
@@ -112,6 +115,7 @@ export default {
       "scopes": [
         "medias.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/medias/delete-media-content",
       "sessionParams": [
@@ -142,6 +146,22 @@ export default {
       "scopes": [
         "medias.readonly"
       ],
+      "queryParams": [
+        "offset",
+        "limit",
+        "sortBy",
+        "sortOrder",
+        "type",
+        "query",
+        "parentId",
+        "fetchAll"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/medias/fetch-media-content",
       "sessionParams": [
@@ -172,6 +192,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/medias/update-media-object",
       "sessionParams": [
@@ -203,6 +224,7 @@ export default {
       "scopes": [
         "medias.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/medias/upload-media-content",
       "body": "multipart"

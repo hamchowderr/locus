@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "opportunities.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/add-followers-opportunity",
       "body": "json"
@@ -36,6 +37,7 @@ export default {
       "scopes": [
         "opportunities.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/create-opportunity",
       "sessionParams": [
@@ -61,6 +63,7 @@ export default {
       "scopes": [
         "pipelines.create"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/create-pipeline",
       "sessionParams": [
@@ -86,6 +89,7 @@ export default {
       "scopes": [
         "opportunities.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/delete-opportunity"
     },
@@ -102,6 +106,7 @@ export default {
       "scopes": [
         "pipelines.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/delete-pipeline"
     },
@@ -118,6 +123,20 @@ export default {
       "scopes": [
         "opportunities.readonly"
       ],
+      "queryParams": [
+        "name",
+        "deleted",
+        "query",
+        "skip",
+        "limit",
+        "getCount"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/get-lost-reason",
       "sessionParams": [
@@ -142,6 +161,7 @@ export default {
       "scopes": [
         "opportunities.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/get-opportunity"
     },
@@ -158,6 +178,7 @@ export default {
       "scopes": [
         "pipelines.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/get-pipeline"
     },
@@ -174,6 +195,7 @@ export default {
       "scopes": [
         "opportunities.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/get-pipelines",
       "sessionParams": [
@@ -198,6 +220,9 @@ export default {
       "scopes": [
         "opportunities.write"
       ],
+      "queryParams": [
+        "isRemoveAllFollowers"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/remove-followers-opportunity",
       "body": "json"
@@ -215,6 +240,13 @@ export default {
       "scopes": [
         "opportunities.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "page",
+        "in": "body",
+        "page": "page",
+        "size": "limit"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/search-opportunities-advanced",
       "sessionParams": [
@@ -240,6 +272,33 @@ export default {
       "scopes": [
         "opportunities.readonly"
       ],
+      "queryParams": [
+        "q",
+        "status",
+        "campaignId",
+        "id",
+        "order",
+        "endDate",
+        "startAfter",
+        "startAfterId",
+        "date",
+        "country",
+        "page",
+        "limit",
+        "getTasks",
+        "getNotes",
+        "getCalendarEvents",
+        "pipelineId",
+        "pipelineStageId",
+        "contactId",
+        "assignedTo"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page",
+        "size": "limit"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/search-opportunity",
       "sessionParams": [
@@ -264,6 +323,7 @@ export default {
       "scopes": [
         "opportunities.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/update-opportunity",
       "body": "json"
@@ -281,6 +341,7 @@ export default {
       "scopes": [
         "opportunities.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/update-opportunity-status",
       "body": "json"
@@ -298,6 +359,7 @@ export default {
       "scopes": [
         "pipelines.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/update-pipeline",
       "body": "json"
@@ -315,6 +377,7 @@ export default {
       "scopes": [
         "opportunities.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/opportunities/upsert-opportunity",
       "sessionParams": [

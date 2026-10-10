@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/add-contact-to-campaign",
       "body": "json"
@@ -36,6 +37,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/add-contact-to-workflow",
       "body": "json"
@@ -53,6 +55,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/add-followers-contact",
       "body": "json"
@@ -66,6 +69,7 @@ export default {
       "version": "v3",
       "tokens": [],
       "scopes": [],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/add-remove-contact-from-business",
       "sessionParams": [
@@ -91,6 +95,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/add-tags",
       "body": "json"
@@ -104,6 +109,7 @@ export default {
       "version": "v3",
       "tokens": [],
       "scopes": [],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/create-association",
       "sessionParams": [
@@ -129,6 +135,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/create-contact",
       "sessionParams": [
@@ -154,6 +161,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/create-note",
       "body": "json"
@@ -171,6 +179,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/create-task",
       "body": "json"
@@ -188,6 +197,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/delete-contact"
     },
@@ -204,6 +214,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/delete-contact-from-workflow",
       "body": "json"
@@ -221,6 +232,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/delete-note"
     },
@@ -237,6 +249,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/delete-task"
     },
@@ -253,6 +266,7 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-all-notes"
     },
@@ -269,6 +283,7 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-all-tasks"
     },
@@ -285,6 +300,7 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-appointments-for-contact"
     },
@@ -301,6 +317,7 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-contact"
     },
@@ -317,6 +334,18 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "skip",
+        "query",
+        "startAfter"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-contacts-by-business-id",
       "sessionParams": [
@@ -340,6 +369,10 @@ export default {
       ],
       "scopes": [
         "contacts.readonly"
+      ],
+      "queryParams": [
+        "number",
+        "email"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-duplicate-contact",
@@ -365,6 +398,7 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-note"
     },
@@ -381,6 +415,7 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/get-task"
     },
@@ -396,6 +431,12 @@ export default {
       ],
       "scopes": [
         "contacts.readonly"
+      ],
+      "queryParams": [
+        "email",
+        "phone",
+        "nextCursor",
+        "limit"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/lookup-contact",
@@ -421,6 +462,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/remove-contact-from-campaign"
     },
@@ -437,6 +479,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/remove-contact-from-every-campaign"
     },
@@ -453,6 +496,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/remove-followers-contact",
       "body": "json"
@@ -470,6 +514,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/remove-tags",
       "body": "json"
@@ -487,6 +532,7 @@ export default {
       "scopes": [
         "contacts.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/search-contacts-advanced",
       "body": "json"
@@ -504,6 +550,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/update-contact",
       "body": "json"
@@ -521,6 +568,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/update-note",
       "body": "json"
@@ -538,6 +586,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/update-task",
       "body": "json"
@@ -555,6 +604,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/update-task-completed",
       "body": "json"
@@ -572,6 +622,7 @@ export default {
       "scopes": [
         "contacts.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/contacts/upsert-contact",
       "sessionParams": [

@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/add-calendar-to-schedule"
     },
@@ -35,6 +36,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-appointment",
       "sessionParams": [
@@ -60,6 +62,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-appointment-note",
       "body": "json"
@@ -77,6 +80,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-block-slot",
       "sessionParams": [
@@ -102,6 +106,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-calendar",
       "sessionParams": [
@@ -127,6 +132,7 @@ export default {
       "scopes": [
         "calendars/groups.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-calendar-group",
       "sessionParams": [
@@ -152,6 +158,7 @@ export default {
       "scopes": [
         "calendars/resources.write"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-calendar-resource",
       "sessionParams": [
@@ -177,6 +184,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-calendar-schedule",
       "body": "json"
@@ -194,6 +202,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-event-notification",
       "body": "json"
@@ -211,6 +220,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-schedule",
       "sessionParams": [
@@ -235,6 +245,10 @@ export default {
       ],
       "scopes": [
         "calendars/events.write"
+      ],
+      "queryParams": [
+        "overrideAvailability",
+        "skipSchedulingNotice"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-service-booking",
@@ -261,6 +275,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-service-catalog",
       "sessionParams": [
@@ -286,6 +301,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/create-service-location",
       "sessionParams": [
@@ -311,6 +327,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-appointment-note"
     },
@@ -327,6 +344,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-calendar"
     },
@@ -343,6 +361,7 @@ export default {
       "scopes": [
         "calendars/resources.write"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-calendar-resource"
     },
@@ -359,6 +378,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-event",
       "body": "json"
@@ -376,6 +396,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-event-notification"
     },
@@ -392,6 +413,7 @@ export default {
       "scopes": [
         "calendars/groups.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-group"
     },
@@ -408,6 +430,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-schedule"
     },
@@ -424,6 +447,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-service-booking"
     },
@@ -440,6 +464,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-service-catalog"
     },
@@ -456,6 +481,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/delete-service-location"
     },
@@ -472,6 +498,7 @@ export default {
       "scopes": [
         "calendars/groups.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/disable-group",
       "body": "json"
@@ -489,6 +516,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/edit-appointment",
       "body": "json"
@@ -506,6 +534,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/edit-block-slot",
       "sessionParams": [
@@ -531,6 +560,7 @@ export default {
       "scopes": [
         "calendars/groups.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/edit-group",
       "body": "json"
@@ -548,6 +578,16 @@ export default {
       "scopes": [
         "calendars/resources.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "skip"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/fetch-calendar-resources",
       "sessionParams": [
@@ -572,6 +612,7 @@ export default {
       "scopes": [
         "calendars/events.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/find-event-notification"
     },
@@ -588,6 +629,18 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [
+        "userId",
+        "calendarId",
+        "skip",
+        "limit"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-all-schedules",
       "sessionParams": [
@@ -612,6 +665,7 @@ export default {
       "scopes": [
         "calendars/events.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-appointment"
     },
@@ -628,6 +682,16 @@ export default {
       "scopes": [
         "calendars/events.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-appointment-notes"
     },
@@ -643,6 +707,13 @@ export default {
       ],
       "scopes": [
         "calendars/events.readonly"
+      ],
+      "queryParams": [
+        "userId",
+        "calendarId",
+        "groupId",
+        "startTime",
+        "endTime"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-blocked-slots",
@@ -668,6 +739,7 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-calendar"
     },
@@ -683,6 +755,13 @@ export default {
       ],
       "scopes": [
         "calendars/events.readonly"
+      ],
+      "queryParams": [
+        "userId",
+        "calendarId",
+        "groupId",
+        "startTime",
+        "endTime"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-calendar-events",
@@ -708,6 +787,7 @@ export default {
       "scopes": [
         "calendars/resources.readonly"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-calendar-resource"
     },
@@ -724,6 +804,7 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-calendar-schedule"
     },
@@ -739,6 +820,10 @@ export default {
       ],
       "scopes": [
         "calendars.readonly"
+      ],
+      "queryParams": [
+        "groupId",
+        "showDrafted"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-calendars",
@@ -764,6 +849,18 @@ export default {
       "scopes": [
         "calendars/events.readonly"
       ],
+      "queryParams": [
+        "isActive",
+        "deleted",
+        "limit",
+        "skip"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-event-notification"
     },
@@ -780,6 +877,7 @@ export default {
       "scopes": [
         "calendars/groups.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-groups",
       "sessionParams": [
@@ -804,6 +902,7 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-schedule-by-id"
     },
@@ -820,6 +919,7 @@ export default {
       "scopes": [
         "calendars/events.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-service-booking-by-id"
     },
@@ -835,6 +935,12 @@ export default {
       ],
       "scopes": [
         "calendars/events.readonly"
+      ],
+      "queryParams": [
+        "startTime",
+        "endTime",
+        "timezone",
+        "serviceLocationId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-service-bookings",
@@ -860,6 +966,7 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-service-catalog-by-id"
     },
@@ -876,6 +983,7 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-service-location-by-id"
     },
@@ -892,6 +1000,7 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-service-locations",
       "sessionParams": [
@@ -915,6 +1024,10 @@ export default {
       ],
       "scopes": [
         "calendars.readonly"
+      ],
+      "queryParams": [
+        "serviceCategoryId",
+        "isPrivate"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-services-catalog",
@@ -940,6 +1053,14 @@ export default {
       "scopes": [
         "calendars.readonly"
       ],
+      "queryParams": [
+        "startDate",
+        "endDate",
+        "timezone",
+        "userId",
+        "userIds",
+        "duration"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/get-slots"
     },
@@ -956,6 +1077,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/remove-calendar-from-schedule"
     },
@@ -972,6 +1094,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-appointment-note",
       "body": "json"
@@ -989,6 +1112,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-calendar",
       "body": "json"
@@ -1006,6 +1130,7 @@ export default {
       "scopes": [
         "calendars/resources.write"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-calendar-resource",
       "sessionParams": [
@@ -1031,6 +1156,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-calendar-schedule",
       "body": "json"
@@ -1048,6 +1174,7 @@ export default {
       "scopes": [
         "calendars/events.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-event-notification",
       "body": "json"
@@ -1065,6 +1192,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-schedule",
       "body": "json"
@@ -1081,6 +1209,10 @@ export default {
       ],
       "scopes": [
         "calendars/events.write"
+      ],
+      "queryParams": [
+        "overrideAvailability",
+        "skipSchedulingNotice"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-service-booking",
@@ -1099,6 +1231,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-service-catalog",
       "body": "json"
@@ -1116,6 +1249,7 @@ export default {
       "scopes": [
         "calendars.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/update-service-location",
       "body": "json"
@@ -1133,6 +1267,7 @@ export default {
       "scopes": [
         "calendars/groups.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/calendars/validate-groups-slug",
       "sessionParams": [

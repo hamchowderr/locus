@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "objects/schema.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/create-custom-object-schema",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "notes.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/create-note",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "objects/record.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/create-object-record",
       "sessionParams": [
@@ -94,6 +97,7 @@ export default {
       "scopes": [
         "notes.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/delete-note",
       "sessionParams": [
@@ -118,6 +122,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/delete-object-record"
     },
@@ -134,6 +139,7 @@ export default {
       "scopes": [
         "notes.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/get-note",
       "sessionParams": [
@@ -158,6 +164,7 @@ export default {
       "scopes": [
         "objects/schema.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/get-object-by-location-id",
       "sessionParams": [
@@ -181,6 +188,9 @@ export default {
       ],
       "scopes": [
         "objects/schema.readonly"
+      ],
+      "queryParams": [
+        "fetchProperties"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/get-object-schema-by-key",
@@ -206,6 +216,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/get-record-by-id"
     },
@@ -222,6 +233,7 @@ export default {
       "scopes": [
         "notes.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/restore-note",
       "sessionParams": [
@@ -247,6 +259,13 @@ export default {
       "scopes": [
         "notes.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "offset",
+        "in": "body",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/search-notes",
       "sessionParams": [
@@ -272,6 +291,13 @@ export default {
       "scopes": [
         "objects/record.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "page",
+        "in": "body",
+        "page": "page",
+        "size": "pageLimit"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/search-object-records",
       "sessionParams": [
@@ -297,6 +323,7 @@ export default {
       "scopes": [
         "objects/schema.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/update-custom-object",
       "sessionParams": [
@@ -322,6 +349,7 @@ export default {
       "scopes": [
         "notes.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/update-note",
       "sessionParams": [
@@ -347,6 +375,7 @@ export default {
       "scopes": [
         "notes.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/update-note-attachments",
       "sessionParams": [
@@ -372,6 +401,7 @@ export default {
       "scopes": [
         "notes.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/update-note-relations",
       "sessionParams": [
@@ -397,6 +427,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/objects/update-object-record",
       "sessionParams": [

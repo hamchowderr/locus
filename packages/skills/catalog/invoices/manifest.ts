@@ -20,6 +20,7 @@ export default {
       "scopes": [
         "invoices/schedule.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/auto-payment-invoice-schedule",
       "sessionParams": [
@@ -52,6 +53,7 @@ export default {
       "scopes": [
         "invoices/schedule.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/cancel-invoice-schedule",
       "sessionParams": [
@@ -84,6 +86,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/create-estimate-template",
       "sessionParams": [
@@ -116,6 +119,7 @@ export default {
       "scopes": [
         "invoices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/create-invoice",
       "sessionParams": [
@@ -148,6 +152,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/create-invoice-from-estimate",
       "sessionParams": [
@@ -180,6 +185,7 @@ export default {
       "scopes": [
         "invoices/schedule.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/create-invoice-schedule",
       "sessionParams": [
@@ -212,6 +218,7 @@ export default {
       "scopes": [
         "invoices/template.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/create-invoice-template",
       "sessionParams": [
@@ -244,6 +251,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/create-new-estimate",
       "sessionParams": [
@@ -276,6 +284,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/delete-estimate",
       "sessionParams": [
@@ -308,6 +317,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/delete-estimate-template",
       "sessionParams": [
@@ -340,6 +350,7 @@ export default {
       "scopes": [
         "invoices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/delete-invoice",
       "sessionParams": [
@@ -371,6 +382,7 @@ export default {
       "scopes": [
         "invoices/schedule.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/delete-invoice-schedule",
       "sessionParams": [
@@ -402,6 +414,7 @@ export default {
       "scopes": [
         "invoices/template.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/delete-invoice-template",
       "sessionParams": [
@@ -433,6 +446,7 @@ export default {
       "scopes": [
         "invoices/estimate.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/generate-estimate-number",
       "sessionParams": [
@@ -464,6 +478,7 @@ export default {
       "scopes": [
         "invoices.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/generate-invoice-number",
       "sessionParams": [
@@ -495,6 +510,7 @@ export default {
       "scopes": [
         "invoices.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/get-invoice",
       "sessionParams": [
@@ -526,6 +542,7 @@ export default {
       "scopes": [
         "invoices/schedule.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/get-invoice-schedule",
       "sessionParams": [
@@ -557,6 +574,7 @@ export default {
       "scopes": [
         "invoices.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/get-invoice-settings",
       "sessionParams": [
@@ -588,6 +606,7 @@ export default {
       "scopes": [
         "invoices/template.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/get-invoice-template",
       "sessionParams": [
@@ -619,6 +638,17 @@ export default {
       "scopes": [
         "invoices/estimate.readonly"
       ],
+      "queryParams": [
+        "search",
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/list-estimate-templates",
       "sessionParams": [
@@ -650,6 +680,21 @@ export default {
       "scopes": [
         "invoices/estimate.readonly"
       ],
+      "queryParams": [
+        "startAt",
+        "endAt",
+        "search",
+        "status",
+        "contactId",
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/list-estimates",
       "sessionParams": [
@@ -681,6 +726,21 @@ export default {
       "scopes": [
         "invoices/schedule.readonly"
       ],
+      "queryParams": [
+        "status",
+        "startAt",
+        "endAt",
+        "search",
+        "paymentMode",
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/list-invoice-schedules",
       "sessionParams": [
@@ -712,6 +772,21 @@ export default {
       "scopes": [
         "invoices/template.readonly"
       ],
+      "queryParams": [
+        "status",
+        "startAt",
+        "endAt",
+        "search",
+        "paymentMode",
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/list-invoice-templates",
       "sessionParams": [
@@ -743,6 +818,24 @@ export default {
       "scopes": [
         "invoices.readonly"
       ],
+      "queryParams": [
+        "status",
+        "startAt",
+        "endAt",
+        "search",
+        "paymentMode",
+        "contactId",
+        "limit",
+        "offset",
+        "sortField",
+        "sortOrder"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/list-invoices",
       "sessionParams": [
@@ -773,6 +866,9 @@ export default {
       ],
       "scopes": [
         "invoices/estimate.readonly"
+      ],
+      "queryParams": [
+        "templateId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/preview-estimate-template",
@@ -805,6 +901,7 @@ export default {
       "scopes": [
         "invoices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/record-invoice",
       "sessionParams": [
@@ -837,6 +934,7 @@ export default {
       "scopes": [
         "invoices/schedule.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/schedule-invoice-schedule",
       "sessionParams": [
@@ -869,6 +967,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/send-estimate",
       "sessionParams": [
@@ -901,6 +1000,7 @@ export default {
       "scopes": [
         "invoices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/send-invoice",
       "sessionParams": [
@@ -932,6 +1032,7 @@ export default {
       "scopes": [
         "invoices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/text-2-pay-invoice",
       "sessionParams": [
@@ -964,6 +1065,7 @@ export default {
       "scopes": [
         "invoices/schedule.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-and-schedule-invoice-schedule"
     },
@@ -981,6 +1083,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-estimate",
       "sessionParams": [
@@ -1013,6 +1116,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-estimate-last-visited-at",
       "body": "json"
@@ -1031,6 +1135,7 @@ export default {
       "scopes": [
         "invoices/estimate.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-estimate-template",
       "sessionParams": [
@@ -1063,6 +1168,7 @@ export default {
       "scopes": [
         "invoices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-invoice",
       "sessionParams": [
@@ -1095,6 +1201,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-invoice-last-visited-at",
       "body": "json"
@@ -1113,6 +1220,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-invoice-late-fees-configuration",
       "sessionParams": [
@@ -1145,6 +1253,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-invoice-payment-methods-configuration",
       "sessionParams": [
@@ -1177,6 +1286,7 @@ export default {
       "scopes": [
         "invoices/schedule.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-invoice-schedule",
       "sessionParams": [
@@ -1209,6 +1319,7 @@ export default {
       "scopes": [
         "invoices/template.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-invoice-template",
       "sessionParams": [
@@ -1241,6 +1352,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/update-invoice-template-late-fees-configuration",
       "sessionParams": [
@@ -1273,6 +1385,7 @@ export default {
       "scopes": [
         "invoices.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/invoices/void-invoice",
       "sessionParams": [

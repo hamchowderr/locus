@@ -20,6 +20,21 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [
+        "status",
+        "paymentStatus",
+        "limit",
+        "skip",
+        "query",
+        "dateFrom",
+        "dateTo"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/proposals/list-documents-contracts",
       "sessionParams": [
@@ -45,6 +60,22 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [
+        "dateFrom",
+        "dateTo",
+        "type",
+        "name",
+        "isPublicDocument",
+        "userId",
+        "limit",
+        "skip"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/proposals/list-documents-contracts-templates",
       "sessionParams": [
@@ -70,6 +101,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/proposals/send-documents-contracts",
       "sessionParams": [
@@ -96,6 +128,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/proposals/send-documents-contracts-template",
       "sessionParams": [

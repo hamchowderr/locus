@@ -15,6 +15,7 @@ export default {
       "version": "v3",
       "tokens": [],
       "scopes": [],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/oauth/get-access-token",
       "body": "form"
@@ -31,6 +32,17 @@ export default {
       ],
       "scopes": [
         "oauth.readonly"
+      ],
+      "queryParams": [
+        "pageSize",
+        "pageToken",
+        "query",
+        "isInstalled",
+        "restrictToUserLocations",
+        "appId",
+        "versionId",
+        "onTrial",
+        "planId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/oauth/get-installed-location",
@@ -62,6 +74,7 @@ export default {
       "scopes": [
         "oauth.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/oauth/get-location-access-token",
       "sessionParams": [

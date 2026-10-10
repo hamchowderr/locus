@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/create-custom-field",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/create-custom-field-folder",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/delete-custom-field"
     },
@@ -85,6 +88,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/delete-custom-field-folder",
       "sessionParams": [
@@ -109,6 +113,7 @@ export default {
       "scopes": [
         "locations/customFields.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/get-custom-field-by-id"
     },
@@ -125,6 +130,7 @@ export default {
       "scopes": [
         "locations/customFields.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/get-custom-fields-by-object-key",
       "sessionParams": [
@@ -149,6 +155,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/update-custom-field",
       "sessionParams": [
@@ -174,6 +181,7 @@ export default {
       "scopes": [
         "locations/customFields.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-fields/update-custom-field-folder",
       "sessionParams": [
