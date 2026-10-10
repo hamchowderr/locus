@@ -13,6 +13,7 @@
       "!packages/skills/source",
       "!packages/skills/src/generated",
       "!.claude/skills/mastra",
+      "!.beads",
       "!packages/db/src/control/auth-schema.ts",
       "!packages/db/migrations"
     ]
