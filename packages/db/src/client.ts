@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Client, createClient } from "@libsql/client";
 import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
@@ -8,8 +9,14 @@ import type * as tenantSchema from "./tenant/index.ts";
 export type ControlDb = LibSQLDatabase<typeof controlSchema> & { $client: Client };
 export type TenantDb = LibSQLDatabase<typeof tenantSchema> & { $client: Client };
 
-export const CONTROL_MIGRATIONS = fileURLToPath(new URL("../migrations/control", import.meta.url));
-export const TENANT_MIGRATIONS = fileURLToPath(new URL("../migrations/tenant", import.meta.url));
+// Built from the module's own path rather than `new URL("../migrations/…", import.meta.url)`:
+// bundlers (Next.js) treat that pattern as an asset to bundle, and a folder is not one.
+const here = dirname(fileURLToPath(import.meta.url));
+export const CONTROL_MIGRATIONS = join(here, "../migrations/control");
+export const TENANT_MIGRATIONS = join(here, "../migrations/tenant");
+
+/** Local development's control database, relative to the app's working directory. */
+export const DEV_CONTROL_DB_URL = "file:.data/control.db";
 
 /** Opens the control database, e.g. `file:./.data/control.db` locally. */
 export function openControlDb(url: string, authToken?: string): ControlDb {
