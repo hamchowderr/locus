@@ -50,6 +50,11 @@ export default async function Home() {
           {client ? "Switch client" : "Choose a client"}
         </Link>
       </p>
+      <p>
+        <Link href="/team" className="underline">
+          Team
+        </Link>
+      </p>
       <form action={signOut}>
         <button type="submit" className="text-sm underline">
           Sign out

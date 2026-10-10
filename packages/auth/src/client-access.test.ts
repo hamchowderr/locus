@@ -18,10 +18,12 @@ import {
   authorizeClient,
   ClientAccessDenied,
   listAccessibleClients,
+  listTeam,
   mintClientDbToken,
   resolveActiveClient,
   type SessionContext,
   selectClient,
+  setMemberClients,
 } from "./client-access.ts";
 
 let dir: string;
@@ -162,6 +164,35 @@ describe("staff client access", () => {
     );
     const forged = { location: authorized.location, memberId: "x" } as AuthorizedClient;
     await denied(mintClientDbToken(provisioner, forged, { ttl: "10m" }));
+  });
+
+  it("lets an owner restrict a member, and the member then gets a 403 elsewhere", async () => {
+    const owner = await signedIn("owner", "agency-a");
+    const staff = await signedIn("staff", "agency-a");
+    await setMemberClients(db, owner, "staff@agency-a", [a2]);
+    await denied(authorizeClient(db, staff, a1));
+    expect((await authorizeClient(db, staff, a2)).location.id).toBe(a2);
+
+    const team = await listTeam(db, owner);
+    expect(team.find((m) => m.memberId === "staff@agency-a")?.locationIds).toEqual([a2]);
+    expect(team.find((m) => m.memberId === "owner@agency-a")?.unrestricted).toBe(true);
+
+    await setMemberClients(db, owner, "staff@agency-a", []);
+    await denied(authorizeClient(db, staff, a2));
+  });
+
+  it("only lets owners and admins manage client access, within their own agency", async () => {
+    const staff = await signedIn("staff", "agency-a");
+    await denied(setMemberClients(db, staff, "staff@agency-a", [a1, a2]));
+    await denied(listTeam(db, staff));
+
+    const owner = await signedIn("owner", "agency-a");
+    // Another agency's client, or another agency's member: refused, and nothing changes.
+    await denied(setMemberClients(db, owner, "staff@agency-a", [a1, b1]));
+    await denied(setMemberClients(db, owner, "both@agency-b", [a1]));
+    expect(
+      (await listTeam(db, owner)).find((m) => m.memberId === "staff@agency-a")?.locationIds,
+    ).toEqual([a1]);
   });
 });
 
