@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json",
-    "db:migrate": "node ../../packages/db/scripts/migrate.ts"
+    "db:migrate": "node ../../packages/db/scripts/migrate.ts",
+    "test": "vitest run"
   },
   "dependencies": {
     "@locus/auth": "workspace:*",
@@ -23,6 +24,7 @@
     "@types/node": "22.20.5",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
-    "tailwindcss": "4.3.3"
+    "tailwindcss": "4.3.3",
+    "vitest": "5.0.3"
   }
 }
