@@ -28,6 +28,13 @@ export function createAuth(config: LocusAuthConfig) {
     baseURL: config.baseURL,
     secret: config.secret,
     database: drizzleAdapter(config.db, { provider: "sqlite", schema: config.schema }),
+    session: {
+      additionalFields: {
+        // The client this session works on. Only `selectClient` sets it, after the access
+        // check; every use re-checks it (`resolveActiveClient`). Never settable from a request.
+        activeLocationId: { type: "string", required: false, input: false },
+      },
+    },
     emailAndPassword: { enabled: true, requireEmailVerification: true },
     emailVerification: {
       sendOnSignUp: true,
