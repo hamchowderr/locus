@@ -19,7 +19,8 @@ export default async function Clients({
       {error && <Notice tone="error">{error}</Notice>}
       {clients.length === 0 ? (
         <Notice tone="info">
-          No clients yet. They appear here once your agency connects GoHighLevel.
+          No clients you can work on yet. Clients appear once your agency connects GoHighLevel, and
+          an owner or admin chooses yours on the Team page.
         </Notice>
       ) : (
         <ul className="divide-y divide-neutral-200 rounded-md border border-neutral-200">
