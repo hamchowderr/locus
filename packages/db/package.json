@@ -12,7 +12,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run",
     "generate": "drizzle-kit generate --config drizzle.control.config.ts && drizzle-kit generate --config drizzle.tenant.config.ts",
-    "migrate": "node scripts/migrate.ts"
+    "migrate": "node scripts/migrate.ts",
+    "test:live": "LOCUS_LIVE_TURSO=1 vitest run src/turso.live.test.ts"
   },
   "dependencies": {
     "@libsql/client": "0.18.0",
