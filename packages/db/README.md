@@ -28,12 +28,21 @@ indexed, and a test enforces that: Turso bills rows scanned.
   detected and repaired — Drizzle's migrator only checks the newest and would miss it. One
   client failing is recorded in `location_schema_version.last_error` and never stops the rest.
 
-`TenantProvisioner` creates, grants and deletes a client's database. `LocalProvisioner` uses one
-SQLite file per client and **isolates nothing** — a test that claims to prove a tenancy
-boundary must run against Turso.
+`TenantProvisioner` creates, grants and deletes a client's database
+(`provisionerFromEnv`, `LOCUS_PROVISIONER=local|turso`):
+
+- `TursoProvisioner` — production. The Turso Platform API with `TURSO_ORG`, `TURSO_GROUP` and
+  `TURSO_API_TOKEN` (a token limited to `db:create`, `db:delete`, `db:mint-token`). Each client
+  gets an empty database in the group, and `provisionLocation` migrates it straight away, so
+  there is no template to keep current. The hostname is always the one Turso returns. Tokens
+  name one database and always expire (Turso can't revoke a single token). Deleting is safe to
+  repeat.
+- `LocalProvisioner` — development: one SQLite file per client. It **isolates nothing**; a test
+  that claims to prove a tenancy boundary must run against Turso:
+  `pnpm --filter @locus/db test:live` with the three `TURSO_*` values (a token for one client is
+  refused by another's database).
 
 ## Not here yet
 
-- `TursoProvisioner` and `LOCUS_PROVISIONER=local|turso` (needs a Turso org and Platform token).
 - Better Auth's Stripe `subscription` table (comes with billing).
 - Concurrency in the tenant runner — it walks clients one at a time.
