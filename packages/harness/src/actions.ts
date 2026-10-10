@@ -5,6 +5,7 @@
 
 import { type GhlRequestInput, type GhlSession, ghlRequest } from "@locus/ghl";
 import { isRead, operationById, type SkillOperation, skillDocs } from "@locus/skills";
+import type { WriteGuard } from "./test-mode.ts";
 
 export class ActionError extends Error {
   override name = "ActionError";
@@ -13,6 +14,8 @@ export class ActionError extends Error {
 export interface ActionDeps {
   session: GhlSession;
   fetch?: typeof fetch;
+  /** Set when writing to a real client's account in testing; see `test-mode.ts`. */
+  writeGuard?: WriteGuard | undefined;
 }
 
 /** The write path. Reads go through `query_data`; this only changes data. */
@@ -21,9 +24,14 @@ export async function performAction(
   deps: ActionDeps,
 ): Promise<unknown> {
   const op = writeOperation(input.operation);
-  return ghlRequest(op, deps.session, input.params ?? {}, {
+  const params = deps.writeGuard
+    ? deps.writeGuard.check(op, input.params ?? {})
+    : (input.params ?? {});
+  const result = await ghlRequest(op, deps.session, params, {
     ...(deps.fetch ? { fetch: deps.fetch } : {}),
   });
+  deps.writeGuard?.record(op, params, result);
+  return result;
 }
 
 /**

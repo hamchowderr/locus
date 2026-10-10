@@ -4,12 +4,15 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
 import { QueryError, type QueryLimits, runQuery } from "./query-data.ts";
+import type { WriteGuard } from "./test-mode.ts";
 
 export interface ToolDeps {
   /** Resolved server-side from the signed-in user. The model can never change it. */
   session: GhlSession;
   fetch?: typeof fetch;
   limits?: Partial<QueryLimits>;
+  /** Test-write mode for a real client's account; see `test-mode.ts`. */
+  writeGuard?: WriteGuard;
 }
 
 const categories = catalog.map((skill) => skill.category) as [string, ...string[]];
@@ -92,6 +95,7 @@ export function createLocusTools(deps: ToolDeps) {
         performAction(input, {
           session: deps.session,
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
+          ...(deps.writeGuard ? { writeGuard: deps.writeGuard } : {}),
         }),
       ),
   });

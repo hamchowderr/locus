@@ -25,6 +25,22 @@ Mistakes the model can fix (an unknown operation, a bad chain, a GHL 4xx) come b
 `query_data` uses an in-memory libSQL database per call, created and thrown away. Nested
 objects are stored as JSON text — query them with `json_extract`.
 
+## Test-write mode
+
+The only way to write to a real client's account while testing. Pass a guard to the tools or
+to `performAction`:
+
+```ts
+const writeGuard = createTestWriteGuard({ run: "rb-2026-10-10", ledger: fileLedger(path) });
+createLocusTools({ session, writeGuard });
+```
+
+Enforced in code: an allow-list of contact / note / task / tag / opportunity operations; new
+contacts must be `Locus Test …` with an `@example.com` email and no phone; only `locus-test-*`
+tags; updates and deletes only on records this run created; every created record goes into the
+ledger. `cleanupRun` (or `scripts/cleanup-test-run.ts <run> --delete`) removes them, newest
+first, and is safe to repeat.
+
 ## Not here yet
 
 - A shared GHL rate-limit budget across agents (100 req / 10 s per location).
