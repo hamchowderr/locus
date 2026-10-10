@@ -25,6 +25,8 @@ provider: open the verification link from the log.
 | `GHL_MODE` | `stub` (a pretend agency with three sub-accounts) | `live` |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID`, `GHL_SCOPES` | — | the Marketplace app's; scopes space-separated |
 | `GHL_WEBHOOK_PUBLIC_KEY` | only to test webhooks | GHL's Ed25519 key, base64 SPKI or PEM |
+| `LOCUS_PROVISIONER` | `local` (`.data/tenants/`, isolates nothing) | `turso` |
+| `TURSO_ORG`, `TURSO_GROUP`, `TURSO_API_TOKEN` | — | required for `turso`: the org slug, the `locus` group, a Platform API token |
 | `LOCUS_SECRETS` | `local` (`.data/secrets.json`) | `encrypted` — agencies' tokens sealed in the control database |
 | `LOCUS_SECRETS_KEY` | only for `encrypted` | required: 32 random bytes, base64 (`openssl rand -base64 32`) |
 | `LOCUS_SECRETS_KEY_PREVIOUS` | — | earlier keys, comma-separated, while rotating |

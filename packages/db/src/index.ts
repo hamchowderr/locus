@@ -19,3 +19,4 @@ export {
   type TenantMigration,
   type TenantMigrationReport,
 } from "./tenant-migrations.ts";
+export { provisionerFromEnv, type TursoConfig, TursoError, TursoProvisioner } from "./turso.ts";
