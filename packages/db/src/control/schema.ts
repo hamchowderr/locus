@@ -78,7 +78,8 @@ export const site = sqliteTable(
   (t) => [index("site_location_idx").on(t.locationId)],
 );
 
-// The three connections. Each stores an Infisical path (`secretRef`), never a token value.
+// The three connections. Each names its credential by path (`secretRef`); the value lives in
+// `secret` below, sealed, never in these rows.
 
 export const agencyGhlConnection = sqliteTable("agency_ghl_connection", {
   organizationId: text("organization_id")
@@ -117,6 +118,17 @@ export const hostConnection = sqliteTable("host_connection", {
 });
 
 /** Who did what, to which client. Not a foreign key: the trail outlives what it describes. */
+/**
+ * Agencies' credentials (GHL, Vercel, GitHub tokens), sealed with AES-256-GCM by
+ * `SecretCipher` from `@locus/secrets` and bound to their path. The key is not here: it is
+ * `LOCUS_SECRETS_KEY`, kept in Infisical. Read and written only through `DbSecretStore`.
+ */
+export const secret = sqliteTable("secret", {
+  path: text("path").primaryKey(),
+  sealed: text("sealed").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const auditLog = sqliteTable(
   "audit_log",
   {

@@ -149,6 +149,9 @@ importers:
       '@libsql/client':
         specifier: 0.18.0
         version: 0.18.0
+      '@locus/secrets':
+        specifier: workspace:*
+        version: link:../secrets
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@libsql/client@0.18.0)(kysely@0.29.6)
