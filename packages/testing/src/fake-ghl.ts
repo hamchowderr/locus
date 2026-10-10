@@ -15,7 +15,10 @@ export interface FakeResponse {
   body?: unknown;
 }
 
-/** Keyed by `"METHOD /path"`, matched against the request path with no query string. */
+/**
+ * Keyed by `"METHOD /path"`, matched against the request path with no query string. The key `"*"`
+ * answers any request no other route matches.
+ */
 export type FakeRoutes = Record<string, FakeResponse | ((req: RecordedRequest) => FakeResponse)>;
 
 export interface FakeGhl {
@@ -34,7 +37,7 @@ export function createFakeGhl(routes: FakeRoutes): FakeGhl {
     const recorded: RecordedRequest = { method, url, headers, body };
     requests.push(recorded);
 
-    const route = routes[`${method} ${url.pathname}`];
+    const route = routes[`${method} ${url.pathname}`] ?? routes["*"];
     if (!route) {
       return Response.json(
         { statusCode: 404, message: `fake GHL has no route for ${method} ${url.pathname}` },

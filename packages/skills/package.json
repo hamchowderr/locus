@@ -7,12 +7,18 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json"
+    "docs:fetch": "node scripts/fetch-docs.ts",
+    "generate": "node scripts/generate.ts",
+    "generate:check": "node scripts/generate.ts --check",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "@locus/ghl": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "22.20.5"
+    "@locus/testing": "workspace:*",
+    "@types/node": "22.20.5",
+    "vitest": "5.0.3"
   }
 }
