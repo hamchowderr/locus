@@ -1,5 +1,6 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth";
+import { nextCookies } from "better-auth/next-js";
 import { organization } from "better-auth/plugins";
 
 /** Sends one email. `EMAIL_MODE=console` logs it; `resend` sends it. */
@@ -38,6 +39,8 @@ export function createAuth(config: LocusAuthConfig) {
     emailAndPassword: { enabled: true, requireEmailVerification: true },
     emailVerification: {
       sendOnSignUp: true,
+      // Opening the link proves the address, so sign the user straight in.
+      autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) => {
         await sendEmail({
           to: user.email,
@@ -57,6 +60,9 @@ export function createAuth(config: LocusAuthConfig) {
           });
         },
       }),
+      // Lets Next.js server actions set the session cookie. Must stay last. Outside Next.js it
+      // is inert: loading next/headers fails and the plugin skips itself.
+      nextCookies(),
     ],
   });
 }
