@@ -2,7 +2,13 @@ import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { LocalSecretStore, MemorySecretStore, secretsFromEnv } from "./index.ts";
+import {
+  generateSecretsKey,
+  LocalSecretStore,
+  MemorySecretStore,
+  SecretCipher,
+  secretsFromEnv,
+} from "./index.ts";
 
 let dir: string;
 beforeEach(async () => {
@@ -29,11 +35,28 @@ describe("secret stores", () => {
     await expect(store.get("/locus/../x")).rejects.toThrow(/secret path/);
   });
 
-  it("never uses the local file store in production", () => {
+  it("never uses the local file store in production; production seals into the database", () => {
+    const options = { localFile: join(dir, "s.json"), encrypted: () => new MemorySecretStore() };
     expect(() => new LocalSecretStore(join(dir, "s.json"), { NODE_ENV: "production" })).toThrow();
-    expect(() => secretsFromEnv(join(dir, "s.json"), { NODE_ENV: "production" })).toThrow(
-      /Infisical/,
+    expect(() =>
+      secretsFromEnv(options, { NODE_ENV: "production", LOCUS_SECRETS: "local" }),
+    ).toThrow();
+    expect(() => secretsFromEnv(options, { NODE_ENV: "production" })).toThrow(/LOCUS_SECRETS_KEY/);
+    expect(secretsFromEnv(options, {})).toBeInstanceOf(LocalSecretStore);
+
+    let cipher: SecretCipher | undefined;
+    const store = secretsFromEnv(
+      {
+        ...options,
+        encrypted: (c) => {
+          cipher = c;
+          return new MemorySecretStore();
+        },
+      },
+      { NODE_ENV: "production", LOCUS_SECRETS_KEY: generateSecretsKey() },
     );
-    expect(secretsFromEnv(join(dir, "s.json"), {})).toBeInstanceOf(LocalSecretStore);
+    expect(store).toBeInstanceOf(MemorySecretStore);
+    expect(cipher).toBeInstanceOf(SecretCipher);
+    expect(() => secretsFromEnv(options, { LOCUS_SECRETS: "infisical" })).toThrow(/LOCUS_SECRETS/);
   });
 });

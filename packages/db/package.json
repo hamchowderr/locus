@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@libsql/client": "0.18.0",
+    "@locus/secrets": "workspace:*",
     "drizzle-orm": "0.45.4"
   },
   "devDependencies": {
