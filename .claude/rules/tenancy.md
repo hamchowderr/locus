@@ -11,6 +11,10 @@ The client (one GHL location) is the tenancy boundary. These hold everywhere, wi
   other client. GHL's tokens carry no user identity, so GHL cannot enforce this for us.
 - **One Turso database per client**, reached with a token that can only name that database.
   Nothing about a single client lives in the control database beyond its registry row.
+- **Agencies' tokens are sealed in the control database, never stored in clear and never in
+  Infisical.** They go through a `SecretStore` (`DbSecretStore` with `SecretCipher` in
+  production), bound to their path; the key (`LOCUS_SECRETS_KEY`) is the only part in
+  Infisical. Infisical holds Otaku's own secrets only.
 - **No credential reaches untrusted code.** Not the Site Studio sandbox, not generated site
   code, not the Electron renderer. They talk to the Locus backend, which holds the tokens.
 - **Never cache GHL data** beyond a single request. GHL is the system of record.

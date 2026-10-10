@@ -9,6 +9,7 @@ export {
 } from "./client.ts";
 export { offboardLocation, type ProvisionDeps, provisionLocation } from "./locations.ts";
 export { LocalProvisioner, type TenantProvisioner, tenantDbName } from "./provisioner.ts";
+export { DbSecretStore } from "./secrets.ts";
 export {
   loadTenantMigrations,
   type MigrateTenantsDeps,
