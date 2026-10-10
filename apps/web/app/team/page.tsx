@@ -1,18 +1,26 @@
 import { ClientAccessDenied, listAccessibleClients, listTeam } from "@locus/auth";
+import { agencyGhlConnection } from "@locus/db/control";
+import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { inviteMember, saveMemberClients } from "../actions";
+import { importStaff, inviteMember, saveMemberClients } from "../actions";
 import { Button, Field, Notice, Page } from "../ui";
 
 export default async function Team({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; invited?: string; saved?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    invited?: string;
+    saved?: string;
+    imported?: string;
+    ghlOnly?: string;
+  }>;
 }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fteam");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, invited, saved } = await searchParams;
+  const { error, invited, saved, imported, ghlOnly } = await searchParams;
   const ctx = sessionContext(current);
 
   const team = await listTeam(locus().db, ctx).catch((e) => {
@@ -27,12 +35,34 @@ export default async function Team({
     );
   }
   const clients = await listAccessibleClients(locus().db, ctx);
+  const [connection] = await locus()
+    .db.select({ organizationId: agencyGhlConnection.organizationId })
+    .from(agencyGhlConnection)
+    .where(eq(agencyGhlConnection.organizationId, ctx.activeOrganizationId ?? ""));
 
   return (
     <Page title="Team">
       {error && <Notice tone="error">{error}</Notice>}
       {invited && <Notice tone="info">Invitation sent.</Notice>}
       {saved && <Notice tone="info">Client access saved.</Notice>}
+      {imported !== undefined && (
+        <Notice tone="info">
+          Imported client access for {imported} members from GoHighLevel.
+          {ghlOnly && ghlOnly !== "0"
+            ? ` ${ghlOnly} GoHighLevel staff have no Locus account yet — invite them, then import again.`
+            : ""}
+        </Notice>
+      )}
+
+      {connection && (
+        <form action={importStaff} className="space-y-2 rounded-md border border-neutral-200 p-4">
+          <p className="text-sm text-neutral-600">
+            Copy which clients each member works on from GoHighLevel, matched by email. Owners and
+            admins aren't changed, and nothing is synced afterwards — edit access here from then on.
+          </p>
+          <Button>Import client access from GoHighLevel</Button>
+        </form>
+      )}
 
       <form action={inviteMember} className="space-y-3 rounded-md border border-neutral-200 p-4">
         <Field label="Invite by email" name="email" type="email" required />
