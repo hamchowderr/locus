@@ -1,0 +1,44 @@
+import Link from "next/link";
+import { signUp } from "../actions";
+import { Button, Field, Notice, Page } from "../ui";
+
+export default async function SignUp({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; sent?: string }>;
+}) {
+  const { error, sent } = await searchParams;
+  if (sent) {
+    return (
+      <Page title="Check your email">
+        <Notice tone="info">
+          We sent you a link to verify your address. Open it to finish signing up.
+        </Notice>
+      </Page>
+    );
+  }
+  return (
+    <Page title="Create your Locus account">
+      {error && <Notice tone="error">{error}</Notice>}
+      <form action={signUp} className="space-y-4">
+        <Field label="Your name" name="name" required autoComplete="name" />
+        <Field label="Work email" name="email" type="email" required autoComplete="email" />
+        <Field
+          label="Password"
+          name="password"
+          type="password"
+          required
+          minLength={8}
+          autoComplete="new-password"
+        />
+        <Button>Create account</Button>
+      </form>
+      <p className="text-sm text-neutral-600">
+        Already have an account?{" "}
+        <Link href="/sign-in" className="underline">
+          Sign in
+        </Link>
+      </p>
+    </Page>
+  );
+}

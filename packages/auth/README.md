@@ -26,7 +26,13 @@ before any GHL or Turso token for it exists.
 - `mintClientDbToken` takes the result of the check, not a location id, so a token cannot be
   minted without it.
 
+## Email
+
+`emailFromEnv()`: `EMAIL_MODE=console` prints the message (the default outside production),
+`EMAIL_MODE=resend` sends through Resend with `RESEND_API_KEY` and `EMAIL_FROM`. Unset in
+production is an error, never a silent fallback to the console.
+
 ## Not here yet
 
-- `EMAIL_MODE=console|resend`, the Next.js route handler and the sign-up screens.
+- Inviting staff and editing a member's client list from the app.
 - The Stripe plugin.
