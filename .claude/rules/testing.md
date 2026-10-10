@@ -20,9 +20,13 @@ AIMock-first: every agent, tool and skill ships with a deterministic test.
    `LOCUS_LIVE=1 pnpm --filter @locus/harness test:live` with `GHL_API_KEY` (a Private
    Integration Token) and `GHL_LOCATION_ID` set; add `NODE_USE_ENV_PROXY=1` in a proxied cloud
    session. Today's account is a **real client's production account** (KnowBS): read-only, assert
-   against GHL's own totals rather than fixed numbers, never print or commit its data. Writes
-   wait for the test-mode ledger and the trigger review in the vault note
-   `KnowBS/GHL Account Inventory`.
+   against GHL's own totals rather than fixed numbers, never print or commit its data.
+   **Writes to a real account only ever go through test-write mode** (`createTestWriteGuard` in
+   `packages/harness/src/test-mode.ts`): fake `Locus Test` contacts, `locus-test-*` tags only,
+   writes limited to records the run created, every record ledgered in `.locus-test-runs/`.
+   Clean up with `node packages/harness/scripts/cleanup-test-run.ts <run> --delete` from the repo
+   root. `test:live-writes` (`LOCUS_LIVE_WRITES=1`) stays off until the account's published
+   workflow triggers are reviewed in the vault note `KnowBS/GHL Account Inventory`.
 
 AIMock decides what the "model" does, so it can never test skill *choice* — that is level 2.
 
