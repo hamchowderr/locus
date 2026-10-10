@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "lc-email.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/email-isv/verify-email",
       "sessionParams": [

@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/create-shipping-carrier",
       "sessionParams": [
@@ -50,6 +51,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/create-shipping-rate",
       "sessionParams": [
@@ -81,6 +83,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/create-shipping-zone",
       "sessionParams": [
@@ -112,6 +115,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/create-store-setting",
       "sessionParams": [
@@ -143,6 +147,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/delete-shipping-carrier",
       "sessionParams": [
@@ -173,6 +178,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/delete-shipping-rate",
       "sessionParams": [
@@ -203,6 +209,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/delete-shipping-zone",
       "sessionParams": [
@@ -229,6 +236,7 @@ export default {
       "version": "v3",
       "tokens": [],
       "scopes": [],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/get-available-shipping-zones",
       "sessionParams": [
@@ -260,6 +268,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/get-shipping-carriers",
       "sessionParams": [
@@ -290,6 +299,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/get-shipping-rates",
       "sessionParams": [
@@ -319,6 +329,9 @@ export default {
       ],
       "scopes": [
         "none"
+      ],
+      "queryParams": [
+        "withShippingRate"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/get-shipping-zones",
@@ -350,6 +363,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/get-store-settings",
       "sessionParams": [
@@ -380,6 +394,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/list-shipping-carriers",
       "sessionParams": [
@@ -410,6 +425,16 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [
+        "limit",
+        "offset"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/list-shipping-rates",
       "sessionParams": [
@@ -440,6 +465,17 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [
+        "limit",
+        "offset",
+        "withShippingRate"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/list-shipping-zones",
       "sessionParams": [
@@ -470,6 +506,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/update-shipping-carrier",
       "sessionParams": [
@@ -501,6 +538,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/update-shipping-rate",
       "sessionParams": [
@@ -532,6 +570,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/store/update-shipping-zone",
       "sessionParams": [

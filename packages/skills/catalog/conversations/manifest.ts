@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/add-an-inbound-message",
       "body": "json"
@@ -36,6 +37,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/add-an-outbound-message",
       "body": "json"
@@ -53,6 +55,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/add-message-attachments",
       "body": "json"
@@ -70,6 +73,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/cancel-scheduled-email-message"
     },
@@ -86,6 +90,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/cancel-scheduled-message"
     },
@@ -102,6 +107,7 @@ export default {
       "scopes": [
         "conversations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/create-conversation",
       "sessionParams": [
@@ -127,6 +133,7 @@ export default {
       "scopes": [
         "conversations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/delete-conversation"
     },
@@ -143,6 +150,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/download-message-transcription",
       "sessionParams": [
@@ -167,6 +175,24 @@ export default {
       "scopes": [
         "conversations/message.readonly"
       ],
+      "queryParams": [
+        "channel",
+        "limit",
+        "cursor",
+        "sortBy",
+        "sortOrder",
+        "conversationId",
+        "contactId",
+        "startDate",
+        "endDate"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "cursor"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/export-messages-by-location",
       "sessionParams": [
@@ -191,6 +217,7 @@ export default {
       "scopes": [
         "conversations.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/get-conversation"
     },
@@ -207,6 +234,7 @@ export default {
       "scopes": [
         "conversations/message.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/get-email-by-id"
     },
@@ -223,6 +251,7 @@ export default {
       "scopes": [
         "conversations/message.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/get-message"
     },
@@ -239,6 +268,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/get-message-recording",
       "sessionParams": [
@@ -263,6 +293,7 @@ export default {
       "scopes": [
         "none"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/get-message-transcription",
       "sessionParams": [
@@ -287,6 +318,11 @@ export default {
       "scopes": [
         "conversations/message.readonly"
       ],
+      "queryParams": [
+        "lastMessageId",
+        "limit",
+        "type"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/get-messages"
     },
@@ -303,6 +339,7 @@ export default {
       "scopes": [
         "conversations/livechat.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/live-chat-agent-typing",
       "sessionParams": [
@@ -328,6 +365,26 @@ export default {
       "scopes": [
         "conversations.readonly"
       ],
+      "queryParams": [
+        "contactId",
+        "assignedTo",
+        "followers",
+        "mentions",
+        "query",
+        "sort",
+        "startAfterDate",
+        "id",
+        "limit",
+        "lastMessageType",
+        "lastMessageAction",
+        "lastMessageDirection",
+        "status",
+        "sortBy",
+        "sortScoreProfile",
+        "scoreProfile",
+        "scoreProfileMin",
+        "scoreProfileMax"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/search-conversation",
       "sessionParams": [
@@ -352,6 +409,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/send-a-new-message",
       "body": "json"
@@ -369,6 +427,7 @@ export default {
       "scopes": [
         "conversations.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/update-conversation",
       "sessionParams": [
@@ -394,6 +453,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/update-email-message-status",
       "body": "json"
@@ -411,6 +471,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/update-message-status",
       "body": "json"
@@ -428,6 +489,7 @@ export default {
       "scopes": [
         "conversations/message.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/conversations/upload-file-attachments",
       "sessionParams": [

@@ -19,6 +19,9 @@ export default {
       "scopes": [
         "campaigns.readonly"
       ],
+      "queryParams": [
+        "status"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/campaigns/get-campaigns",
       "sessionParams": [

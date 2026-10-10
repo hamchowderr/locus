@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "custom-menu-link.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-menus/create-custom-menu",
       "body": "json"
@@ -36,6 +37,7 @@ export default {
       "scopes": [
         "custom-menu-link.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-menus/delete-custom-menu"
     },
@@ -52,6 +54,7 @@ export default {
       "scopes": [
         "custom-menu-link.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-menus/get-custom-menu-by-id"
     },
@@ -68,6 +71,18 @@ export default {
       "scopes": [
         "custom-menu-link.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "query",
+        "showOnCompany"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-menus/get-custom-menus",
       "sessionParams": [
@@ -92,6 +107,7 @@ export default {
       "scopes": [
         "custom-menu-link.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/custom-menus/update-custom-menu",
       "body": "json"

@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "charges.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/charge",
       "sessionParams": [
@@ -50,6 +51,7 @@ export default {
       "scopes": [
         "charges.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/delete-charge"
     },
@@ -66,6 +68,21 @@ export default {
       "scopes": [
         "charges.readonly"
       ],
+      "queryParams": [
+        "meterId",
+        "eventId",
+        "userId",
+        "startDate",
+        "endDate",
+        "skip",
+        "limit"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/get-charges"
     },
@@ -83,6 +100,7 @@ export default {
       "scopes": [
         "marketplace-installer-details.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/get-installer-details"
     },
@@ -99,6 +117,7 @@ export default {
       "scopes": [
         "oauth.readonly"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/get-rebilling-config-for-app",
       "sessionParams": [
@@ -123,6 +142,7 @@ export default {
       "scopes": [
         "charges.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/get-specific-charge"
     },
@@ -139,6 +159,7 @@ export default {
       "scopes": [
         "charges.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/has-funds"
     },
@@ -155,6 +176,7 @@ export default {
       "scopes": [
         "marketplace-external-auth-migration.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/migrate-connection",
       "sessionParams": [
@@ -181,6 +203,7 @@ export default {
       "scopes": [
         "oauth.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/marketplace/uninstall-application",
       "sessionParams": [

@@ -19,6 +19,17 @@ export default {
       "scopes": [
         "surveys.readonly"
       ],
+      "queryParams": [
+        "skip",
+        "limit",
+        "type"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "skip"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/surveys/get-surveys",
       "sessionParams": [
@@ -43,6 +54,20 @@ export default {
       "scopes": [
         "surveys.readonly"
       ],
+      "queryParams": [
+        "page",
+        "limit",
+        "surveyId",
+        "q",
+        "startAt",
+        "endAt"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page",
+        "size": "limit"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/surveys/get-surveys-submissions",
       "sessionParams": [

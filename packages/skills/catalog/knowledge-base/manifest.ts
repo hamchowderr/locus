@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/create",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/create-knowledge-base",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/delete"
     },
@@ -85,6 +88,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/delete-file"
     },
@@ -101,6 +105,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/delete-knowledge-base"
     },
@@ -117,6 +122,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/delete-trained-urls-for-knowledge-base",
       "sessionParams": [
@@ -142,6 +148,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/discover-website",
       "sessionParams": [
@@ -167,6 +174,17 @@ export default {
       "scopes": [
         "knowledge-bases.readonly"
       ],
+      "queryParams": [
+        "knowledgeBaseId",
+        "page",
+        "pageLength",
+        "query"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/get-all-website-urls-data-by-knowledge-base",
       "sessionParams": [
@@ -190,6 +208,10 @@ export default {
       ],
       "scopes": [
         "knowledge-bases.readonly"
+      ],
+      "queryParams": [
+        "operationId",
+        "knowledgeBaseId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/get-crawling-status-for-latest-operation",
@@ -215,6 +237,7 @@ export default {
       "scopes": [
         "knowledge-bases.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/get-file-by-id"
     },
@@ -231,6 +254,19 @@ export default {
       "scopes": [
         "knowledge-bases.readonly"
       ],
+      "queryParams": [
+        "knowledgeBaseId",
+        "limit",
+        "lastFileId",
+        "offset",
+        "search"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/get-files-by-knowledge-base-public"
     },
@@ -247,6 +283,7 @@ export default {
       "scopes": [
         "knowledge-bases.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/get-knowledge-base-by-id"
     },
@@ -263,6 +300,13 @@ export default {
       "scopes": [
         "knowledge-bases.readonly"
       ],
+      "queryParams": [],
+      "pagination": {
+        "style": "page",
+        "in": "body",
+        "page": "page",
+        "size": "pageSize"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/get-sitemap-preview",
       "sessionParams": [
@@ -288,6 +332,19 @@ export default {
       "scopes": [
         "knowledge-bases.readonly"
       ],
+      "queryParams": [
+        "knowledgeBaseId",
+        "limit",
+        "lastFaqId",
+        "offset",
+        "search"
+      ],
+      "pagination": {
+        "style": "offset",
+        "in": "query",
+        "limit": "limit",
+        "offset": "offset"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/list",
       "sessionParams": [
@@ -311,6 +368,11 @@ export default {
       ],
       "scopes": [
         "knowledge-bases.readonly"
+      ],
+      "queryParams": [
+        "query",
+        "limit",
+        "lastKnowledgeBaseId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/list-all-knowledge-bases-paginated",
@@ -336,6 +398,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/train-discovered-urls",
       "sessionParams": [
@@ -361,6 +424,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/update",
       "body": "json"
@@ -378,6 +442,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/update-knowledge-base",
       "body": "json"
@@ -395,6 +460,7 @@ export default {
       "scopes": [
         "knowledge-bases.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/knowledge-base/upload-file",
       "sessionParams": [

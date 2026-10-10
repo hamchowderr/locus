@@ -19,6 +19,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-add-custom-audience-member",
       "sessionParams": [
@@ -44,6 +45,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-batch-update-audience-members",
       "sessionParams": [
@@ -69,6 +71,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-create-conversation-form",
       "sessionParams": [
@@ -94,6 +97,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-create-integration",
       "sessionParams": [
@@ -119,6 +123,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-create-page-lead-form",
       "sessionParams": [
@@ -144,6 +149,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-delete-ad",
       "sessionParams": [
@@ -169,6 +175,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-delete-ad-account",
       "sessionParams": [
@@ -194,6 +201,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-delete-adset",
       "sessionParams": [
@@ -219,6 +227,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-delete-campaign",
       "sessionParams": [
@@ -244,6 +253,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-delete-custom-audience",
       "sessionParams": [
@@ -268,6 +278,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-delete-integration",
       "sessionParams": [
@@ -293,6 +304,9 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [
+        "pageId"
+      ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-delete-page",
       "sessionParams": [
@@ -317,6 +331,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-duplicate-ad",
       "sessionParams": [
@@ -342,6 +357,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-duplicate-adset",
       "sessionParams": [
@@ -367,6 +383,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-duplicate-campaign",
       "sessionParams": [
@@ -392,6 +409,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-ad-account",
       "sessionParams": [
@@ -415,6 +433,12 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "type",
+        "next",
+        "fetchAll",
+        "limit"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-ad-accounts",
@@ -440,6 +464,10 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "fields",
+        "source"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-campaign",
       "sessionParams": [
@@ -464,6 +492,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-campaign-publishing-progress",
       "sessionParams": [
@@ -487,6 +516,10 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "startDate",
+        "endDate"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-campaign-reporting",
@@ -512,6 +545,17 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "limit",
+        "after"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "after"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-conversation-forms",
       "sessionParams": [
@@ -536,6 +580,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-current-user",
       "sessionParams": [
@@ -560,6 +605,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-custom-audience-by-id",
       "sessionParams": [
@@ -584,6 +630,21 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "type",
+        "source",
+        "adAccountId",
+        "limit",
+        "after",
+        "projection"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "after"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-custom-audiences",
       "sessionParams": [
@@ -607,6 +668,16 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "type",
+        "next",
+        "fetchAll",
+        "campaignId",
+        "adSetId",
+        "entityType",
+        "searchId",
+        "selectedAdAccountId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-entity",
@@ -632,6 +703,9 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "type"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-instagram-accounts",
       "sessionParams": [
@@ -656,6 +730,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-integration",
       "sessionParams": [
@@ -679,6 +754,9 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "isDraft"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-lead-form",
@@ -704,6 +782,18 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "projection",
+        "limit",
+        "after"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "after"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-page-lead-forms",
       "sessionParams": [
@@ -728,6 +818,18 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "fetchExisting",
+        "limit",
+        "after"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "after"
+        ]
+      },
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-pages",
       "sessionParams": [
@@ -752,6 +854,21 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "channel",
+        "pageId",
+        "igUserId",
+        "limit",
+        "after",
+        "projection"
+      ],
+      "pagination": {
+        "style": "cursor",
+        "in": "query",
+        "params": [
+          "after"
+        ]
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-pixels",
       "sessionParams": [
@@ -775,6 +892,13 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "fields",
+        "groupBy",
+        "startDate",
+        "endDate",
+        "type"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-reporting",
@@ -800,6 +924,13 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "listType",
+        "startDate",
+        "endDate",
+        "campaignId",
+        "type"
+      ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-get-reporting-list",
       "sessionParams": [
@@ -824,6 +955,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-pause-ad",
       "sessionParams": [
@@ -849,6 +981,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-pause-adset",
       "sessionParams": [
@@ -874,6 +1007,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-pause-campaign",
       "sessionParams": [
@@ -899,6 +1033,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-publish-campaign",
       "sessionParams": [
@@ -924,6 +1059,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-remove-custom-audience-member",
       "sessionParams": [
@@ -949,6 +1085,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-resume-ad",
       "sessionParams": [
@@ -974,6 +1111,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-resume-adset",
       "sessionParams": [
@@ -999,6 +1137,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-resume-campaign",
       "sessionParams": [
@@ -1024,6 +1163,11 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "type",
+        "query",
+        "searchType"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-search-targeting",
       "sessionParams": [
@@ -1048,6 +1192,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-set-default-page",
       "sessionParams": [
@@ -1073,6 +1218,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-update-custom-audience",
       "sessionParams": [
@@ -1098,6 +1244,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-upsert-ad",
       "sessionParams": [
@@ -1123,6 +1270,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-upsert-adset",
       "sessionParams": [
@@ -1148,6 +1296,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-upsert-campaign",
       "sessionParams": [
@@ -1173,6 +1322,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/fb-upsert-pixel",
       "sessionParams": [
@@ -1198,6 +1348,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-create-integration",
       "sessionParams": [
@@ -1223,6 +1374,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-create-offline-user-list-job",
       "sessionParams": [
@@ -1248,6 +1400,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-delete-ad-account",
       "sessionParams": [
@@ -1273,6 +1426,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-delete-conversion",
       "sessionParams": [
@@ -1296,6 +1450,9 @@ export default {
       ],
       "scopes": [
         "adPublishing.write"
+      ],
+      "queryParams": [
+        "type"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-delete-segment",
@@ -1321,6 +1478,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-ad-account-details",
       "sessionParams": [
@@ -1344,6 +1502,10 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "type",
+        "email"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-ad-accounts",
@@ -1369,6 +1531,13 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "type",
+        "id",
+        "advertiserOnly",
+        "limit",
+        "pageToken"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-assets",
       "sessionParams": [
@@ -1393,6 +1562,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-audience-by-id",
       "sessionParams": [
@@ -1416,6 +1586,10 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "limit",
+        "pageToken"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-audiences",
@@ -1441,6 +1615,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-campaign-by-id",
       "sessionParams": [
@@ -1464,6 +1639,10 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "startDate",
+        "endDate"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-campaign-reporting",
@@ -1489,6 +1668,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-conversion-by-id",
       "sessionParams": [
@@ -1512,6 +1692,10 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "limit",
+        "pageToken"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-conversion-goals",
@@ -1537,6 +1721,15 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "type",
+        "conversionType",
+        "category",
+        "startDate",
+        "endDate",
+        "limit",
+        "pageToken"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-conversions",
       "sessionParams": [
@@ -1561,6 +1754,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-current-user",
       "sessionParams": [
@@ -1584,6 +1778,16 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "type",
+        "campaignId",
+        "adGroupId",
+        "entityType",
+        "searchId",
+        "startDate",
+        "endDate",
+        "selectedAdAccountId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-entity",
@@ -1609,6 +1813,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-integration",
       "sessionParams": [
@@ -1633,6 +1838,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-keyword-ideas",
       "sessionParams": [
@@ -1658,6 +1864,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-publishing-progress",
       "sessionParams": [
@@ -1681,6 +1888,13 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "fields",
+        "groupBy",
+        "startDate",
+        "endDate",
+        "type"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-reporting",
@@ -1706,6 +1920,13 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "listType",
+        "startDate",
+        "endDate",
+        "campaignId",
+        "type"
+      ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-reporting-list",
       "sessionParams": [
@@ -1729,6 +1950,9 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "type"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-segment-by-id",
@@ -1754,6 +1978,11 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "type",
+        "limit",
+        "pageToken"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-segments",
       "sessionParams": [
@@ -1777,6 +2006,13 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "type",
+        "advertisingChannelType",
+        "limit",
+        "pageToken",
+        "projection"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-get-target-interests",
@@ -1802,6 +2038,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-publish-ad",
       "sessionParams": [
@@ -1827,6 +2064,10 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "type",
+        "query"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-search-targeting",
       "sessionParams": [
@@ -1851,6 +2092,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-upsert-assets",
       "sessionParams": [
@@ -1876,6 +2118,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-upsert-audience",
       "sessionParams": [
@@ -1901,6 +2144,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-upsert-campaign",
       "sessionParams": [
@@ -1926,6 +2170,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-upsert-conversion",
       "sessionParams": [
@@ -1950,6 +2195,9 @@ export default {
       ],
       "scopes": [
         "adPublishing.write"
+      ],
+      "queryParams": [
+        "type"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/google-upsert-segment",
@@ -1976,6 +2224,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-create-integration",
       "sessionParams": [
@@ -2001,6 +2250,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-create-lead-form",
       "sessionParams": [
@@ -2026,6 +2276,9 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [
+        "adAccountId"
+      ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-delete-ad-account",
       "sessionParams": [
@@ -2049,6 +2302,9 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "adAccountId"
       ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-ad-account-details",
@@ -2074,6 +2330,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-ad-accounts",
       "sessionParams": [
@@ -2097,6 +2354,14 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "pivot",
+        "groupBy",
+        "startDate",
+        "endDate",
+        "entityUrns",
+        "fields"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-ad-analytics",
@@ -2122,6 +2387,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-campaign-group",
       "sessionParams": [
@@ -2145,6 +2411,12 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "startDate",
+        "endDate",
+        "fields",
+        "campaignGroupId"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-campaign-group-reporting",
@@ -2170,6 +2442,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-current-user",
       "sessionParams": [
@@ -2194,6 +2467,7 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-integration",
       "sessionParams": [
@@ -2217,6 +2491,11 @@ export default {
       ],
       "scopes": [
         "adPublishing.readonly"
+      ],
+      "queryParams": [
+        "projection",
+        "limit",
+        "pageToken"
       ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-lead-forms",
@@ -2242,6 +2521,14 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "listType",
+        "campaignId",
+        "campaignGroupId",
+        "startDate",
+        "endDate",
+        "fields"
+      ],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-get-reporting-list",
       "sessionParams": [
@@ -2266,6 +2553,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-publish-campaign-group",
       "sessionParams": [
@@ -2291,6 +2579,11 @@ export default {
       "scopes": [
         "adPublishing.readonly"
       ],
+      "queryParams": [
+        "facet",
+        "query",
+        "q"
+      ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-search-targeting",
       "sessionParams": [
@@ -2315,6 +2608,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": true,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-update-ad-status",
       "sessionParams": [
@@ -2340,6 +2634,7 @@ export default {
       "scopes": [
         "adPublishing.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/ad-publishing/li-upsert-campaign-group",
       "sessionParams": [

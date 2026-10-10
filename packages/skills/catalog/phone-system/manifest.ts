@@ -19,6 +19,19 @@ export default {
       "scopes": [
         "phonenumbers.read"
       ],
+      "queryParams": [
+        "pageSize",
+        "page",
+        "searchFilter",
+        "skipNumberPool",
+        "includeRcsSenderIds"
+      ],
+      "pagination": {
+        "style": "page",
+        "in": "query",
+        "page": "page",
+        "size": "pageSize"
+      },
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/phone-system/active-numbers",
       "sessionParams": [
@@ -43,6 +56,7 @@ export default {
       "scopes": [
         "numberpools.read"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/phone-system/get-number-pool-list",
       "sessionParams": [
@@ -66,6 +80,16 @@ export default {
       ],
       "scopes": [
         "phonenumbers.read"
+      ],
+      "queryParams": [
+        "firstPart",
+        "lastPart",
+        "anywhere",
+        "numberTypes",
+        "smsEnabled",
+        "mmsEnabled",
+        "voiceEnabled",
+        "countryCode"
       ],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/phone-system/list-available-numbers-for-a-country",
@@ -91,6 +115,7 @@ export default {
       "scopes": [
         "phonenumbers.write"
       ],
+      "queryParams": [],
       "deprecated": false,
       "docs": "https://marketplace.gohighlevel.com/docs/ghl/phone-system/purchase-number-for-location",
       "sessionParams": [
