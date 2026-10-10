@@ -21,6 +21,8 @@ files. The short version:
 - **No credential reaches a sandbox or the desktop app.** (`tenancy.md`, `desktop.md`)
 - **Pin dependencies exactly.** (`dependencies.md`)
 - **AIMock-first tests**, three levels per skill. (`testing.md`)
+- **Never write Mastra code from memory** — use the `mastra` skill and MCP server, and never
+  send feedback to Mastra without asking. (`mastra.md`)
 
 ## Layout
 
