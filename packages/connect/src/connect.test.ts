@@ -190,7 +190,9 @@ describe("connecting GoHighLevel", () => {
         },
       },
     });
-    await expect(exchangeCode(ghl, "code", { fetch: fake.fetch })).rejects.toThrow(/agency level/);
+    const exchange = exchangeCode(ghl, "code", { fetch: fake.fetch });
+    await expect(exchange).rejects.toBeInstanceOf(ConnectError);
+    await expect(exchange).rejects.toThrow(/pick your agency/);
     expect(fake.requests[0]?.body).toMatchObject({
       grant_type: "authorization_code",
       user_type: "Company",
