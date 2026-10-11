@@ -1,6 +1,7 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { checkClientConnection } from "@/lib/connect";
 import { configured, currentSession, locus, sessionContext } from "@/lib/locus";
 import { signOut } from "./actions";
 import { Notice, Page } from "./ui";
@@ -35,6 +36,7 @@ export default async function Home() {
     if (error instanceof ClientAccessDenied) return null;
     throw error;
   });
+  const ghl = client ? await checkClientConnection(client) : null;
   return (
     <Page title="Locus">
       <p className="text-neutral-600">Signed in as {current.user.email}.</p>
@@ -50,6 +52,12 @@ export default async function Home() {
           {client ? "Switch client" : "Choose a client"}
         </Link>
       </p>
+      {ghl &&
+        (ghl.ok ? (
+          <Notice tone="info">GoHighLevel: connected to {ghl.name || "this sub-account"}.</Notice>
+        ) : (
+          <Notice tone="error">GoHighLevel: can't reach this client. {ghl.reason}</Notice>
+        ))}
       <p>
         <Link href="/team" className="underline">
           Team

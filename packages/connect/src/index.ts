@@ -2,6 +2,8 @@ export {
   agencyToken,
   type ConnectDeps,
   ConnectError,
+  checkClientGhl,
+  clientGhlSession,
   connectAgency,
   ghlSecretRef,
   type SyncResult,
@@ -16,7 +18,9 @@ export {
   type GhlHttp,
   type InstalledLocation,
   listInstalledLocations,
+  mintLocationToken,
   NEUTRAL_AUTHORIZE_BASE,
+  readLocationName,
   refreshGrant,
 } from "./ghl-oauth.ts";
 export { GHL_SCOPES } from "./ghl-scopes.ts";
