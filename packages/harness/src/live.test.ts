@@ -16,7 +16,9 @@ import { runQuery } from "./query-data.ts";
 
 const token = process.env.GHL_API_KEY;
 const locationId = process.env.GHL_LOCATION_ID;
-const live = process.env.LOCUS_LIVE === "1" && Boolean(token && locationId);
+// `pnpm … test:live` turns it on on any OS (pnpm names the running script); so does the flag.
+const requested = process.env.LOCUS_LIVE === "1" || process.env.npm_lifecycle_event === "test:live";
+const live = requested && Boolean(token && locationId);
 
 describe.skipIf(!live)("live GHL (read-only)", () => {
   const session: GhlSession = {

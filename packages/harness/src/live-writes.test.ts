@@ -17,7 +17,10 @@ import { cleanupRun, createTestWriteGuard, fileLedger } from "./test-mode.ts";
 
 const token = process.env.GHL_API_KEY;
 const locationId = process.env.GHL_LOCATION_ID;
-const enabled = process.env.LOCUS_LIVE_WRITES === "1" && Boolean(token && locationId);
+// `pnpm … test:live-writes` turns it on on any OS (pnpm names the running script); so does the flag.
+const requested =
+  process.env.LOCUS_LIVE_WRITES === "1" || process.env.npm_lifecycle_event === "test:live-writes";
+const enabled = requested && Boolean(token && locationId);
 
 describe.skipIf(!enabled)("live writes in test mode", () => {
   test("create a fake contact with a note and a task, then remove every trace", async () => {
