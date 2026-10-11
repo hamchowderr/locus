@@ -1,4 +1,9 @@
-import { requireAgencyManager, type SessionContext } from "@locus/auth";
+import {
+  type AuthorizedClient,
+  assertAuthorizedClient,
+  requireAgencyManager,
+  type SessionContext,
+} from "@locus/auth";
 import {
   type ControlDb,
   finishProvisioning,
@@ -8,6 +13,7 @@ import {
   type TenantProvisioner,
 } from "@locus/db";
 import { agencyGhlConnection, location } from "@locus/db/control";
+import type { GhlSession } from "@locus/ghl";
 import type { SecretStore } from "@locus/secrets";
 import { and, eq } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
@@ -17,6 +23,8 @@ import {
   type GhlAppConfig,
   type GhlHttp,
   listInstalledLocations,
+  mintLocationToken,
+  readLocationName,
   refreshGrant,
 } from "./ghl-oauth.ts";
 
@@ -105,6 +113,38 @@ export async function agencyToken(
     await deps.secrets.set(connection.secretRef, JSON.stringify(grant));
   }
   return { token: grant.accessToken, companyId: grant.companyId };
+}
+
+/**
+ * A GHL session for one client, for the current request only: it is never stored, logged or
+ * returned to the browser. Takes the result of the staff check (`authorizeClient` or
+ * `resolveActiveClient`), so it can't be minted for a client the member may not work on.
+ */
+export async function clientGhlSession(
+  deps: ConnectDeps,
+  client: AuthorizedClient,
+): Promise<GhlSession> {
+  assertAuthorizedClient(client);
+  const agency = await agencyToken(deps, client.location.organizationId);
+  const ghlLocationId = client.location.ghlLocationId;
+  return {
+    token: await mintLocationToken(agency, ghlLocationId, deps.http),
+    tokenKind: "location",
+    locationId: ghlLocationId,
+    companyId: agency.companyId,
+  };
+}
+
+/**
+ * Proves Locus can act inside the client: mints its session and reads the sub-account's name
+ * back from GHL. Read-only.
+ */
+export async function checkClientGhl(
+  deps: ConnectDeps,
+  client: AuthorizedClient,
+): Promise<{ name: string }> {
+  const session = await clientGhlSession(deps, client);
+  return { name: await readLocationName(session, deps.http) };
 }
 
 export interface SyncResult {

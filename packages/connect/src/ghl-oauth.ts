@@ -147,6 +147,51 @@ export async function refreshGrant(
   return { ...renewed, installedBy: grant.installedBy };
 }
 
+interface LocationTokenResponse {
+  access_token?: string;
+  locationId?: string;
+}
+
+/**
+ * Exchanges the agency token for one sub-account's token. The caller has already run the
+ * staff check; this only talks to GHL. The sub-account and agency come from the session, which
+ * `ghlRequest` puts in the form body — never from the caller's input.
+ */
+export async function mintLocationToken(
+  agency: { token: string; companyId: string },
+  ghlLocationId: string,
+  http: GhlHttp = {},
+): Promise<string> {
+  const session: GhlSession = {
+    token: agency.token,
+    tokenKind: "agency",
+    companyId: agency.companyId,
+    locationId: ghlLocationId,
+  };
+  const res = await ghlRequest<LocationTokenResponse>(
+    operation("oauth.get-location-access-token"),
+    session,
+    {},
+    http,
+  );
+  if (!res.access_token) throw new Error("GoHighLevel's sub-account token response was empty.");
+  if (res.locationId && res.locationId !== ghlLocationId) {
+    throw new Error("GoHighLevel returned a token for a different sub-account.");
+  }
+  return res.access_token;
+}
+
+/** The sub-account's name as GHL has it, read with that sub-account's own session. */
+export async function readLocationName(session: GhlSession, http: GhlHttp = {}): Promise<string> {
+  const res = await ghlRequest<{ location?: { name?: string } }>(
+    operation("locations.get-location"),
+    session,
+    {},
+    http,
+  );
+  return res.location?.name ?? "";
+}
+
 export interface InstalledLocation {
   ghlLocationId: string;
   name: string;

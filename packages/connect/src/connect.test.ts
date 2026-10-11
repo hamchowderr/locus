@@ -2,7 +2,13 @@ import { generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ClientAccessDenied, listAccessibleClients, type SessionContext } from "@locus/auth";
+import {
+  type AuthorizedClient,
+  authorizeClient,
+  ClientAccessDenied,
+  listAccessibleClients,
+  type SessionContext,
+} from "@locus/auth";
 import {
   type ControlDb,
   DbSecretStore,
@@ -20,6 +26,8 @@ import {
   agencyToken,
   type ConnectDeps,
   ConnectError,
+  checkClientGhl,
+  clientGhlSession,
   connectAgency,
   ghlSecretRef,
   syncLocations,
@@ -221,6 +229,81 @@ describe("connecting GoHighLevel", () => {
     const renewed = await agencyToken(deps, "agency-a");
     expect(renewed.token).not.toBe(first.token);
     expect(await secrets.get(ghlSecretRef("agency-a"))).toContain(renewed.token);
+  });
+});
+
+describe("sub-account sessions", () => {
+  /** Every request the stub GHL saw, as "METHOD /path". */
+  let seen: string[];
+  beforeEach(async () => {
+    const stub = createStubGhl(agency);
+    seen = [];
+    deps.http = {
+      baseUrl: "https://stub.ghl.test",
+      fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        seen.push(`${init?.method ?? "GET"} ${new URL(String(input)).pathname}`);
+        return stub(input, init);
+      }) as typeof fetch,
+    };
+    await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
+  });
+  const clientNamed = async (name: string) => {
+    const row = (await registry("agency-a")).find((l) => l.name === name);
+    if (!row) throw new Error(`no client ${name}`);
+    return row;
+  };
+
+  it("mints the sub-account's own token from the agency token, after the staff check", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
+    seen = [];
+    const session = await clientGhlSession(deps, client);
+    expect(session).toMatchObject({
+      tokenKind: "location",
+      locationId: harbor.ghlLocationId,
+      companyId: "stub-company-1",
+    });
+    expect(session.token).toMatch(/^stub-location-token-stub-location-3-/);
+    expect(seen).toEqual(["POST /oauth/location-token"]);
+
+    expect(await checkClientGhl(deps, client)).toEqual({ name: "Harbor Realty" });
+  });
+
+  it("never stores the sub-account token", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    await clientGhlSession(deps, await authorizeClient(db, ctx("owner", "agency-a"), harbor.id));
+    expect(JSON.stringify([...secrets.values.values()])).not.toContain("stub-location-token");
+    const tables = await db.$client.execute(
+      "select name from sqlite_master where type = 'table' and name not like 'sqlite_%'",
+    );
+    for (const { name } of tables.rows) {
+      const rows = await db.$client.execute(`select * from "${name}"`);
+      expect(JSON.stringify(rows.rows)).not.toContain("stub-location-token");
+    }
+  });
+
+  it("refuses a client that didn't come from the staff check, before asking GHL", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    const forged: AuthorizedClient = { location: harbor, memberId: "owner@agency-a" };
+    seen = [];
+    await expect(clientGhlSession(deps, forged)).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(seen).toEqual([]);
+  });
+
+  it("a restricted member gets nothing minted for a client off their list", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    seen = [];
+    await expect(authorizeClient(db, ctx("staff", "agency-a"), harbor.id)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    expect(seen).toEqual([]);
+  });
+
+  it("passes on GHL refusing, e.g. Locus no longer installed there", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
+    agency.locations = agency.locations.filter((l) => l.name !== "Harbor Realty");
+    await expect(clientGhlSession(deps, client)).rejects.toBeInstanceOf(GhlError);
   });
 });
 
