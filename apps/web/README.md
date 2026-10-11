@@ -17,6 +17,9 @@ provider: open the verification link from the log.
 
 | Variable | Locally | Production |
 |---|---|---|
+| `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` | — | the machine identity: **the only values set on the deployment** |
+| `INFISICAL_PROJECT_ID` | — | the `otaku-internal` project's id |
+| `INFISICAL_ENVIRONMENT`, `INFISICAL_SECRET_PATH`, `INFISICAL_SITE_URL` | — | default `prod`, `/locus`, `https://app.infisical.com` |
 | `LOCUS_CONTROL_DB_URL` | `file:.data/control.db` | Turso URL — required |
 | `LOCUS_CONTROL_DB_TOKEN` | — | Turso token |
 | `BETTER_AUTH_SECRET` | a dev-only default | required |
@@ -37,9 +40,14 @@ provider: open the verification link from the log.
 | `LOCUS_SECRETS_KEY_PREVIOUS` | — | earlier keys, comma-separated, while rotating |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
-auth API answers 503 — it never falls back to development defaults. Otaku's own secrets (the
-values in this table) come from Infisical (`/locus`); agencies' tokens are sealed in the control
-database with `LOCUS_SECRETS_KEY`, which is itself one of those Infisical values.
+auth API answers 503 — it never falls back to development defaults.
+
+In production every other value in this table is read from Infisical (`prod:/locus`, which
+imports `/shared`) when a server instance starts (`instrumentation.ts` → `lib/settings.ts`), so
+no copy lives in Vercel. A value set on the deployment wins over Infisical's.
+
+Agencies' own tokens are not in Infisical: they are sealed in the control database with
+`LOCUS_SECRETS_KEY`, which is itself one of those Infisical values.
 
 ## Pages
 
