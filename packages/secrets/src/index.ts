@@ -4,12 +4,6 @@ import { dirname } from "node:path";
 import { SecretCipher } from "./cipher.ts";
 
 export { generateSecretsKey, SecretCipher, SecretUnreadable } from "./cipher.ts";
-export {
-  InfisicalLoadError,
-  type InfisicalLoadResult,
-  infisicalConfigured,
-  loadInfisicalEnv,
-} from "./infisical.ts";
 
 /**
  * Where credentials live, addressed by path (`secretRef`, e.g. `/locus/ghl/<organizationId>`).
