@@ -1,10 +1,11 @@
 // Production settings from Infisical at server start. The deployment holds only a machine
 // identity (Universal Auth) that can read one folder; every other value is fetched here.
 //
-// Contract read from Infisical's own SDK (@infisical/sdk 5.0.2, 2026-10-11):
+// Contract read from infisical.com/docs/api-reference (2026-10-11):
 //   POST /api/v1/auth/universal-auth/login  { clientId, clientSecret } -> { accessToken }
-//   GET  /api/v3/secrets/raw?workspaceId&environment&secretPath&include_imports&...
+//   GET  /api/v4/secrets?projectId&environment&secretPath&includeImports&...
 //        -> { secrets: [{ secretKey, secretValue }], imports: [{ secretPath, secrets }] }
+// (The older /api/v3/secrets/raw, which the Node SDK still calls, is listed as deprecated.)
 // A folder's own secrets win over the folders it imports (here /locus over /shared).
 
 type Env = Record<string, string | undefined>;
@@ -70,15 +71,15 @@ export async function loadInfisicalEnv(
   }
 
   const query = new URLSearchParams({
-    workspaceId: projectId as string,
+    projectId: projectId as string,
     environment,
     secretPath,
-    include_imports: "true",
+    includeImports: "true",
     expandSecretReferences: "true",
     recursive: "false",
     viewSecretValue: "true",
   });
-  const list = await f(`${site}/api/v3/secrets/raw?${query}`, {
+  const list = await f(`${site}/api/v4/secrets?${query}`, {
     headers: { authorization: `Bearer ${auth.accessToken}` },
   });
   const body = (await list.json().catch(() => ({}))) as {
