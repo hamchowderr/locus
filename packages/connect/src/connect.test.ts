@@ -22,6 +22,7 @@ import {
   ConnectError,
   connectAgency,
   ghlSecretRef,
+  syncLocations,
 } from "./agency.ts";
 import { authorizeUrl, exchangeCode, type GhlAppConfig } from "./ghl-oauth.ts";
 import { importStaffAccess, listAgencyStaff } from "./staff.ts";
@@ -150,6 +151,19 @@ describe("connecting GoHighLevel", () => {
     const again = await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
     expect(again).toMatchObject({ added: 0, unchanged: 3 });
     expect(await registry("agency-a")).toHaveLength(3);
+  });
+
+  it("finishes a sub-account an earlier run left half set up", async () => {
+    await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
+    const [stuck] = await registry("agency-a");
+    if (!stuck) throw new Error("no client registered");
+    await db.update(location).set({ status: "provisioning" }).where(eq(location.id, stuck.id));
+
+    const again = await syncLocations(deps, "agency-a");
+    expect(again).toMatchObject({ added: 1, unchanged: 2 });
+    const rows = await registry("agency-a");
+    expect(rows).toHaveLength(3);
+    expect(rows.every((r) => r.status === "active")).toBe(true);
   });
 
   it("only lets owners and admins connect", async () => {
