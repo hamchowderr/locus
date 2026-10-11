@@ -20,7 +20,7 @@ provider: open the verification link from the log.
 | `LOCUS_CONTROL_DB_URL` | `file:.data/control.db` | Turso URL — required |
 | `LOCUS_CONTROL_DB_TOKEN` | — | Turso token |
 | `BETTER_AUTH_SECRET` | a dev-only default | required |
-| `BETTER_AUTH_URL` | `http://localhost:3000` | `https://locus.otakusolutions.io` |
+| `BETTER_AUTH_URL` | `http://localhost:3000` | `https://locus.otakusolutions.io`. A Vercel preview ignores it and uses its own branch URL (`VERCEL_BRANCH_URL`) |
 | `EMAIL_MODE` | `console` | `resend`, with `RESEND_API_KEY` and `EMAIL_FROM` |
 | `GHL_MODE` | `stub` (a pretend agency with three sub-accounts) | `live` |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | — | the Marketplace app's. Its scopes are `GHL_SCOPES` in `@locus/connect`, never a setting |

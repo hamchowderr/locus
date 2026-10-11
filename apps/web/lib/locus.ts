@@ -2,6 +2,7 @@ import { createAuth, emailFromEnv, type SessionContext } from "@locus/auth";
 import { type ControlDb, DEV_CONTROL_DB_URL, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { headers } from "next/headers";
+import { deploymentBaseUrl } from "./base-url.ts";
 
 /**
  * Thrown in production when a setting is missing or wrong. The message names the setting, never
@@ -46,7 +47,7 @@ function build() {
   const auth = createAuth({
     db,
     schema,
-    baseURL: setting("BETTER_AUTH_URL", "http://localhost:3000"),
+    baseURL: deploymentBaseUrl() ?? setting("BETTER_AUTH_URL", "http://localhost:3000"),
     secret: setting("BETTER_AUTH_SECRET", "local-development-only-secret-not-for-production"),
     sendEmail: emailFromEnv(),
     billing: billingFromEnv(),
