@@ -8,7 +8,9 @@ import { createClient } from "@libsql/client";
 import { afterAll, describe, expect, it } from "vitest";
 import { TursoProvisioner } from "./turso.ts";
 
-const live = process.env.LOCUS_LIVE_TURSO === "1";
+// `pnpm … test:live` turns it on on any OS (pnpm names the running script); so does the flag.
+const live =
+  process.env.LOCUS_LIVE_TURSO === "1" || process.env.npm_lifecycle_event === "test:live";
 
 describe.skipIf(!live)("Turso, live", () => {
   const provisioner = live
