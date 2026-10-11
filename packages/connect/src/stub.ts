@@ -1,7 +1,8 @@
 /**
  * `GHL_MODE=stub`: a pretend GHL agency, so the connect flow can be built and run without a
- * GoHighLevel account or the Marketplace app. It answers the three OAuth endpoints Locus uses,
- * as the live docs describe them, for one fixture company — plus users search for its staff.
+ * GoHighLevel account or the Marketplace app. It answers the OAuth endpoints Locus uses, as the
+ * live docs describe them, for one fixture company — plus users search for its staff, and
+ * reading a sub-account with that sub-account's own token.
  */
 
 export interface StubAgency {
@@ -78,6 +79,16 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
         : Response.json({ statusCode: 401, message: "Invalid grant" }, { status: 401 });
     }
 
+    // A sub-account token reaches its own sub-account and nothing else.
+    const asLocation = /^Bearer stub-location-token-(.+)-\d+$/.exec(auth)?.[1];
+    if (asLocation) {
+      const own = agency.locations.find((l) => l._id === asLocation);
+      if (method === "GET" && own && url.pathname === `/locations/${own._id}`) {
+        return Response.json({ location: { id: own._id, name: own.name } });
+      }
+      return Response.json({ statusCode: 403, message: "Not this sub-account" }, { status: 403 });
+    }
+
     if (!auth.startsWith("Bearer stub-agency-token-")) {
       return Response.json({ statusCode: 401, message: "Invalid token" }, { status: 401 });
     }
@@ -100,6 +111,23 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
           totalRecords: agency.locations.length,
           ...(next ? { nextPageToken: next } : {}),
         },
+      });
+    }
+
+    if (method === "POST" && url.pathname === "/oauth/location-token") {
+      const form = new URLSearchParams(String(init?.body ?? ""));
+      const locationId = form.get("locationId");
+      const installed = agency.locations.some((l) => l._id === locationId);
+      if (form.get("companyId") !== agency.companyId || !installed) {
+        return Response.json({ statusCode: 400, message: "Not installed" }, { status: 400 });
+      }
+      return Response.json({
+        access_token: `stub-location-token-${locationId}-${++issued}`,
+        token_type: "Bearer",
+        expires_in: 86_400,
+        scope: "locations.readonly",
+        locationId,
+        userId: "stub-user-1",
       });
     }
 

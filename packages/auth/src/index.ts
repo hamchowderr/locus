@@ -1,6 +1,7 @@
 export { createAuth, type LocusAuth, type LocusAuthConfig, type SendEmail } from "./auth.ts";
 export {
   type AuthorizedClient,
+  assertAuthorizedClient,
   authorizeClient,
   ClientAccessDenied,
   type LocationRow,

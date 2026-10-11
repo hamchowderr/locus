@@ -144,6 +144,15 @@ export async function resolveActiveClient(
 }
 
 /**
+ * Throws unless `client` came from `authorizeClient` in this process. Anything that mints a
+ * token for a client takes an `AuthorizedClient` and calls this first, so the staff check
+ * can't be skipped by building the object by hand.
+ */
+export function assertAuthorizedClient(client: AuthorizedClient): void {
+  if (!issued.has(client)) throw new ClientAccessDenied("client was not authorized");
+}
+
+/**
  * A database token for an authorized client. Takes the result of the access check rather than
  * a location id, so a token cannot be minted without it.
  */
@@ -152,7 +161,7 @@ export async function mintClientDbToken(
   client: AuthorizedClient,
   opts: { readOnly?: boolean; ttl: string },
 ): Promise<string> {
-  if (!issued.has(client)) throw new ClientAccessDenied("client was not authorized");
+  assertAuthorizedClient(client);
   return provisioner.mintToken(client.location.tursoDbName, opts);
 }
 
