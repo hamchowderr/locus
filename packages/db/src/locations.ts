@@ -34,10 +34,20 @@ export async function provisionLocation(
     await deps.provisioner.destroy(dbName);
     throw e;
   }
-  const report = await migrateTenant({ ...deps, locationId: id });
-  if (report.error) throw new Error(`Client ${id} was created but not migrated: ${report.error}`);
-  await deps.control.update(location).set({ status: "active" }).where(eq(location.id, id));
+  await finishProvisioning(deps, id);
   return { id, dbName, hostname };
+}
+
+/**
+ * Migrates a registered client's database and marks it active. Also resumes a client left in
+ * `provisioning` by an earlier attempt that failed after its database was created.
+ */
+export async function finishProvisioning(deps: ProvisionDeps, locationId: string) {
+  const report = await migrateTenant({ ...deps, locationId });
+  if (report.error) {
+    throw new Error(`Client ${locationId} was created but not migrated: ${report.error}`);
+  }
+  await deps.control.update(location).set({ status: "active" }).where(eq(location.id, locationId));
 }
 
 /** Deletes the client's database, then its registry row (which cascades to everything else). */

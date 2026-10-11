@@ -7,7 +7,12 @@ export {
   TENANT_MIGRATIONS,
   type TenantDb,
 } from "./client.ts";
-export { offboardLocation, type ProvisionDeps, provisionLocation } from "./locations.ts";
+export {
+  finishProvisioning,
+  offboardLocation,
+  type ProvisionDeps,
+  provisionLocation,
+} from "./locations.ts";
 export { LocalProvisioner, type TenantProvisioner, tenantDbName } from "./provisioner.ts";
 export { DbSecretStore } from "./secrets.ts";
 export {
@@ -16,6 +21,7 @@ export {
   migrateTenant,
   migrateTenants,
   planTenantMigrations,
+  TENANT_MIGRATION_SET,
   type TenantMigration,
   type TenantMigrationReport,
 } from "./tenant-migrations.ts";

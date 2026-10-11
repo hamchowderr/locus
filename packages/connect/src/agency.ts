@@ -1,6 +1,7 @@
 import { requireAgencyManager, type SessionContext } from "@locus/auth";
 import {
   type ControlDb,
+  finishProvisioning,
   type ProvisionDeps,
   provisionLocation,
   type TenantMigration,
@@ -116,8 +117,9 @@ export interface SyncResult {
 }
 
 /**
- * Registers every sub-account GHL says has Locus installed and isn't in the registry yet, and
- * reactivates suspended ones that are installed again. Never removes one: an uninstall arrives
+ * Registers every sub-account GHL says has Locus installed and isn't in the registry yet,
+ * finishes any an earlier run left half set up, and reactivates suspended ones that are
+ * installed again. Never removes one: an uninstall arrives
  * as a webhook.
  */
 export async function syncLocations(
@@ -146,6 +148,9 @@ export async function syncLocations(
         ghlLocationId: item.ghlLocationId,
         name: item.name,
       });
+      result.added++;
+    } else if (existing.status === "provisioning") {
+      await finishProvisioning(provision, existing.id);
       result.added++;
     } else if (existing.status === "suspended") {
       await deps.db
