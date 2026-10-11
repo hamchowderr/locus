@@ -17,3 +17,13 @@ export {
   type TeamMember,
 } from "./client-access.ts";
 export { consoleEmail, emailFromEnv, resendEmail } from "./email.ts";
+export {
+  type AgencySummary,
+  isComped,
+  isOperator,
+  listAgencies,
+  NotOperator,
+  operatorsFromEnv,
+  requireOperator,
+  setComped,
+} from "./operator.ts";

@@ -1,4 +1,4 @@
-import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
+import { ClientAccessDenied, isOperator, operatorsFromEnv, resolveActiveClient } from "@locus/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { checkClientConnection } from "@/lib/connect";
@@ -37,6 +37,7 @@ export default async function Home() {
     throw error;
   });
   const ghl = client ? await checkClientConnection(client) : null;
+  const operator = await isOperator(locus().db, sessionContext(current), operatorsFromEnv());
   return (
     <Page title="Locus">
       <p className="text-neutral-600">Signed in as {current.user.email}.</p>
@@ -66,6 +67,15 @@ export default async function Home() {
         <Link href="/connect" className="underline">
           GoHighLevel
         </Link>
+        {operator && (
+          <>
+            {" "}
+            ·{" "}
+            <Link href="/operator" className="underline">
+              Operator
+            </Link>
+          </>
+        )}
       </p>
       <form action={signOut}>
         <button type="submit" className="text-sm underline">
