@@ -12,7 +12,7 @@ export class NotConfigured extends Error {
   constructor(what: string) {
     super(`Locus is not configured: ${what}`);
     this.name = "NotConfigured";
-    console.warn(this.message);
+    console.error(this.message);
   }
 }
 
