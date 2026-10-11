@@ -11,6 +11,7 @@ import {
 import { DbSecretStore, provisionerFromEnv } from "@locus/db";
 import { GhlError } from "@locus/ghl";
 import { secretsFromEnv } from "@locus/secrets";
+import { deploymentBaseUrl } from "./base-url.ts";
 import { billingEnabled, locus, NotConfigured } from "./locus.ts";
 
 const production = process.env.NODE_ENV === "production";
@@ -33,7 +34,7 @@ export function required(name: string): string {
 }
 
 export function baseUrl(): string {
-  return process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
+  return deploymentBaseUrl() ?? "http://localhost:3000";
 }
 
 function appConfig(): GhlAppConfig {
