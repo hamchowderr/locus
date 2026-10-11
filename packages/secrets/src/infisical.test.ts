@@ -60,12 +60,12 @@ describe("loading settings from Infisical", () => {
     expect(calls[0]?.url.href).toBe("https://app.infisical.com/api/v1/auth/universal-auth/login");
     expect(calls[0]?.body).toEqual({ clientId: "client-id", clientSecret: "client-secret-value" });
 
-    expect(calls[1]?.url.pathname).toBe("/api/v3/secrets/raw");
+    expect(calls[1]?.url.pathname).toBe("/api/v4/secrets");
     expect(Object.fromEntries(calls[1]?.url.searchParams ?? [])).toEqual({
-      workspaceId: "project-1",
+      projectId: "project-1",
       environment: "prod",
       secretPath: "/locus",
-      include_imports: "true",
+      includeImports: "true",
       expandSecretReferences: "true",
       recursive: "false",
       viewSecretValue: "true",
