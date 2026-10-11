@@ -131,6 +131,20 @@ export const secret = sqliteTable("secret", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+/**
+ * Agencies a deployment's operator has comped: they count as paid without a Stripe
+ * subscription. A row means comped; deleting it ends the comp. Each change is in `audit_log`.
+ */
+export const agencyComp = sqliteTable("agency_comp", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  /** The operator who comped it. Not a foreign key, like `audit_log.actor_user_id`. */
+  compedByUserId: text("comped_by_user_id").notNull(),
+  note: text("note"),
+  createdAt: createdAt(),
+});
+
 export const auditLog = sqliteTable(
   "audit_log",
   {
