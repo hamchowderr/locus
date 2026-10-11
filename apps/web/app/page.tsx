@@ -66,6 +66,10 @@ export default async function Home() {
         ·{" "}
         <Link href="/connect" className="underline">
           GoHighLevel
+        </Link>{" "}
+        ·{" "}
+        <Link href="/billing" className="underline">
+          Billing
         </Link>
         {operator && (
           <>

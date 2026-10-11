@@ -31,6 +31,10 @@ export function settingsProblems(env: Record<string, string | undefined>): strin
     const missing = names.filter((name) => !env[name]);
     if (missing.length > 0) problems.push(`${feature}: ${missing.join(", ")} not set`);
   }
+  // Billing is optional, but a key without the webhook secret records no payment.
+  if (env.STRIPE_SECRET_KEY && !env.STRIPE_WEBHOOK_SECRET) {
+    problems.push("billing: STRIPE_WEBHOOK_SECRET not set");
+  }
   for (const name of STUB_SWITCHES) {
     if (env[name] === "stub" || env[name] === "console")
       problems.push(`${name} is set to a development mode`);

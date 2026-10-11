@@ -50,6 +50,20 @@
       "when": 1791753665428,
       "tag": "0006_agency_comp",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791754205299,
+      "tag": "0007_stripe_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791754221675,
+      "tag": "0008_stripe_billing_indexes",
+      "breakpoints": true
     }
   ]
 }
