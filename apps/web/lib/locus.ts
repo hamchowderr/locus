@@ -3,11 +3,16 @@ import { type ControlDb, DEV_CONTROL_DB_URL, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { headers } from "next/headers";
 
-/** Thrown in production when the control database or auth secret isn't configured. */
+/**
+ * Thrown in production when a setting is missing or wrong. The message names the setting, never
+ * its value, and is logged so the deployment's logs say which one; the visitor sees only that
+ * something isn't set up.
+ */
 export class NotConfigured extends Error {
   constructor(what: string) {
     super(`Locus is not configured: ${what}`);
     this.name = "NotConfigured";
+    console.warn(this.message);
   }
 }
 
