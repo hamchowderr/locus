@@ -1,5 +1,6 @@
 import { type GhlOperation, type GhlSession, ghlRequest } from "@locus/ghl";
 import { operationById } from "@locus/skills";
+import { ConnectError } from "./errors.ts";
 
 /** The Locus GHL Marketplace app. Client id and secret come from Infisical `/locus`. */
 export interface GhlAppConfig {
@@ -66,14 +67,21 @@ interface TokenResponse {
 /** The token endpoint takes no Authorization header, so no real session is involved. */
 const NO_SESSION: GhlSession = { token: "", tokenKind: "agency" };
 
+/**
+ * GHL's install page lists the agency first and its sub-accounts below. Picking a single
+ * sub-account installs Locus there alone and yields a Location token, which can't list or reach
+ * the agency's other sub-accounts; picking the agency is the bulk install, which yields the
+ * Company token Locus runs on and then asks which sub-accounts get Locus.
+ */
 function toGrant(res: TokenResponse, now: number): AgencyGrant {
   if (res.userType !== "Company" || !res.companyId) {
-    throw new Error(
-      "GoHighLevel returned a sub-account token. Install Locus at the agency level instead.",
+    throw new ConnectError(
+      "You picked a single sub-account. Connect again and pick your agency at the top of " +
+        "GoHighLevel's list; it then asks which sub-accounts get Locus.",
     );
   }
   if (!res.access_token || !res.refresh_token || !res.expires_in) {
-    throw new Error("GoHighLevel's token response was incomplete.");
+    throw new ConnectError("GoHighLevel's sign-in response was incomplete. Try connecting again.");
   }
   return {
     accessToken: res.access_token,
