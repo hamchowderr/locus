@@ -4,6 +4,7 @@ import { readMigrationFiles } from "drizzle-orm/migrator";
 import type { ControlDb } from "./client.ts";
 import { TENANT_MIGRATIONS } from "./client.ts";
 import { location, locationSchemaVersion } from "./control/schema.ts";
+import { EMBEDDED_TENANT_MIGRATIONS } from "./generated/tenant-migrations.ts";
 import type { TenantProvisioner } from "./provisioner.ts";
 
 export interface TenantMigration {
@@ -23,7 +24,13 @@ export interface TenantMigrationReport {
   error?: string;
 }
 
-/** The tenant migrations shipped in this package, oldest first. */
+/**
+ * The tenant migrations, embedded in code by `scripts/embed-migrations.ts`: the deployed app
+ * migrates tenants at run time and has no migrations folder to read.
+ */
+export const TENANT_MIGRATION_SET: TenantMigration[] = EMBEDDED_TENANT_MIGRATIONS;
+
+/** Reads the tenant migrations from the folder, oldest first. Tests and the embed script only. */
 export function loadTenantMigrations(folder = TENANT_MIGRATIONS): TenantMigration[] {
   return readMigrationFiles({ migrationsFolder: folder }).map(({ hash, sql }) => ({
     hash,
@@ -72,7 +79,7 @@ export async function migrateTenant(
   deps: MigrateTenantsDeps & { locationId: string },
 ): Promise<TenantMigrationReport> {
   const { control, provisioner, locationId } = deps;
-  const migrations = deps.migrations ?? loadTenantMigrations();
+  const migrations = deps.migrations ?? TENANT_MIGRATION_SET;
 
   const [loc] = await control.select().from(location).where(eq(location.id, locationId));
   if (!loc) throw new Error(`Unknown location ${locationId}`);

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { CONTROL_MIGRATIONS, TENANT_MIGRATIONS } from "./client.ts";
 import * as control from "./control/index.ts";
 import * as tenant from "./tenant/index.ts";
+import { loadTenantMigrations, TENANT_MIGRATION_SET } from "./tenant-migrations.ts";
 
 /** The newest snapshot drizzle-kit wrote. Custom (SQL-only) migrations repeat the previous one. */
 function latestSnapshot(folder: string) {
@@ -26,4 +27,10 @@ describe("migrations match the schema", () => {
       expect(await generateSQLiteMigration(prev, cur)).toEqual([]);
     },
   );
+});
+
+describe("embedded tenant migrations", () => {
+  it("match the migrations folder (run `pnpm --filter @locus/db generate`)", () => {
+    expect(TENANT_MIGRATION_SET).toEqual(loadTenantMigrations());
+  });
 });
