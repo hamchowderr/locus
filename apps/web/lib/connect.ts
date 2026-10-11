@@ -1,4 +1,10 @@
-import { type ConnectDeps, createStubGhl, type GhlAppConfig, STUB_CODE } from "@locus/connect";
+import {
+  type ConnectDeps,
+  createStubGhl,
+  GHL_SCOPES,
+  type GhlAppConfig,
+  STUB_CODE,
+} from "@locus/connect";
 import { DbSecretStore, provisionerFromEnv } from "@locus/db";
 import { secretsFromEnv } from "@locus/secrets";
 import { locus, NotConfigured } from "./locus.ts";
@@ -42,7 +48,7 @@ function appConfig(): GhlAppConfig {
     clientSecret: required("GHL_CLIENT_SECRET"),
     appId: required("GHL_APP_ID"),
     redirectUri,
-    scopes: required("GHL_SCOPES").split(/\s+/).filter(Boolean),
+    scopes: GHL_SCOPES,
   };
 }
 
