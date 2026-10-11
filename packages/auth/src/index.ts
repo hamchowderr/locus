@@ -1,5 +1,12 @@
 export { createAuth, type LocusAuth, type LocusAuthConfig, type SendEmail } from "./auth.ts";
 export {
+  agencyEntitlement,
+  type BillingStatus,
+  type Entitlement,
+  mayManageBilling,
+  newClientRefusal,
+} from "./billing.ts";
+export {
   type AuthorizedClient,
   assertAuthorizedClient,
   authorizeClient,
@@ -27,3 +34,4 @@ export {
   requireOperator,
   setComped,
 } from "./operator.ts";
+export { PLANS, type Plan, type PlanLimits, planNamed } from "./plans.ts";

@@ -38,6 +38,11 @@ export interface ConnectDeps {
   http?: GhlHttp;
   migrations?: TenantMigration[];
   now?: () => number;
+  /**
+   * When the deployment bills: why the agency may not add one more client (given how many
+   * are active), or `null` if it may. Absent means no limit.
+   */
+  newClientRefusal?: (organizationId: string, activeClients: number) => Promise<string | null>;
 }
 
 /** Where an agency's GHL grant lives in the secret store. */
@@ -154,6 +159,8 @@ export interface SyncResult {
   reactivated: number;
   /** Sub-accounts already registered and active. */
   unchanged: number;
+  /** Why some installed sub-accounts were not added, when the agency's plan stopped them. */
+  refused?: { count: number; reason: string };
 }
 
 /**
@@ -180,8 +187,23 @@ export async function syncLocations(
     ...(deps.migrations ? { migrations: deps.migrations } : {}),
   };
   const result: SyncResult = { added: 0, reactivated: 0, unchanged: 0 };
+  let active = known.filter((l) => l.status === "active").length;
+  /** Whether one more client may become active; records the refusal if not. */
+  const mayAdd = async () => {
+    const reason = (await deps.newClientRefusal?.(organizationId, active)) ?? null;
+    if (reason === null) return true;
+    result.refused = { count: (result.refused?.count ?? 0) + 1, reason };
+    return false;
+  };
   for (const item of installed) {
     const existing = byGhlId.get(item.ghlLocationId);
+    // Active (or being offboarded): nothing to add.
+    if (existing && existing.status !== "provisioning" && existing.status !== "suspended") {
+      result.unchanged++;
+      continue;
+    }
+    if (!(await mayAdd())) continue;
+    active++;
     if (!existing) {
       await provisionLocation(provision, {
         organizationId,
@@ -198,11 +220,16 @@ export async function syncLocations(
         .set({ status: "active", name: item.name })
         .where(eq(location.id, existing.id));
       result.reactivated++;
-    } else {
-      result.unchanged++;
     }
   }
   return result;
+}
+
+/** `&refused=N&reason=…` for a redirect back to the Connect page, or "" if none were refused. */
+export function refusedQuery(result: SyncResult): string {
+  if (!result.refused) return "";
+  const { count, reason } = result.refused;
+  return `&refused=${count}&reason=${encodeURIComponent(reason)}`;
 }
 
 /** Suspends one sub-account (GHL uninstalled Locus from it). Its database and data stay. */

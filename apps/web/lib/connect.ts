@@ -1,4 +1,4 @@
-import type { AuthorizedClient } from "@locus/auth";
+import { type AuthorizedClient, agencyEntitlement, newClientRefusal } from "@locus/auth";
 import {
   type ConnectDeps,
   ConnectError,
@@ -11,7 +11,7 @@ import {
 import { DbSecretStore, provisionerFromEnv } from "@locus/db";
 import { GhlError } from "@locus/ghl";
 import { secretsFromEnv } from "@locus/secrets";
-import { locus, NotConfigured } from "./locus.ts";
+import { billingEnabled, locus, NotConfigured } from "./locus.ts";
 
 const production = process.env.NODE_ENV === "production";
 
@@ -87,6 +87,12 @@ export function connectDeps(): ConnectDeps {
     secrets: secretStore(db),
     provisioner: configured(() => provisionerFromEnv(".data/tenants")),
     ghl: appConfig(),
+    ...(billingEnabled()
+      ? {
+          newClientRefusal: async (organizationId: string, activeClients: number) =>
+            newClientRefusal(await agencyEntitlement(db, organizationId), activeClients),
+        }
+      : {}),
     ...(mode === "stub" ? { http: { fetch: stubFetch, baseUrl: "https://stub.ghl.local" } } : {}),
   };
 }

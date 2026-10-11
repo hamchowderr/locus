@@ -6,6 +6,7 @@ export {
   clientGhlSession,
   connectAgency,
   ghlSecretRef,
+  refusedQuery,
   type SyncResult,
   suspendLocation,
   syncLocations,

@@ -1,7 +1,11 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
+import { stripe } from "@better-auth/stripe";
 import { betterAuth } from "better-auth";
 import { nextCookies } from "better-auth/next-js";
 import { organization } from "better-auth/plugins";
+import Stripe from "stripe";
+import { mayManageBilling } from "./billing.ts";
+import { PLANS } from "./plans.ts";
 
 /** Sends one email. `EMAIL_MODE=console` logs it; `resend` sends it. */
 export type SendEmail = (message: { to: string; subject: string; text: string }) => Promise<void>;
@@ -14,7 +18,15 @@ export interface LocusAuthConfig {
   baseURL: string;
   secret: string;
   sendEmail: SendEmail;
+  /** Stripe, when the deployment bills. Without it billing is off and nothing calls Stripe. */
+  billing?: { secretKey: string; webhookSecret: string } | undefined;
 }
+
+// Without billing the plugin still loads, so the schema and the API's types are the same
+// everywhere, but it has no working key and no webhook secret: the webhook refuses everything,
+// and the web app never offers checkout. Its organisation hooks only call Stripe for an agency
+// that already has a Stripe customer, which an unbilled deployment never creates.
+const NO_STRIPE = { secretKey: "sk_test_billing_is_off", webhookSecret: "" };
 
 /**
  * Better Auth for Locus: email and password, agencies as organisations.
@@ -58,6 +70,33 @@ export function createAuth(config: LocusAuthConfig) {
             subject: `You're invited to ${agency.name} on Locus`,
             text: `Accept the invitation: ${config.baseURL}/invite/${id}`,
           });
+        },
+      }),
+      stripe({
+        stripeClient: new Stripe((config.billing ?? NO_STRIPE).secretKey),
+        stripeWebhookSecret: (config.billing ?? NO_STRIPE).webhookSecret,
+        // Otaku bills the agency, never a person: customers are organisations.
+        organization: { enabled: true },
+        subscription: {
+          enabled: true,
+          requireEmailVerification: true,
+          plans: PLANS.map((p) => ({
+            name: p.name,
+            lookupKey: p.lookupKey,
+            limits: { ...p.limits },
+          })),
+          // The agency comes from the session: the caller's referenceId must be the session's
+          // active organisation, and only its owners and admins manage billing.
+          authorizeReference: async ({ user, session, referenceId }, ctx) => {
+            const row = await ctx.context.adapter.findOne<{ role: string }>({
+              model: "member",
+              where: [
+                { field: "userId", value: user.id },
+                { field: "organizationId", value: referenceId },
+              ],
+            });
+            return mayManageBilling(row, session.activeOrganizationId, referenceId);
+          },
         },
       }),
       // Lets Next.js server actions set the session cookie. Must stay last. Outside Next.js it
