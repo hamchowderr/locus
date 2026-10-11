@@ -14,7 +14,7 @@ addressed by a path (`secretRef`, e.g. `/locus/ghl/<organizationId>`).
 - `MemorySecretStore` — tests.
 
 Otaku's own secrets (the GHL app secret, Turso and Resend keys, the auth secret) are not here;
-they are Infisical values read at startup.
+they live in Infisical and reach the deployment through Infisical's Vercel sync.
 
 ## Rotating the key
 

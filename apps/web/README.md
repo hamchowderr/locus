@@ -17,9 +17,6 @@ provider: open the verification link from the log.
 
 | Variable | Locally | Production |
 |---|---|---|
-| `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID`, `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` | — | the machine identity: **the only values set on the deployment** |
-| `INFISICAL_PROJECT_ID` | — | the `otaku-internal` project's id |
-| `INFISICAL_ENVIRONMENT`, `INFISICAL_SECRET_PATH`, `INFISICAL_SITE_URL` | — | default `prod`, `/locus`, `https://app.infisical.com` |
 | `LOCUS_CONTROL_DB_URL` | `file:.data/control.db` | Turso URL — required |
 | `LOCUS_CONTROL_DB_TOKEN` | — | Turso token |
 | `BETTER_AUTH_SECRET` | a dev-only default | required |
@@ -42,9 +39,16 @@ provider: open the verification link from the log.
 Without the required settings, a production deployment shows "Locus is being set up" and the
 auth API answers 503 — it never falls back to development defaults.
 
-In production every other value in this table is read from Infisical (`prod:/locus`, which
-imports `/shared`) when a server instance starts (`instrumentation.ts` → `lib/settings.ts`), so
-no copy lives in Vercel. A value set on the deployment wins over Infisical's.
+These values live in Infisical's `otaku-internal` project and reach Vercel through Infisical's
+Vercel sync: `dev:/locus` → Preview, `prod:/locus` → Production. Change them in Infisical, not in
+Vercel; the sync overwrites Vercel's copy.
+
+## Deploying
+
+Vercel builds with `vercel.json`'s command: `db:migrate`, then `next build`. Each deployment
+migrates its own control database before it is built (Production the production database,
+Preview the development one), and a migration that fails stops the deployment. Client
+databases are migrated by `migrateTenants`, not here.
 
 Agencies' own tokens are not in Infisical: they are sealed in the control database with
 `LOCUS_SECRETS_KEY`, which is itself one of those Infisical values.
