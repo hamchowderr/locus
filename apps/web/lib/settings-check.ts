@@ -8,7 +8,7 @@ export const PRODUCTION_SETTINGS: Record<string, readonly string[]> = {
   email: ["RESEND_API_KEY", "EMAIL_FROM"],
   secrets: ["LOCUS_SECRETS_KEY"],
   "client databases": ["TURSO_ORG", "TURSO_GROUP", "TURSO_API_TOKEN"],
-  gohighlevel: ["GHL_CLIENT_ID", "GHL_CLIENT_SECRET", "GHL_APP_ID", "GHL_SCOPES"],
+  gohighlevel: ["GHL_CLIENT_ID", "GHL_CLIENT_SECRET", "GHL_APP_ID"],
   github: [
     "GITHUB_APP_SLUG",
     "GITHUB_APP_CLIENT_ID",
