@@ -174,6 +174,26 @@ describe("connecting GoHighLevel", () => {
     expect(rows.every((r) => r.status === "active")).toBe(true);
   });
 
+  it("stops at the plan's client limit and says why", async () => {
+    const capped: ConnectDeps = {
+      ...deps,
+      newClientRefusal: async (_org, active) => (active >= 2 ? "Plan covers 2 clients." : null),
+    };
+    const result = await connectAgency(capped, ctx("owner", "agency-a"), STUB_CODE);
+    expect(result).toMatchObject({
+      added: 2,
+      refused: { count: 1, reason: "Plan covers 2 clients." },
+    });
+    expect(await registry("agency-a")).toHaveLength(2);
+
+    // Active clients still count as unchanged; the refused one waits for a bigger plan.
+    const again = await syncLocations(capped, "agency-a");
+    expect(again).toMatchObject({ added: 0, unchanged: 2, refused: { count: 1 } });
+    const uncapped = await syncLocations(deps, "agency-a");
+    expect(uncapped).toMatchObject({ added: 1, unchanged: 2 });
+    expect(uncapped.refused).toBeUndefined();
+  });
+
   it("only lets owners and admins connect", async () => {
     await expect(connectAgency(deps, ctx("staff", "agency-a"), STUB_CODE)).rejects.toBeInstanceOf(
       ClientAccessDenied,

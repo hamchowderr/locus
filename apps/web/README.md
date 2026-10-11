@@ -36,6 +36,8 @@ provider: open the verification link from the log.
 | `LOCUS_SECRETS_KEY` | only for `encrypted` | required: 32 random bytes, base64 (`openssl rand -base64 32`) |
 | `LOCUS_SECRETS_KEY_PREVIOUS` | — | earlier keys, comma-separated, while rotating |
 | `LOCUS_OPERATORS` | your own email, to try `/operator` | the deployment's operators, comma-separated emails (verified accounts only). They see every agency at `/operator` and can comp one; unset means none |
+| `STRIPE_SECRET_KEY` | a **test-mode** key, to try billing | Stripe's secret key. Unset means billing is off and nothing is limited |
+| `STRIPE_WEBHOOK_SECRET` | from `stripe listen` | the signing secret of the webhook endpoint `https://<host>/api/auth/stripe/webhook` |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
 auth API answers 503 — it never falls back to development defaults.
@@ -62,3 +64,16 @@ invite staff, choose each member's clients) · `/invite/[id]` (accept; verified 
 `/connect` (owners and admins: connect GoHighLevel and sync clients, connect GitHub and Vercel) · `/`
 
 `?next=` on sign-in and sign-up only ever accepts a path on this site (`lib/next-path.ts`).
+
+## Billing
+
+Three monthly plans (`PLANS` in `@locus/auth`, names and limits are placeholders). Each agency
+pays Otaku; a person never does. In Stripe, each plan is one recurring monthly price with the
+plan's **lookup key** — `locus_starter_monthly`, `locus_growth_monthly`, `locus_scale_monthly` —
+so the same code works in test and live mode. Point a webhook endpoint at
+`/api/auth/stripe/webhook` with the `checkout.session.completed` and `customer.subscription.*`
+events.
+
+Who may do what is read from our own database, never from Stripe during a request: a comped
+agency (see `/operator`) or an `active`/`trialing` subscription may add clients up to the plan's
+`clients` limit. An overdue agency keeps every client it has but can't add more.

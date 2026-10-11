@@ -9,11 +9,17 @@ import {
   setComped,
   setMemberClients,
 } from "@locus/auth";
-import { ConnectError, importStaffAccess, syncLocations } from "@locus/connect";
+import {
+  ConnectError,
+  importStaffAccess,
+  refusedQuery,
+  type SyncResult,
+  syncLocations,
+} from "@locus/connect";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { connectDeps } from "@/lib/connect";
-import { currentSession, locus, sessionContext } from "@/lib/locus";
+import { baseUrl, connectDeps } from "@/lib/connect";
+import { billingEnabled, currentSession, locus, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
@@ -170,7 +176,7 @@ export async function saveMemberClients(form: FormData) {
 export async function syncClients() {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fconnect");
-  let result = { added: 0, reactivated: 0 };
+  let result: SyncResult = { added: 0, reactivated: 0, unchanged: 0 };
   try {
     const { organizationId } = await requireAgencyManager(locus().db, sessionContext(current));
     result = await syncLocations(connectDeps(), organizationId);
@@ -179,7 +185,9 @@ export async function syncClients() {
       back("/connect", error);
     throw error;
   }
-  redirect(`/connect?synced=${result.added}&reactivated=${result.reactivated}`);
+  redirect(
+    `/connect?synced=${result.added}&reactivated=${result.reactivated}${refusedQuery(result)}`,
+  );
 }
 
 /** Copies each staff member's client list from GHL, once. Owners and admins only. */
@@ -214,4 +222,60 @@ export async function setAgencyComped(form: FormData) {
     throw error;
   }
   redirect("/operator");
+}
+
+/**
+ * Sends an owner or admin to Stripe Checkout for a plan. The agency is the session's active
+ * one; the Stripe plugin's `authorizeReference` refuses anything else.
+ */
+export async function subscribe(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fbilling");
+  const organizationId = current.session.activeOrganizationId;
+  if (!organizationId) redirect("/onboarding");
+  if (!billingEnabled()) back("/billing", new Error("Billing isn't set up on this deployment."));
+  let url = "";
+  try {
+    const res = await locus().auth.api.upgradeSubscription({
+      body: {
+        plan: text(form, "plan"),
+        referenceId: organizationId,
+        customerType: "organization",
+        successUrl: `${baseUrl()}/billing?subscribed=1`,
+        cancelUrl: `${baseUrl()}/billing`,
+        disableRedirect: true,
+      },
+      headers: await headers(),
+    });
+    url = res.url ?? "";
+  } catch (error) {
+    back("/billing", error);
+  }
+  if (!url) back("/billing", new Error("Stripe didn't return a checkout page. Try again."));
+  redirect(url);
+}
+
+/** Opens Stripe's billing portal for the session's agency. Owners and admins only. */
+export async function openBillingPortal() {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fbilling");
+  const organizationId = current.session.activeOrganizationId;
+  if (!organizationId) redirect("/onboarding");
+  let url = "";
+  try {
+    const res = await locus().auth.api.createBillingPortal({
+      body: {
+        referenceId: organizationId,
+        customerType: "organization",
+        returnUrl: `${baseUrl()}/billing`,
+        disableRedirect: true,
+      },
+      headers: await headers(),
+    });
+    url = res.url ?? "";
+  } catch (error) {
+    back("/billing", error);
+  }
+  if (!url) back("/billing", new Error("Stripe didn't open the billing portal. Try again."));
+  redirect(url);
 }

@@ -25,6 +25,19 @@ function setting(name: string, devDefault: string): string {
   return devDefault;
 }
 
+/** Billing is on when the deployment has a Stripe key. */
+export const billingEnabled = () => !!process.env.STRIPE_SECRET_KEY;
+
+function billingFromEnv() {
+  const secretKey = process.env.STRIPE_SECRET_KEY;
+  if (!secretKey) return undefined;
+  // Without the webhook secret checkout still works but no payment is ever recorded: say so in
+  // the logs rather than taking the whole app down.
+  const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET ?? "";
+  if (!webhookSecret) new NotConfigured("STRIPE_WEBHOOK_SECRET is not set");
+  return { secretKey, webhookSecret };
+}
+
 function build() {
   const db = openControlDb(
     setting("LOCUS_CONTROL_DB_URL", DEV_CONTROL_DB_URL),
@@ -36,6 +49,7 @@ function build() {
     baseURL: setting("BETTER_AUTH_URL", "http://localhost:3000"),
     secret: setting("BETTER_AUTH_SECRET", "local-development-only-secret-not-for-production"),
     sendEmail: emailFromEnv(),
+    billing: billingFromEnv(),
   });
   return { db, auth };
 }

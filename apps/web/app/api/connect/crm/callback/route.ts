@@ -1,5 +1,5 @@
 import { ClientAccessDenied } from "@locus/auth";
-import { ConnectError, connectAgency } from "@locus/connect";
+import { ConnectError, connectAgency, refusedQuery } from "@locus/connect";
 import { GhlError } from "@locus/ghl";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
@@ -22,7 +22,7 @@ export async function GET(request: Request) {
   if (!current) return NextResponse.redirect(new URL("/sign-in?next=%2Fconnect", baseUrl()));
   try {
     const result = await connectAgency(connectDeps(), sessionContext(current), code);
-    return back(`connected=${result.added}`);
+    return back(`connected=${result.added}${refusedQuery(result)}`);
   } catch (error) {
     if (error instanceof ConnectError || error instanceof ClientAccessDenied) {
       return back(`error=${encodeURIComponent(error.message)}`);

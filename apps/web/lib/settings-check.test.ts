@@ -28,4 +28,13 @@ describe("settingsProblems", () => {
       "EMAIL_MODE is set to a development mode",
     ]);
   });
+
+  it("billing is optional, but a Stripe key needs its webhook secret", () => {
+    expect(settingsProblems({ ...complete, STRIPE_SECRET_KEY: "sk_live_x" })).toEqual([
+      "billing: STRIPE_WEBHOOK_SECRET not set",
+    ]);
+    expect(
+      settingsProblems({ ...complete, STRIPE_SECRET_KEY: "x", STRIPE_WEBHOOK_SECRET: "y" }),
+    ).toEqual([]);
+  });
 });
