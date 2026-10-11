@@ -37,6 +37,8 @@ export default async function Connect({
     connected?: string;
     synced?: string;
     reactivated?: string;
+    refused?: string;
+    reason?: string;
     github?: string;
     vercel?: string;
   }>;
@@ -44,7 +46,8 @@ export default async function Connect({
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fconnect");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, connected, synced, reactivated, github, vercel } = await searchParams;
+  const { error, connected, synced, reactivated, refused, reason, github, vercel } =
+    await searchParams;
   const ctx = sessionContext(current);
 
   const manager = await requireAgencyManager(locus().db, ctx).catch((e) => {
@@ -98,6 +101,14 @@ export default async function Connect({
             ? `, ${reactivated} back after being uninstalled`
             : ""}
           .
+        </Notice>
+      )}
+      {refused && reason && (
+        <Notice tone="error">
+          {refused} installed sub-accounts weren't added. {reason}{" "}
+          <a href="/billing" className="underline">
+            Billing
+          </a>
         </Notice>
       )}
       {synced === "0" && clients.length === 0 && (
