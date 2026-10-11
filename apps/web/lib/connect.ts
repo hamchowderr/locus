@@ -1,11 +1,15 @@
+import type { AuthorizedClient } from "@locus/auth";
 import {
   type ConnectDeps,
+  ConnectError,
+  checkClientGhl,
   createStubGhl,
   GHL_SCOPES,
   type GhlAppConfig,
   STUB_CODE,
 } from "@locus/connect";
 import { DbSecretStore, provisionerFromEnv } from "@locus/db";
+import { GhlError } from "@locus/ghl";
 import { secretsFromEnv } from "@locus/secrets";
 import { locus, NotConfigured } from "./locus.ts";
 
@@ -96,6 +100,25 @@ export function stubAuthorizeTarget(state: string): string {
 }
 
 export const STATE_COOKIE = "locus_crm_state";
+
+export type GhlCheck = { ok: true; name: string } | { ok: false; reason: string };
+
+/** Whether Locus can act inside the client right now. Read-only; nothing is kept. */
+export async function checkClientConnection(client: AuthorizedClient): Promise<GhlCheck> {
+  try {
+    return { ok: true, ...(await checkClientGhl(connectDeps(), client)) };
+  } catch (error) {
+    if (error instanceof NotConfigured) {
+      return { ok: false, reason: "GoHighLevel isn't set up on this deployment yet." };
+    }
+    if (error instanceof ConnectError) return { ok: false, reason: error.message };
+    if (error instanceof GhlError) {
+      console.error(`Client GoHighLevel check failed: ${error.message}`);
+      return { ok: false, reason: `GoHighLevel refused (${error.status}).` };
+    }
+    throw error;
+  }
+}
 
 // GHL refuses redirect and webhook URLs that mention HighLevel ("The redirect url contains a
 // Highlevel reference"), so the routes that GHL calls are named `crm`, never `ghl`.
