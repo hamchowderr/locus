@@ -23,7 +23,7 @@ provider: open the verification link from the log.
 | `BETTER_AUTH_URL` | `http://localhost:3000` | `https://locus.otakusolutions.io` |
 | `EMAIL_MODE` | `console` | `resend`, with `RESEND_API_KEY` and `EMAIL_FROM` |
 | `GHL_MODE` | `stub` (a pretend agency with three sub-accounts) | `live` |
-| `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID`, `GHL_SCOPES` | — | the Marketplace app's; scopes space-separated |
+| `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | — | the Marketplace app's. Its scopes are `GHL_SCOPES` in `@locus/connect`, never a setting |
 | `GITHUB_MODE` | `stub` (a pretend org with Locus installed) | `live` |
 | `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | — | the GitHub App's (`locus-ghl`) |
 | `GITHUB_WEBHOOK_SECRET` | only to test webhooks | the App's webhook secret |

@@ -13,11 +13,11 @@ describe("settingsProblems", () => {
   });
 
   it("names the missing settings by feature, never a value", () => {
-    const env = { ...complete, GHL_SCOPES: "", TURSO_ORG: undefined, GHL_CLIENT_SECRET: "s3cret" };
+    const env = { ...complete, GHL_APP_ID: "", TURSO_ORG: undefined, GHL_CLIENT_SECRET: "s3cret" };
     const problems = settingsProblems(env);
     expect(problems).toEqual([
       "client databases: TURSO_ORG not set",
-      "gohighlevel: GHL_SCOPES not set",
+      "gohighlevel: GHL_APP_ID not set",
     ]);
     expect(problems.join(" ")).not.toContain("s3cret");
   });

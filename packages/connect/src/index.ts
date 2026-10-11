@@ -19,6 +19,7 @@ export {
   NEUTRAL_AUTHORIZE_BASE,
   refreshGrant,
 } from "./ghl-oauth.ts";
+export { GHL_SCOPES } from "./ghl-scopes.ts";
 export {
   connectGithub,
   type GithubAppConfig,
