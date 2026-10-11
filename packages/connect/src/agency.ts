@@ -9,6 +9,7 @@ import {
 import { agencyGhlConnection, location } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
 import { and, eq } from "drizzle-orm";
+import { ConnectError } from "./errors.ts";
 import {
   type AgencyGrant,
   exchangeCode,
@@ -18,6 +19,8 @@ import {
   refreshGrant,
 } from "./ghl-oauth.ts";
 
+export { ConnectError } from "./errors.ts";
+
 export interface ConnectDeps {
   db: ControlDb;
   secrets: SecretStore;
@@ -26,11 +29,6 @@ export interface ConnectDeps {
   http?: GhlHttp;
   migrations?: TenantMigration[];
   now?: () => number;
-}
-
-/** Shown to the user as is. */
-export class ConnectError extends Error {
-  override name = "ConnectError";
 }
 
 /** Where an agency's GHL grant lives in the secret store. */
