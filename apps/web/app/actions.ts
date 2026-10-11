@@ -2,8 +2,11 @@
 
 import {
   ClientAccessDenied,
+  NotOperator,
+  operatorsFromEnv,
   requireAgencyManager,
   selectClient,
+  setComped,
   setMemberClients,
 } from "@locus/auth";
 import { ConnectError, importStaffAccess, syncLocations } from "@locus/connect";
@@ -192,4 +195,23 @@ export async function importStaff() {
     throw error;
   }
   redirect(`/team?${query}`);
+}
+
+/** Comps an agency or ends its comp. The deployment's operators only. */
+export async function setAgencyComped(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Foperator");
+  try {
+    await setComped(
+      locus().db,
+      sessionContext(current),
+      operatorsFromEnv(),
+      text(form, "organizationId"),
+      text(form, "comped") === "true",
+    );
+  } catch (error) {
+    if (error instanceof NotOperator) back("/operator", error);
+    throw error;
+  }
+  redirect("/operator");
 }
