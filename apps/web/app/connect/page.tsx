@@ -100,6 +100,13 @@ export default async function Connect({
           .
         </Notice>
       )}
+      {synced === "0" && clients.length === 0 && (
+        <Notice tone="info">
+          No sub-accounts have Locus installed yet. A client is a sub-account with the Locus app
+          installed: in GoHighLevel, open the app marketplace from your agency view, install Locus
+          on the sub-accounts you want (or all of them), then sync again.
+        </Notice>
+      )}
 
       {connection ? (
         <>
