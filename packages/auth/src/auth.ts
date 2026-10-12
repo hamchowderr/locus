@@ -37,7 +37,7 @@ const NO_STRIPE = { secretKey: "sk_test_billing_is_off", webhookSecret: "" };
  */
 export function createAuth(config: LocusAuthConfig) {
   const { sendEmail } = config;
-  return betterAuth({
+  const auth = betterAuth({
     baseURL: config.baseURL,
     secret: config.secret,
     database: drizzleAdapter(config.db, { provider: "sqlite", schema: config.schema }),
@@ -48,9 +48,22 @@ export function createAuth(config: LocusAuthConfig) {
         activeLocationId: { type: "string", required: false, input: false },
       },
     },
-    emailAndPassword: { enabled: true, requireEmailVerification: true },
+    // Better Auth logs and swallows a failed verification email, so a sign-up whose email never
+    // arrived still leaves an unverified account behind. Both ways back in resend the link:
+    // signing up again with the same address, and signing in with the right password.
+    emailAndPassword: {
+      enabled: true,
+      requireEmailVerification: true,
+      // Sign-up answers the same whether or not the address exists, so this must not say which:
+      // an unverified owner gets a fresh link, a verified one gets nothing.
+      onExistingUserSignUp: async ({ user }) => {
+        if (user.emailVerified) return;
+        await auth.api.sendVerificationEmail({ body: { email: user.email } });
+      },
+    },
     emailVerification: {
       sendOnSignUp: true,
+      sendOnSignIn: true,
       // Opening the link proves the address, so sign the user straight in.
       autoSignInAfterVerification: true,
       sendVerificationEmail: async ({ user, url }) => {
@@ -104,6 +117,7 @@ export function createAuth(config: LocusAuthConfig) {
       nextCookies(),
     ],
   });
+  return auth;
 }
 
 export type LocusAuth = ReturnType<typeof createAuth>;
