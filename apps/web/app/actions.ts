@@ -64,7 +64,13 @@ export async function signIn(form: FormData) {
       headers: await headers(),
     });
   } catch (error) {
-    back(`/sign-in${nextQuery(next)}`, error);
+    // Signing in with the right password resends the verification link (`sendOnSignIn`).
+    const unverified =
+      (error as { body?: { code?: unknown } })?.body?.code === "EMAIL_NOT_VERIFIED";
+    back(
+      `/sign-in${nextQuery(next)}`,
+      unverified ? new Error("Your email isn't verified yet. We've sent you a new link.") : error,
+    );
   }
   redirect(next);
 }
