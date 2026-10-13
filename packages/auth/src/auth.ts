@@ -60,6 +60,23 @@ export function createAuth(config: LocusAuthConfig) {
         if (user.emailVerified) return;
         await auth.api.sendVerificationEmail({ body: { email: user.email } });
       },
+      // The request answers the same whether or not the address exists; only an owner gets mail.
+      // The link lasts an hour, works once, and signs every device out when it is used.
+      sendResetPassword: async ({ user, url }) => {
+        await sendEmail({
+          to: user.email,
+          subject: "Reset your Locus password",
+          text: `Open this link within an hour to choose a new password: ${url}\n\nIf you didn't ask for this, ignore this email; your password stays the same.`,
+        });
+      },
+      revokeSessionsOnPasswordReset: true,
+      // Using the link proves the owner reads that inbox, as a verification link would, so an
+      // owner whose verification email never arrived is not left locked out after resetting.
+      onPasswordReset: async ({ user }) => {
+        if (user.emailVerified) return;
+        const context = await auth.$context;
+        await context.internalAdapter.updateUser(user.id, { emailVerified: true });
+      },
     },
     emailVerification: {
       sendOnSignUp: true,
