@@ -5,21 +5,26 @@ import {
   NotOperator,
   operatorsFromEnv,
   requireAgencyManager,
+  resolveActiveClient,
   selectClient,
   setComped,
   setMemberClients,
 } from "@locus/auth";
 import {
+  attachSiteDomain,
   ConnectError,
   importStaffAccess,
+  linkHostProject,
   refusedQuery,
+  removeSiteDomain,
   type SyncResult,
   syncLocations,
 } from "@locus/connect";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
-import { billingEnabled, currentSession, locus, sessionContext } from "@/lib/locus";
+import { siteDeps } from "@/lib/hosts";
+import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
@@ -319,4 +324,51 @@ export async function openBillingPortal() {
   }
   if (!url) back("/billing", new Error("Stripe didn't open the billing portal. Try again."));
   redirect(url);
+}
+
+/**
+ * Runs a change to the active client's site, then returns to the Sites page. The client is the
+ * session's, never the form's; the site and project ids from the form are checked against it.
+ */
+async function siteAction(
+  change: (
+    ctx: ReturnType<typeof sessionContext>,
+    client: Awaited<ReturnType<typeof resolveActiveClient>>,
+  ) => Promise<unknown>,
+) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  try {
+    await change(ctx, await resolveActiveClient(locus().db, ctx));
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof ConnectError) back("/sites", error);
+    if (error instanceof NotConfigured) back("/sites", new Error("Vercel isn't set up here yet."));
+    throw error;
+  }
+  redirect("/sites");
+}
+
+/** Makes a project on the agency's Vercel team the active client's site. */
+export async function linkSiteProject(form: FormData) {
+  await siteAction((ctx, client) =>
+    linkHostProject(siteDeps(), ctx, client, { projectId: text(form, "projectId") }),
+  );
+}
+
+/** Adds a domain to one of the active client's sites. */
+export async function addSiteDomain(form: FormData) {
+  await siteAction((ctx, client) =>
+    attachSiteDomain(siteDeps(), ctx, client, {
+      siteId: text(form, "siteId"),
+      domain: text(form, "domain"),
+    }),
+  );
+}
+
+/** Takes the domain off one of the active client's sites. */
+export async function deleteSiteDomain(form: FormData) {
+  await siteAction((ctx, client) =>
+    removeSiteDomain(siteDeps(), ctx, client, text(form, "siteId")),
+  );
 }

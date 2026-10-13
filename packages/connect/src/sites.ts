@@ -1,0 +1,402 @@
+import { randomUUID } from "node:crypto";
+import {
+  type AuthorizedClient,
+  assertAuthorizedClient,
+  requireAgencyManager,
+  type SessionContext,
+} from "@locus/auth";
+import type { ControlDb } from "@locus/db";
+import { auditLog, hostConnection, location, site } from "@locus/db/control";
+import type { SecretStore } from "@locus/secrets";
+import { and, eq } from "drizzle-orm";
+import { ConnectError } from "./errors.ts";
+import type { VercelGrant, VercelHttp } from "./vercel.ts";
+
+// A client's site and its custom domain, on the agency's own Vercel team. Contracts read from
+// vercel.com/docs on 2026-10-13: `GET /v10/projects`, `GET /v9/projects/{id}`,
+// `POST /v10/projects/{id}/domains`, `GET /v9/projects/{id}/domains/{domain}`,
+// `POST /v9/projects/{id}/domains/{domain}/verify`, `DELETE /v9/projects/{id}/domains/{domain}`
+// and `GET /v6/domains/{domain}/config`. The domain stays at the client's own DNS provider:
+// Locus only tells the agency which records to add there.
+
+export interface SiteDeps {
+  db: ControlDb;
+  secrets: SecretStore;
+  http?: VercelHttp;
+}
+
+export type SiteRow = typeof site.$inferSelect;
+
+export interface HostProject {
+  id: string;
+  name: string;
+}
+
+/** One record the agency adds at the domain's DNS provider. */
+export interface DnsRecord {
+  type: "A" | "CNAME" | "TXT";
+  /** Relative to `zone`; "@" is the zone itself. */
+  name: string;
+  value: string;
+  /** The domain whose DNS holds this record, e.g. "example.com". */
+  zone: string;
+  why: "verify" | "point";
+}
+
+export interface DomainStatus {
+  domain: string;
+  /**
+   * `verify`: Vercel needs the TXT record before it will use the domain on this project.
+   * `point`: verified, but the domain doesn't reach Vercel yet (or has no certificate yet).
+   * `live`: serving this site.
+   */
+  state: "verify" | "point" | "live";
+  records: DnsRecord[];
+}
+
+// Vercel's documented defaults, used when the config call recommends nothing.
+const DEFAULT_CNAME = "cname.vercel-dns.com";
+const DEFAULT_IPV4 = "76.76.21.21";
+
+/**
+ * A hostname as an agency would type it, cleaned: lower case, without a scheme, path, port or
+ * trailing dot. Throws `ConnectError` unless it is a plain public hostname.
+ */
+export function normalizeDomain(input: string): string {
+  let domain = input.trim().toLowerCase();
+  domain = domain.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
+  domain = domain.split(/[/?#]/, 1)[0] ?? "";
+  domain = domain.replace(/:\d+$/, "").replace(/\.$/, "");
+  const label = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
+  const valid = new RegExp(`^(?:${label}\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$`);
+  if (domain.length > 253 || !valid.test(domain)) {
+    throw new ConnectError("That isn't a domain name. Enter one like www.example.com.");
+  }
+  if (domain.endsWith(".vercel.app")) {
+    throw new ConnectError("That's already a Vercel address. Enter the client's own domain.");
+  }
+  return domain;
+}
+
+interface VercelResult<T> {
+  ok: boolean;
+  status: number;
+  body: T & { error?: { code?: string; message?: string } };
+}
+
+async function hostGrant(deps: SiteDeps, organizationId: string): Promise<VercelGrant> {
+  const [host] = await deps.db
+    .select()
+    .from(hostConnection)
+    .where(eq(hostConnection.organizationId, organizationId));
+  if (host?.provider !== "vercel") {
+    throw new ConnectError("Connect your Vercel team on the Connections page first.");
+  }
+  const stored = await deps.secrets.get(host.secretRef);
+  if (!stored) throw new ConnectError("Vercel needs to be connected again.");
+  return JSON.parse(stored) as VercelGrant;
+}
+
+async function vercel<T>(
+  deps: SiteDeps,
+  grant: VercelGrant,
+  method: string,
+  path: string,
+  options: { query?: Record<string, string>; body?: unknown } = {},
+): Promise<VercelResult<T>> {
+  const { fetch: f = fetch, apiBaseUrl = "https://api.vercel.com" } = deps.http ?? {};
+  const url = new URL(path, apiBaseUrl);
+  for (const [key, value] of Object.entries(options.query ?? {})) {
+    url.searchParams.set(key, value);
+  }
+  if (grant.teamId) url.searchParams.set("teamId", grant.teamId);
+  const response = await f(url.toString(), {
+    method,
+    headers: {
+      authorization: `Bearer ${grant.accessToken}`,
+      ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+    },
+    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+  });
+  const body = (await response.json().catch(() => ({}))) as VercelResult<T>["body"];
+  return { ok: response.ok, status: response.status, body };
+}
+
+/** Vercel's own explanation when it has one; its messages are written for people. */
+function refused(result: VercelResult<unknown>, fallback: string): ConnectError {
+  if (result.status === 401 || result.status === 403) {
+    return new ConnectError(
+      "Vercel refused. Reconnect Vercel on the Connections page and allow access to all projects.",
+    );
+  }
+  const message = result.body.error?.message;
+  return new ConnectError(message ? `Vercel: ${message}` : fallback);
+}
+
+const projectPath = (projectId: string, rest = "") =>
+  `/v9/projects/${encodeURIComponent(projectId)}${rest}`;
+
+/** The projects on the agency's Vercel team, newest first, for linking one to a client. */
+export async function listHostProjects(
+  deps: SiteDeps,
+  ctx: SessionContext,
+): Promise<HostProject[]> {
+  const { organizationId } = await requireAgencyManager(deps.db, ctx);
+  const grant = await hostGrant(deps, organizationId);
+  const result = await vercel<{ projects?: { id: string; name: string }[] }>(
+    deps,
+    grant,
+    "GET",
+    "/v10/projects",
+    { query: { limit: "100" } },
+  );
+  if (!result.ok) throw refused(result, "Vercel didn't list your projects. Try again.");
+  return (result.body.projects ?? []).map(({ id, name }) => ({ id, name }));
+}
+
+/** The client's sites. */
+export async function listSites(db: ControlDb, client: AuthorizedClient): Promise<SiteRow[]> {
+  assertAuthorizedClient(client);
+  return db.select().from(site).where(eq(site.locationId, client.location.id));
+}
+
+/**
+ * Makes an existing project on the agency's Vercel team this client's site, so a domain can be
+ * attached to it. Owners and admins only. The project must be on the connected team, and one
+ * project belongs to one client.
+ */
+export async function linkHostProject(
+  deps: SiteDeps,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  input: { projectId: string },
+): Promise<SiteRow> {
+  assertAuthorizedClient(client);
+  const { organizationId } = await requireAgencyManager(deps.db, ctx);
+  const grant = await hostGrant(deps, organizationId);
+  // Asked with the agency's token, so a project on any other team is simply not found.
+  const result = await vercel<{ id?: string; name?: string }>(
+    deps,
+    grant,
+    "GET",
+    projectPath(input.projectId),
+  );
+  if (result.status === 404) throw new ConnectError("That project isn't on your Vercel team.");
+  if (!result.ok || !result.body.id) throw refused(result, "Vercel didn't find that project.");
+  const projectId = result.body.id;
+
+  const [taken] = await deps.db
+    .select({ locationId: site.locationId })
+    .from(site)
+    .innerJoin(location, eq(site.locationId, location.id))
+    .where(and(eq(location.organizationId, organizationId), eq(site.hostProjectId, projectId)));
+  if (taken) {
+    throw new ConnectError(
+      taken.locationId === client.location.id
+        ? "That project is already this client's site."
+        : "That project is already another client's site.",
+    );
+  }
+
+  const [row] = await deps.db
+    .insert(site)
+    .values({
+      id: randomUUID(),
+      locationId: client.location.id,
+      host: "vercel",
+      hostProjectId: projectId,
+      status: "deployed",
+    })
+    .returning();
+  await audit(deps.db, ctx, client, "site.link", { projectId, name: result.body.name });
+  // biome-ignore lint/style/noNonNullAssertion: an insert returns its row
+  return row!;
+}
+
+async function clientSite(
+  deps: SiteDeps,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<SiteRow & { hostProjectId: string }> {
+  // Scoped to the client from the session, so another client's site looks like a missing one.
+  const [row] = await deps.db
+    .select()
+    .from(site)
+    .where(and(eq(site.id, siteId), eq(site.locationId, client.location.id)));
+  if (!row) throw new ConnectError("That site isn't one of this client's.");
+  if (row.host !== "vercel" || !row.hostProjectId) {
+    throw new ConnectError("This site isn't on Vercel yet.");
+  }
+  return { ...row, hostProjectId: row.hostProjectId };
+}
+
+/**
+ * Adds a domain to the site's Vercel project and keeps it on the site. Owners and admins only.
+ * A site has one custom domain; remove it to use another.
+ */
+export async function attachSiteDomain(
+  deps: SiteDeps,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  input: { siteId: string; domain: string },
+): Promise<DomainStatus> {
+  assertAuthorizedClient(client);
+  const { organizationId } = await requireAgencyManager(deps.db, ctx);
+  const domain = normalizeDomain(input.domain);
+  const row = await clientSite(deps, client, input.siteId);
+  if (row.customDomain && row.customDomain !== domain) {
+    throw new ConnectError(`This site already uses ${row.customDomain}. Remove it first.`);
+  }
+  const grant = await hostGrant(deps, organizationId);
+  if (!row.customDomain) {
+    const added = await vercel(
+      deps,
+      grant,
+      "POST",
+      `/v10/projects/${encodeURIComponent(row.hostProjectId)}/domains`,
+      {
+        body: { name: domain },
+      },
+    );
+    // 400 also means "already on this project", which is where we want it.
+    const already = added.status === 400 && /already/i.test(added.body.error?.message ?? "");
+    if (!added.ok && !already) throw refused(added, "Vercel didn't add that domain. Try again.");
+    await deps.db.update(site).set({ customDomain: domain }).where(eq(site.id, row.id));
+    await audit(deps.db, ctx, client, "site.domain.add", { siteId: row.id, domain });
+  }
+  return domainStatus(deps, grant, row.hostProjectId, domain);
+}
+
+/**
+ * Where the site's domain stands, and the DNS records still missing. Asks Vercel to check the
+ * verification record again first. Anyone who may work on the client may look.
+ */
+export async function siteDomainStatus(
+  deps: SiteDeps,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<DomainStatus | null> {
+  assertAuthorizedClient(client);
+  const row = await clientSite(deps, client, siteId);
+  if (!row.customDomain) return null;
+  const grant = await hostGrant(deps, client.location.organizationId);
+  return domainStatus(deps, grant, row.hostProjectId, row.customDomain);
+}
+
+interface ProjectDomain {
+  name?: string;
+  apexName?: string;
+  verified?: boolean;
+  verification?: { type: string; domain: string; value: string }[];
+}
+
+async function domainStatus(
+  deps: SiteDeps,
+  grant: VercelGrant,
+  projectId: string,
+  domain: string,
+): Promise<DomainStatus> {
+  const path = projectPath(projectId, `/domains/${encodeURIComponent(domain)}`);
+  const got = await vercel<ProjectDomain>(deps, grant, "GET", path);
+  if (got.status === 404) {
+    throw new ConnectError(`${domain} is no longer on this site's Vercel project. Remove it here.`);
+  }
+  if (!got.ok) throw refused(got, "Vercel didn't show the domain. Try again.");
+  let current = got.body;
+  if (!current.verified) {
+    // A failed check is the normal answer until the TXT record is in place.
+    const checked = await vercel<ProjectDomain>(deps, grant, "POST", `${path}/verify`);
+    if (checked.ok) current = { ...current, ...checked.body };
+  }
+  const apex = current.apexName || domain;
+
+  if (!current.verified) {
+    const records = (current.verification ?? [])
+      .filter((v) => v.type.toUpperCase() === "TXT")
+      .map((v) => txtRecord(v.domain, v.value, apex));
+    return { domain, state: "verify", records };
+  }
+
+  const config = await vercel<{
+    misconfigured?: boolean;
+    recommendedCNAME?: { rank: number; value: string }[];
+    recommendedIPv4?: { rank: number; value: string[] }[];
+  }>(deps, grant, "GET", `/v6/domains/${encodeURIComponent(domain)}/config`, {
+    query: { projectIdOrName: projectId },
+  });
+  if (!config.ok) throw refused(config, "Vercel didn't check the domain's DNS. Try again.");
+  if (config.body.misconfigured === false) return { domain, state: "live", records: [] };
+
+  const best = <T extends { rank: number }>(list: T[] | undefined) =>
+    [...(list ?? [])].sort((a, b) => a.rank - b.rank)[0];
+  const record: DnsRecord =
+    domain === apex
+      ? {
+          type: "A",
+          name: "@",
+          value: best(config.body.recommendedIPv4)?.value[0] ?? DEFAULT_IPV4,
+          zone: apex,
+          why: "point",
+        }
+      : {
+          type: "CNAME",
+          name: relativeName(domain, apex),
+          value: (best(config.body.recommendedCNAME)?.value ?? DEFAULT_CNAME).replace(/\.$/, ""),
+          zone: apex,
+          why: "point",
+        };
+  return { domain, state: "point", records: [record] };
+}
+
+const relativeName = (name: string, apex: string) =>
+  name === apex ? "@" : name.endsWith(`.${apex}`) ? name.slice(0, -(apex.length + 1)) : name;
+
+const txtRecord = (name: string, value: string, apex: string): DnsRecord => ({
+  type: "TXT",
+  name: relativeName(name, apex),
+  value,
+  zone: apex,
+  why: "verify",
+});
+
+/** Takes the domain off the site and its Vercel project. Owners and admins only. */
+export async function removeSiteDomain(
+  deps: SiteDeps,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<void> {
+  assertAuthorizedClient(client);
+  const { organizationId } = await requireAgencyManager(deps.db, ctx);
+  const row = await clientSite(deps, client, siteId);
+  if (!row.customDomain) return;
+  const grant = await hostGrant(deps, organizationId);
+  const path = projectPath(row.hostProjectId, `/domains/${encodeURIComponent(row.customDomain)}`);
+  const removed = await vercel(deps, grant, "DELETE", path);
+  // Already gone from Vercel: still take it off the site.
+  if (!removed.ok && removed.status !== 404) {
+    throw refused(removed, "Vercel didn't remove the domain. Try again.");
+  }
+  await deps.db.update(site).set({ customDomain: null }).where(eq(site.id, row.id));
+  await audit(deps.db, ctx, client, "site.domain.remove", {
+    siteId: row.id,
+    domain: row.customDomain,
+  });
+}
+
+async function audit(
+  db: ControlDb,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  action: string,
+  detail: Record<string, unknown>,
+) {
+  await db.insert(auditLog).values({
+    id: randomUUID(),
+    organizationId: client.location.organizationId,
+    actorUserId: ctx.userId,
+    locationId: client.location.id,
+    action,
+    detail,
+  });
+}

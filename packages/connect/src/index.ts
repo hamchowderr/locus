@@ -36,6 +36,20 @@ export {
   verifyGithubSignature,
 } from "./github.ts";
 export {
+  attachSiteDomain,
+  type DnsRecord,
+  type DomainStatus,
+  type HostProject,
+  linkHostProject,
+  listHostProjects,
+  listSites,
+  normalizeDomain,
+  removeSiteDomain,
+  type SiteDeps,
+  type SiteRow,
+  siteDomainStatus,
+} from "./sites.ts";
+export {
   type GhlStaffUser,
   importStaffAccess,
   listAgencyStaff,
@@ -49,6 +63,7 @@ export {
   STUB_GITHUB_INSTALLATION,
   STUB_VERCEL_CODE,
   STUB_VERCEL_CONFIGURATION,
+  STUB_VERCEL_PROJECT,
   STUB_VERCEL_TEAM,
 } from "./stub-hosts.ts";
 export {
