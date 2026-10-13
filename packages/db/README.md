@@ -48,5 +48,4 @@ indexed, and a test enforces that: Turso bills rows scanned.
 
 ## Not here yet
 
-- Better Auth's Stripe `subscription` table (comes with billing).
 - Concurrency in the tenant runner — it walks clients one at a time.
