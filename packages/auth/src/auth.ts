@@ -26,6 +26,10 @@ export interface LocusAuthConfig {
 // everywhere, but it has no working key and no webhook secret: the webhook refuses everything,
 // and the web app never offers checkout. Its organisation hooks only call Stripe for an agency
 // that already has a Stripe customer, which an unbilled deployment never creates.
+/** At most this many reset emails per account per window; extra requests are dropped quietly. */
+const RESET_EMAILS_PER_WINDOW = 3;
+const RESET_WINDOW_MS = 60 * 60 * 1000;
+
 const NO_STRIPE = { secretKey: "sk_test_billing_is_off", webhookSecret: "" };
 
 /**
@@ -63,6 +67,22 @@ export function createAuth(config: LocusAuthConfig) {
       // The request answers the same whether or not the address exists; only an owner gets mail.
       // The link lasts an hour, works once, and signs every device out when it is used.
       sendResetPassword: async ({ user, url }) => {
+        // Better Auth's rate limiter only guards HTTP calls, and the web app calls the API
+        // directly from a server action, so cap the mail per address here. Each request leaves
+        // a verification row (this one included), and the database is shared by every instance.
+        const context = await auth.$context;
+        const recent = await context.adapter.count({
+          model: "verification",
+          where: [
+            { field: "value", value: user.id },
+            { field: "identifier", operator: "starts_with", value: "reset-password:" },
+            { field: "createdAt", operator: "gt", value: new Date(Date.now() - RESET_WINDOW_MS) },
+          ],
+        });
+        if (recent > RESET_EMAILS_PER_WINDOW) {
+          console.warn("Password reset email skipped: too many requests for one account");
+          return;
+        }
         await sendEmail({
           to: user.email,
           subject: "Reset your Locus password",

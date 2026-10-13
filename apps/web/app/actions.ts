@@ -76,8 +76,8 @@ export async function signIn(form: FormData) {
 }
 
 /**
- * Emails a reset link. The page answers the same whether or not the address has an account, and
- * a failed send is logged rather than shown, so this can't be used to find out who signed up.
+ * Emails a reset link. The page says the same whether or not the address has an account, and a
+ * failed send is logged rather than shown. (Response time can still differ, as for sign-up.)
  */
 export async function requestPasswordReset(form: FormData) {
   try {

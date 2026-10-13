@@ -208,6 +208,16 @@ describe("resetting a forgotten password", () => {
     expect(result.user.emailVerified).toBe(true);
   });
 
+  it("stops emailing one account after a few requests in an hour", async () => {
+    await verifiedOwner();
+    for (let i = 0; i < 6; i++) {
+      await expect(
+        auth.api.requestPasswordReset({ body: { email: owner.email } }),
+      ).resolves.toMatchObject({ status: true });
+    }
+    expect(sent).toHaveLength(3);
+  });
+
   it("refuses a made-up token", async () => {
     await expect(
       auth.api.resetPassword({ body: { token: "not-a-real-token", newPassword } }),
