@@ -6,6 +6,7 @@ import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
+import { consumeAttempt } from "./rate-limit.ts";
 
 let dir: string;
 let db: ControlDb;
@@ -264,6 +265,119 @@ describe("signing in", () => {
     await verifiedOwner();
     const current = await auth.api.getSession({ headers: await signIn() });
     expect(current?.session.activeOrganizationId ?? null).toBeNull();
+  });
+});
+
+describe("rate limits on signing in and signing up", () => {
+  const from = (ip: string) => new Headers({ "x-forwarded-for": ip });
+  const signIn = (email: string, password: string, ip = "203.0.113.1") =>
+    auth.api.signInEmail({ body: { email, password }, headers: from(ip) });
+
+  it("stops one account's sign-ins from one IP after ten tries, even with the right password", async () => {
+    await auth.api.signUpEmail({ body: owner });
+    for (let i = 0; i < 10; i++) {
+      await expect(signIn(owner.email, "wrong password")).rejects.toMatchObject({
+        status: "UNAUTHORIZED",
+      });
+    }
+    await expect(signIn(owner.email.toUpperCase(), owner.password)).rejects.toMatchObject({
+      status: "TOO_MANY_REQUESTS",
+      body: { code: "TOO_MANY_ATTEMPTS", message: "Too many attempts. Try again in 15 minutes." },
+    });
+    // Guessing from one place doesn't lock the owner out from another.
+    await expect(signIn(owner.email, owner.password, "198.51.100.7")).rejects.toMatchObject({
+      body: { code: "EMAIL_NOT_VERIFIED" },
+    });
+  });
+
+  it("stops one account's sign-ins after a hundred tries spread across IPs", async () => {
+    for (let i = 0; i < 100; i++) {
+      await expect(signIn(owner.email, "guess", `10.0.${i}.1`)).rejects.toMatchObject({
+        status: "UNAUTHORIZED",
+      });
+    }
+    await expect(signIn(owner.email, "guess", "10.1.0.1")).rejects.toMatchObject({
+      status: "TOO_MANY_REQUESTS",
+    });
+  }, 30_000);
+
+  it("stops one IP's sign-ins after thirty tries across accounts, and only that IP", async () => {
+    for (let i = 0; i < 30; i++) {
+      await expect(signIn(`nobody${i}@agency.test`, "guess")).rejects.toMatchObject({
+        status: "UNAUTHORIZED",
+      });
+    }
+    await expect(signIn("nobody-else@agency.test", "guess")).rejects.toMatchObject({
+      status: "TOO_MANY_REQUESTS",
+    });
+    await expect(signIn("nobody-else@agency.test", "guess", "198.51.100.7")).rejects.toMatchObject({
+      status: "UNAUTHORIZED",
+    });
+  });
+
+  it("stops sign-ups for one address from one IP after three in an hour, and sends nothing more", async () => {
+    for (let i = 0; i < 3; i++) {
+      await auth.api.signUpEmail({ body: owner, headers: from("203.0.113.1") });
+    }
+    const before = sent.length;
+    await expect(
+      auth.api.signUpEmail({ body: owner, headers: from("203.0.113.1") }),
+    ).rejects.toMatchObject({ status: "TOO_MANY_REQUESTS" });
+    expect(sent).toHaveLength(before);
+    await auth.api.signUpEmail({ body: owner, headers: from("198.51.100.7") });
+  });
+
+  it("stops one IP's sign-ups after thirty in an hour", async () => {
+    for (let i = 0; i < 30; i++) {
+      await auth.api.signUpEmail({
+        body: { ...owner, email: `owner${i}@agency.test` },
+        headers: from("203.0.113.1"),
+      });
+    }
+    await expect(
+      auth.api.signUpEmail({
+        body: { ...owner, email: "owner30@agency.test" },
+        headers: from("203.0.113.1"),
+      }),
+    ).rejects.toMatchObject({ status: "TOO_MANY_REQUESTS" });
+  });
+
+  it("applies to the HTTP API as well", async () => {
+    const post = () =>
+      auth.handler(
+        new Request("http://localhost:3000/api/auth/sign-in/email", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+          body: JSON.stringify({ email: owner.email, password: "wrong password" }),
+        }),
+      );
+    for (let i = 0; i < 10; i++) expect((await post()).status).toBe(401);
+    expect((await post()).status).toBe(429);
+  });
+});
+
+describe("consumeAttempt", () => {
+  const rule = { max: 2, windowMs: 60_000 };
+
+  it("allows the max in a window, then says how long until the window ends", async () => {
+    expect(await consumeAttempt(db, "k", rule, 0)).toEqual({ allowed: true });
+    expect(await consumeAttempt(db, "k", rule, 1_000)).toEqual({ allowed: true });
+    expect(await consumeAttempt(db, "k", rule, 20_000)).toEqual({
+      allowed: false,
+      retryAfterSeconds: 40,
+    });
+  });
+
+  it("starts counting again once the window has passed", async () => {
+    for (const t of [0, 1, 2]) await consumeAttempt(db, "k", rule, t);
+    expect(await consumeAttempt(db, "k", rule, 60_000)).toEqual({ allowed: true });
+    expect(await consumeAttempt(db, "k", rule, 60_001)).toEqual({ allowed: true });
+    expect((await consumeAttempt(db, "k", rule, 60_002)).allowed).toBe(false);
+  });
+
+  it("keeps separate counts per key", async () => {
+    for (const t of [0, 1, 2]) await consumeAttempt(db, "a", rule, t);
+    expect(await consumeAttempt(db, "b", rule, 3)).toEqual({ allowed: true });
   });
 });
 

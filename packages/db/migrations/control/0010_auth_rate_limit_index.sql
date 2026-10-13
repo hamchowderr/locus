@@ -1,0 +1,1 @@
+CREATE INDEX `auth_rate_limit_window_start_idx` ON `auth_rate_limit` (`window_start`);

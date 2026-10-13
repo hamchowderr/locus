@@ -49,6 +49,8 @@ export async function signUp(form: FormData) {
         password: String(form.get("password") ?? ""),
         callbackURL: next,
       },
+      // The client's IP, for the sign-up rate limit.
+      headers: await headers(),
     });
   } catch (error) {
     back(`/sign-up${nextQuery(next)}`, error);
