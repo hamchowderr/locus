@@ -173,3 +173,19 @@ export const locationSchemaVersion = sqliteTable("location_schema_version", {
   lastMigratedAt: integer("last_migrated_at", { mode: "timestamp_ms" }),
   lastError: text("last_error"),
 });
+
+/**
+ * Sign-in and sign-up attempts per key (an IP address or an email address) in the current
+ * fixed window. Better Auth's own limiter only sees HTTP calls and keeps its counts in one
+ * instance's memory; the web app calls the API directly from server actions, on many instances.
+ */
+export const authRateLimit = sqliteTable(
+  "auth_rate_limit",
+  {
+    key: text("key").primaryKey(),
+    count: integer("count").notNull(),
+    windowStart: integer("window_start").notNull(),
+  },
+  // Expired keys are deleted by window start.
+  (t) => [index("auth_rate_limit_window_start_idx").on(t.windowStart)],
+);
