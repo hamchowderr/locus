@@ -75,6 +75,39 @@ export async function signIn(form: FormData) {
   redirect(next);
 }
 
+/**
+ * Emails a reset link. The page says the same whether or not the address has an account, and a
+ * failed send is logged rather than shown. (Response time can still differ, as for sign-up.)
+ */
+export async function requestPasswordReset(form: FormData) {
+  try {
+    await locus().auth.api.requestPasswordReset({
+      body: { email: text(form, "email"), redirectTo: "/reset-password" },
+    });
+  } catch (error) {
+    console.error(`Password reset request failed: ${messageOf(error)}`);
+  }
+  redirect("/forgot-password?sent=1");
+}
+
+/** Sets the new password from the emailed link's token; every session is signed out. */
+export async function resetPassword(form: FormData) {
+  const token = text(form, "token");
+  const password = String(form.get("password") ?? "");
+  const retry = `/reset-password?token=${encodeURIComponent(token)}`;
+  if (password !== String(form.get("confirm") ?? "")) {
+    back(retry, new Error("The two passwords don't match."));
+  }
+  try {
+    await locus().auth.api.resetPassword({ body: { token, newPassword: password } });
+  } catch (error) {
+    const invalid = (error as { body?: { code?: unknown } })?.body?.code === "INVALID_TOKEN";
+    if (invalid) redirect("/reset-password?error=INVALID_TOKEN");
+    back(retry, error);
+  }
+  redirect("/sign-in?reset=1");
+}
+
 export async function signOut() {
   await locus().auth.api.signOut({ headers: await headers() });
   redirect("/sign-in");
