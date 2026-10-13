@@ -123,6 +123,11 @@ export function createAuth(config: LocusAuthConfig) {
         const email = typeof ctx.body?.email === "string" ? ctx.body.email : "";
         const source = ctx.request ?? ctx.headers;
         const ip = source ? getIP(source, ctx.context.options) : null;
+        if (!ip) {
+          // Only the much higher per-email limit applies then. On Vercel `x-forwarded-for` is
+          // always the client's IP; a proxy that appends to it would make every lookup fail.
+          console.warn(`Sign-in rate limit: no client IP for ${ctx.path}; per-IP limits skipped`);
+        }
         const wait = await checkAttemptLimits(config.db, ctx.path, { ip, email });
         if (wait === null) return;
         const minutes = Math.ceil(wait / 60);
