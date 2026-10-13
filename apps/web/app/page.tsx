@@ -60,6 +60,14 @@ export default async function Home() {
           <Notice tone="error">GoHighLevel: can't reach this client. {ghl.reason}</Notice>
         ))}
       <p>
+        {client && (
+          <>
+            <Link href="/sites" className="underline">
+              Sites
+            </Link>{" "}
+            ·{" "}
+          </>
+        )}
         <Link href="/team" className="underline">
           Team
         </Link>{" "}
