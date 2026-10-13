@@ -34,6 +34,12 @@ before any GHL or Turso token for it exists.
 `EMAIL_MODE=resend` sends through Resend with `RESEND_API_KEY` and `EMAIL_FROM`. Unset in
 production is an error, never a silent fallback to the console.
 
-## Not here yet
+## Billing and operators
 
-- The Stripe plugin.
+- `billing.ts` + `plans.ts`: Better Auth's Stripe plugin, three monthly plans found by lookup
+  key, and `agencyEntitlement` / `newClientRefusal`, which read the plan from our own database.
+  Off unless the deployment sets `STRIPE_SECRET_KEY`.
+- `operator.ts`: the deployment's operators (`LOCUS_OPERATORS`) list every agency and can comp
+  one.
+- `rate-limit.ts`: attempt limits on sign-in, sign-up and verification emails, counted in the
+  control database.

@@ -15,6 +15,9 @@ provider: open the verification link from the log.
 
 ## Configuration
 
+The production column describes Otaku's own deployment (its host, app slugs, Turso group and
+Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hosting.md).
+
 | Variable | Locally | Production |
 |---|---|---|
 | `LOCUS_CONTROL_DB_URL` | `file:.data/control.db` | Turso URL — required |
@@ -48,6 +51,7 @@ Vercel; the sync overwrites Vercel's copy.
 
 ## Deploying
 
+
 Vercel builds with `vercel.json`'s command: `db:migrate`, then `next build`. Each deployment
 migrates its own control database before it is built (Production the production database,
 Preview the development one), and a migration that fails stops the deployment. Client
@@ -58,12 +62,14 @@ Agencies' own tokens are not in Infisical: they are sealed in the control databa
 
 ## Pages
 
-`/sign-up` · `/sign-in` · `/onboarding` (create the agency) · `/clients` (pick the client to work
+`/sign-up` · `/sign-in` · `/forgot-password` and `/reset-password` · `/onboarding` (create the agency) · `/clients` (pick the client to work
 on — the access check runs before it is stored on the session) · `/team` (owners and admins:
 invite staff, choose each member's clients) · `/invite/[id]` (accept; verified email required) ·
 `/connect` (owners and admins: connect GoHighLevel and sync clients, connect GitHub and Vercel) ·
 `/sites` (the active client's sites: owners and admins link a project from the connected Vercel
-team and connect its domain; Locus lists the DNS records to add and checks them) · `/`
+team and connect its domain; Locus lists the DNS records to add and checks them) · `/billing` (owners
+and admins: the agency's plan, through Stripe) · `/operator` (the deployment's operators: every
+agency, and comping one) · `/`
 
 `?next=` on sign-in and sign-up only ever accepts a path on this site (`lib/next-path.ts`).
 
