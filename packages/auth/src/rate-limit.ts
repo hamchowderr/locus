@@ -12,8 +12,9 @@ export interface AttemptRule {
 const MINUTE = 60 * 1000;
 
 /**
- * How often attempts may come from one IP address, for one email address from one IP, and for
- * one email address from anywhere. Every attempt counts, successful or not.
+ * How often sign-in, sign-up and verification-email attempts may come from one IP address, for
+ * one email address from one IP, and for one email address from anywhere. Every attempt counts,
+ * successful or not.
  *
  * Per IP slows guessing many accounts from one place. Per email and IP slows guessing one
  * account's password, and caps the verification emails a sign-up can trigger, without letting
@@ -31,6 +32,13 @@ export const ATTEMPT_LIMITS: Record<string, AttemptRule[]> = {
     { by: "ip", max: 30, windowMs: 60 * MINUTE },
     { by: "email+ip", max: 3, windowMs: 60 * MINUTE },
     { by: "email", max: 20, windowMs: 60 * MINUTE },
+  ],
+  // Public over HTTP, and each call emails the address if it is unverified.
+  "/send-verification-email": [
+    { by: "ip", max: 10, windowMs: 60 * MINUTE },
+    { by: "email+ip", max: 3, windowMs: 60 * MINUTE },
+    // Well above the per-IP limit, so one IP can't use up an owner's resends.
+    { by: "email", max: 30, windowMs: 60 * MINUTE },
   ],
 };
 

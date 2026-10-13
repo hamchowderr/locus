@@ -342,6 +342,22 @@ describe("rate limits on signing in and signing up", () => {
     ).rejects.toMatchObject({ status: "TOO_MANY_REQUESTS" });
   });
 
+  it("stops resending an address's verification email after three in an hour", async () => {
+    await auth.api.signUpEmail({ body: owner });
+    const resend = () =>
+      auth.handler(
+        new Request("http://localhost:3000/api/auth/send-verification-email", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+          body: JSON.stringify({ email: owner.email }),
+        }),
+      );
+    const before = sent.length;
+    for (let i = 0; i < 3; i++) expect((await resend()).status).toBe(200);
+    expect((await resend()).status).toBe(429);
+    expect(sent).toHaveLength(before + 3);
+  });
+
   it("applies to the HTTP API as well", async () => {
     const post = () =>
       auth.handler(
