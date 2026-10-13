@@ -6,7 +6,7 @@ import {
   type SessionContext,
 } from "@locus/auth";
 import type { ControlDb } from "@locus/db";
-import { auditLog, hostConnection, location, site } from "@locus/db/control";
+import { auditLog, hostConnection, site } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
 import { and, eq } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
@@ -133,6 +133,9 @@ function refused(result: VercelResult<unknown>, fallback: string): ConnectError 
   return new ConnectError(message ? `Vercel: ${message}` : fallback);
 }
 
+/** At most this many pages of 100 projects are listed for the picker. */
+const MAX_PROJECT_PAGES = 10;
+
 const projectPath = (projectId: string, rest = "") =>
   `/v9/projects/${encodeURIComponent(projectId)}${rest}`;
 
@@ -143,15 +146,23 @@ export async function listHostProjects(
 ): Promise<HostProject[]> {
   const { organizationId } = await requireAgencyManager(deps.db, ctx);
   const grant = await hostGrant(deps, organizationId);
-  const result = await vercel<{ projects?: { id: string; name: string }[] }>(
-    deps,
-    grant,
-    "GET",
-    "/v10/projects",
-    { query: { limit: "100" } },
-  );
-  if (!result.ok) throw refused(result, "Vercel didn't list your projects. Try again.");
-  return (result.body.projects ?? []).map(({ id, name }) => ({ id, name }));
+  const projects: HostProject[] = [];
+  // Pages of 100, newest first; `pagination.next` is the `until` for the next page.
+  let until: string | undefined;
+  for (let page = 0; page < MAX_PROJECT_PAGES; page++) {
+    const result = await vercel<{
+      projects?: { id: string; name: string }[];
+      pagination?: { next?: number | null };
+    }>(deps, grant, "GET", "/v10/projects", {
+      query: { limit: "100", ...(until ? { until } : {}) },
+    });
+    if (!result.ok) throw refused(result, "Vercel didn't list your projects. Try again.");
+    projects.push(...(result.body.projects ?? []).map(({ id, name }) => ({ id, name })));
+    const next = result.body.pagination?.next;
+    if (next == null) break;
+    until = String(next);
+  }
+  return projects;
 }
 
 /** The client's sites. */
@@ -185,18 +196,12 @@ export async function linkHostProject(
   if (!result.ok || !result.body.id) throw refused(result, "Vercel didn't find that project.");
   const projectId = result.body.id;
 
+  // Vercel project ids are global: a project is one site, in any agency (a unique index too).
   const [taken] = await deps.db
     .select({ locationId: site.locationId })
     .from(site)
-    .innerJoin(location, eq(site.locationId, location.id))
-    .where(and(eq(location.organizationId, organizationId), eq(site.hostProjectId, projectId)));
-  if (taken) {
-    throw new ConnectError(
-      taken.locationId === client.location.id
-        ? "That project is already this client's site."
-        : "That project is already another client's site.",
-    );
-  }
+    .where(eq(site.hostProjectId, projectId));
+  if (taken) throw alreadyLinked(taken.locationId === client.location.id);
 
   const [row] = await deps.db
     .insert(site)
@@ -207,11 +212,24 @@ export async function linkHostProject(
       hostProjectId: projectId,
       status: "deployed",
     })
-    .returning();
+    .returning()
+    .catch((error: unknown) => {
+      // Linked by a concurrent request between the check above and this insert.
+      const text = `${error} ${(error as { cause?: unknown })?.cause ?? ""}`;
+      if (/UNIQUE constraint failed/i.test(text)) {
+        throw alreadyLinked(false);
+      }
+      throw error;
+    });
   await audit(deps.db, ctx, client, "site.link", { projectId, name: result.body.name });
   // biome-ignore lint/style/noNonNullAssertion: an insert returns its row
   return row!;
 }
+
+const alreadyLinked = (here: boolean) =>
+  new ConnectError(
+    here ? "That project is already this client's site." : "That project is already another site.",
+  );
 
 async function clientSite(
   deps: SiteDeps,
@@ -258,9 +276,13 @@ export async function attachSiteDomain(
         body: { name: domain },
       },
     );
-    // 400 also means "already on this project", which is where we want it.
-    const already = added.status === 400 && /already/i.test(added.body.error?.message ?? "");
-    if (!added.ok && !already) throw refused(added, "Vercel didn't add that domain. Try again.");
+    if (!added.ok) {
+      // Vercel refuses a domain that is already on this project, which is where we want it:
+      // accept the refusal only if the project really has the domain.
+      const path = projectPath(row.hostProjectId, `/domains/${encodeURIComponent(domain)}`);
+      const existing = await vercel(deps, grant, "GET", path);
+      if (!existing.ok) throw refused(added, "Vercel didn't add that domain. Try again.");
+    }
     await deps.db.update(site).set({ customDomain: domain }).where(eq(site.id, row.id));
     await audit(deps.db, ctx, client, "site.domain.add", { siteId: row.id, domain });
   }

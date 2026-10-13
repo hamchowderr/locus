@@ -75,7 +75,11 @@ export const site = sqliteTable(
       .default("draft"),
     createdAt: createdAt(),
   },
-  (t) => [index("site_location_idx").on(t.locationId)],
+  (t) => [
+    index("site_location_idx").on(t.locationId),
+    // A host project is one site, whichever agency or client links it.
+    unique("site_host_project_unique").on(t.hostProjectId),
+  ],
 );
 
 // The three connections. Each names its credential by path (`secretRef`); the value lives in
