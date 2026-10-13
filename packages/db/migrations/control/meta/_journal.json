@@ -64,6 +64,20 @@
       "when": 1791754221675,
       "tag": "0008_stripe_billing_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791859704738,
+      "tag": "0009_auth_rate_limit",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791860106353,
+      "tag": "0010_auth_rate_limit_index",
+      "breakpoints": true
     }
   ]
 }
