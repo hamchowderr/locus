@@ -225,6 +225,48 @@ describe("resetting a forgotten password", () => {
   });
 });
 
+describe("signing in", () => {
+  async function verifiedOwner() {
+    await auth.api.signUpEmail({ body: owner });
+    await auth.api.verifyEmail({
+      query: {
+        token: new URL(sent[0]?.text.split(" ").at(-1) ?? "").searchParams.get("token") ?? "",
+      },
+    });
+  }
+
+  async function signIn() {
+    const { headers } = await auth.api.signInEmail({
+      body: { email: owner.email, password: owner.password },
+      returnHeaders: true,
+    });
+    const cookie = headers
+      .getSetCookie()
+      .map((c) => c.split(";")[0])
+      .join("; ");
+    return new Headers({ cookie });
+  }
+
+  it("reopens the agency the user already belongs to", async () => {
+    await verifiedOwner();
+    const first = await signIn();
+    const agency = await auth.api.createOrganization({
+      body: { name: "Acme Agency", slug: "acme-agency" },
+      headers: first,
+    });
+    await auth.api.signOut({ headers: first });
+
+    const again = await auth.api.getSession({ headers: await signIn() });
+    expect(again?.session.activeOrganizationId).toBe(agency?.id);
+  });
+
+  it("leaves a user with no agency yet without one, so they get onboarding", async () => {
+    await verifiedOwner();
+    const current = await auth.api.getSession({ headers: await signIn() });
+    expect(current?.session.activeOrganizationId ?? null).toBeNull();
+  });
+});
+
 describe("generated schema", () => {
   it("matches what the auth CLI emits for this config (run `pnpm --filter @locus/auth generate:schema`)", async () => {
     const out = join(dir, "auth-schema.ts");

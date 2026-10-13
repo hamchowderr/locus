@@ -52,6 +52,26 @@ export function createAuth(config: LocusAuthConfig) {
         activeLocationId: { type: "string", required: false, input: false },
       },
     },
+    // A new session starts in the agency the user joined first, so signing in (again, or after
+    // a password reset) never sends an existing member to create their agency a second time.
+    // Someone with no agency yet still gets onboarding.
+    databaseHooks: {
+      session: {
+        create: {
+          before: async (session) => {
+            const context = await auth.$context;
+            const [first] = (await context.adapter.findMany({
+              model: "member",
+              where: [{ field: "userId", value: session.userId }],
+              sortBy: { field: "createdAt", direction: "asc" },
+              limit: 1,
+            })) as { organizationId: string }[];
+            if (!first) return;
+            return { data: { ...session, activeOrganizationId: first.organizationId } };
+          },
+        },
+      },
+    },
     // Better Auth logs and swallows a failed verification email, so a sign-up whose email never
     // arrived still leaves an unverified account behind. Both ways back in resend the link:
     // signing up again with the same address, and signing in with the right password.
