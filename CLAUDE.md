@@ -29,6 +29,9 @@ files. The short version:
 ```
 apps/web          Next.js + shadcn/ui — the product and its API
 apps/desktop      Electron thin client of apps/web (holds no tokens)
+packages/auth     Better Auth: accounts, agencies, staff access, billing, operators
+packages/connect  GHL, GitHub and Vercel connections, sites and domains
+packages/secrets  where agencies' credentials are sealed
 packages/ghl      operation descriptors + the one GHL request path
 packages/testing  AIMock wiring + a fake GHL for tests
 packages/skills   the GHL skill catalog, generated from the docs (see its README)
