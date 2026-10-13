@@ -37,7 +37,8 @@ export const ATTEMPT_LIMITS: Record<string, AttemptRule[]> = {
   "/send-verification-email": [
     { by: "ip", max: 10, windowMs: 60 * MINUTE },
     { by: "email+ip", max: 3, windowMs: 60 * MINUTE },
-    { by: "email", max: 10, windowMs: 60 * MINUTE },
+    // Well above the per-IP limit, so one IP can't use up an owner's resends.
+    { by: "email", max: 30, windowMs: 60 * MINUTE },
   ],
 };
 
