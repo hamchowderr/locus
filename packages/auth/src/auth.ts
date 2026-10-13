@@ -59,6 +59,7 @@ export function createAuth(config: LocusAuthConfig) {
       session: {
         create: {
           before: async (session) => {
+            if (session.activeOrganizationId) return;
             const context = await auth.$context;
             const [first] = (await context.adapter.findMany({
               model: "member",
