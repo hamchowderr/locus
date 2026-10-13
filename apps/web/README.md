@@ -15,6 +15,9 @@ provider: open the verification link from the log.
 
 ## Configuration
 
+The production column describes Otaku's own deployment (its host, app slugs, Turso group and
+Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hosting.md).
+
 | Variable | Locally | Production |
 |---|---|---|
 | `LOCUS_CONTROL_DB_URL` | `file:.data/control.db` | Turso URL — required |
@@ -47,8 +50,6 @@ Vercel sync: `dev:/locus` → Preview, `prod:/locus` → Production. Change them
 Vercel; the sync overwrites Vercel's copy.
 
 ## Deploying
-
-Running your own deployment: [`docs/self-hosting.md`](../../docs/self-hosting.md).
 
 
 Vercel builds with `vercel.json`'s command: `db:migrate`, then `next build`. Each deployment
