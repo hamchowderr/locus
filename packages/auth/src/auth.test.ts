@@ -129,6 +129,92 @@ describe("signing up with an address that is already verified", () => {
   });
 });
 
+describe("resetting a forgotten password", () => {
+  const newPassword = "a brand new passphrase";
+  const resetLink = (text: string | undefined) => new URL(text?.match(/https?:\/\/\S+/)?.[0] ?? "");
+  const tokenIn = (text: string | undefined) => resetLink(text).pathname.split("/").at(-1) ?? "";
+
+  async function verifiedOwner() {
+    await auth.api.signUpEmail({ body: owner });
+    await auth.api.verifyEmail({
+      query: {
+        token: new URL(sent[0]?.text.split(" ").at(-1) ?? "").searchParams.get("token") ?? "",
+      },
+    });
+    sent = [];
+  }
+
+  it("emails the owner a link that leads back to the set-new-password page", async () => {
+    await verifiedOwner();
+    await auth.api.requestPasswordReset({
+      body: { email: owner.email, redirectTo: "/reset-password" },
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.to).toBe(owner.email);
+    const link = resetLink(sent[0]?.text);
+    expect(link.pathname).toMatch(/^\/api\/auth\/reset-password\/\w+$/);
+    expect(link.searchParams.get("callbackURL")).toBe("/reset-password");
+  });
+
+  it("answers the same for an unknown address and sends nothing", async () => {
+    await expect(
+      auth.api.requestPasswordReset({
+        body: { email: "nobody@agency.test", redirectTo: "/reset-password" },
+      }),
+    ).resolves.toMatchObject({ status: true });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("sets the new password once, and only the new one signs in", async () => {
+    await verifiedOwner();
+    await auth.api.requestPasswordReset({ body: { email: owner.email } });
+    const token = tokenIn(sent[0]?.text);
+
+    await auth.api.resetPassword({ body: { token, newPassword } });
+    await expect(
+      auth.api.signInEmail({ body: { email: owner.email, password: owner.password } }),
+    ).rejects.toMatchObject({ status: "UNAUTHORIZED" });
+    await expect(
+      auth.api.signInEmail({ body: { email: owner.email, password: newPassword } }),
+    ).resolves.toBeTruthy();
+
+    await expect(
+      auth.api.resetPassword({ body: { token, newPassword: "yet another passphrase" } }),
+    ).rejects.toMatchObject({ status: "BAD_REQUEST" });
+  });
+
+  it("signs out every existing session", async () => {
+    await verifiedOwner();
+    await auth.api.signInEmail({ body: { email: owner.email, password: owner.password } });
+    const context = await auth.$context;
+    const user = await context.internalAdapter.findUserByEmail(owner.email);
+    expect(await context.internalAdapter.listSessions(user?.user.id ?? "")).not.toEqual([]);
+
+    await auth.api.requestPasswordReset({ body: { email: owner.email } });
+    await auth.api.resetPassword({ body: { token: tokenIn(sent[0]?.text), newPassword } });
+
+    expect(await context.internalAdapter.listSessions(user?.user.id ?? "")).toEqual([]);
+  });
+
+  it("verifies an owner whose verification email never arrived", async () => {
+    await auth.api.signUpEmail({ body: owner });
+    sent = [];
+    await auth.api.requestPasswordReset({ body: { email: owner.email } });
+    await auth.api.resetPassword({ body: { token: tokenIn(sent[0]?.text), newPassword } });
+
+    const result = await auth.api.signInEmail({
+      body: { email: owner.email, password: newPassword },
+    });
+    expect(result.user.emailVerified).toBe(true);
+  });
+
+  it("refuses a made-up token", async () => {
+    await expect(
+      auth.api.resetPassword({ body: { token: "not-a-real-token", newPassword } }),
+    ).rejects.toMatchObject({ status: "BAD_REQUEST" });
+  });
+});
+
 describe("generated schema", () => {
   it("matches what the auth CLI emits for this config (run `pnpm --filter @locus/auth generate:schema`)", async () => {
     const out = join(dir, "auth-schema.ts");
