@@ -49,6 +49,8 @@ export async function signUp(form: FormData) {
         password: String(form.get("password") ?? ""),
         callbackURL: next,
       },
+      // The client's IP, for the sign-up rate limit.
+      headers: await headers(),
     });
   } catch (error) {
     back(`/sign-up${nextQuery(next)}`, error);
@@ -64,9 +66,48 @@ export async function signIn(form: FormData) {
       headers: await headers(),
     });
   } catch (error) {
-    back(`/sign-in${nextQuery(next)}`, error);
+    // Signing in with the right password resends the verification link (`sendOnSignIn`).
+    const unverified =
+      (error as { body?: { code?: unknown } })?.body?.code === "EMAIL_NOT_VERIFIED";
+    back(
+      `/sign-in${nextQuery(next)}`,
+      unverified ? new Error("Your email isn't verified yet. We've sent you a new link.") : error,
+    );
   }
   redirect(next);
+}
+
+/**
+ * Emails a reset link. The page says the same whether or not the address has an account, and a
+ * failed send is logged rather than shown. (Response time can still differ, as for sign-up.)
+ */
+export async function requestPasswordReset(form: FormData) {
+  try {
+    await locus().auth.api.requestPasswordReset({
+      body: { email: text(form, "email"), redirectTo: "/reset-password" },
+    });
+  } catch (error) {
+    console.error(`Password reset request failed: ${messageOf(error)}`);
+  }
+  redirect("/forgot-password?sent=1");
+}
+
+/** Sets the new password from the emailed link's token; every session is signed out. */
+export async function resetPassword(form: FormData) {
+  const token = text(form, "token");
+  const password = String(form.get("password") ?? "");
+  const retry = `/reset-password?token=${encodeURIComponent(token)}`;
+  if (password !== String(form.get("confirm") ?? "")) {
+    back(retry, new Error("The two passwords don't match."));
+  }
+  try {
+    await locus().auth.api.resetPassword({ body: { token, newPassword: password } });
+  } catch (error) {
+    const invalid = (error as { body?: { code?: unknown } })?.body?.code === "INVALID_TOKEN";
+    if (invalid) redirect("/reset-password?error=INVALID_TOKEN");
+    back(retry, error);
+  }
+  redirect("/sign-in?reset=1");
 }
 
 export async function signOut() {
