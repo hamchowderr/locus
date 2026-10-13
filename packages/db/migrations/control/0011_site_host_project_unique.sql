@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `site_host_project_unique` ON `site` (`host_project_id`);

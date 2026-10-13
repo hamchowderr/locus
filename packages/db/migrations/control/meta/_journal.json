@@ -78,6 +78,13 @@
       "when": 1791860106353,
       "tag": "0010_auth_rate_limit_index",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791910618836,
+      "tag": "0011_site_host_project_unique",
+      "breakpoints": true
     }
   ]
 }

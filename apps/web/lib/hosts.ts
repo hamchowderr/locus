@@ -2,6 +2,7 @@ import {
   createStubGithub,
   createStubVercel,
   type GithubConnectDeps,
+  type SiteDeps,
   STUB_GITHUB_CODE,
   STUB_GITHUB_INSTALLATION,
   STUB_VERCEL_CODE,
@@ -71,6 +72,12 @@ export function vercelDeps(): VercelConnectDeps {
       redirectUri,
     },
   };
+}
+
+/** For a client's site and its domain, on the agency's connected Vercel team. */
+export function siteDeps(): SiteDeps {
+  const { db, secrets, http } = vercelDeps();
+  return { db, secrets, ...(http ? { http } : {}) };
 }
 
 /** In stub mode the "install" pages are local routes that approve straight away. */

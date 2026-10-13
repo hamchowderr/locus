@@ -61,7 +61,9 @@ Agencies' own tokens are not in Infisical: they are sealed in the control databa
 `/sign-up` · `/sign-in` · `/onboarding` (create the agency) · `/clients` (pick the client to work
 on — the access check runs before it is stored on the session) · `/team` (owners and admins:
 invite staff, choose each member's clients) · `/invite/[id]` (accept; verified email required) ·
-`/connect` (owners and admins: connect GoHighLevel and sync clients, connect GitHub and Vercel) · `/`
+`/connect` (owners and admins: connect GoHighLevel and sync clients, connect GitHub and Vercel) ·
+`/sites` (the active client's sites: owners and admins link a project from the connected Vercel
+team and connect its domain; Locus lists the DNS records to add and checks them) · `/`
 
 `?next=` on sign-in and sign-up only ever accepts a path on this site (`lib/next-path.ts`).
 
