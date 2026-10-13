@@ -16,10 +16,17 @@ every outside service has a stand-in outside production.
 - **Outside services**, each optional or required as listed below: GoHighLevel, GitHub,
   Vercel, Stripe and an email provider (Resend).
 
-In production (`NODE_ENV=production`) Locus never falls back to a development stand-in. A
-missing required setting makes the deployment show "Locus is being set up", the auth API
-answers 503, and the server log names every missing setting (names only) when an instance
-starts.
+In production (`NODE_ENV=production`) Locus does not fall back to the GoHighLevel, GitHub,
+Vercel, database or secrets stand-ins. When a server instance starts, its log names each
+missing setting from the table below that it checks (names only, never values). What a missing
+setting does:
+
+- `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` or `LOCUS_CONTROL_DB_URL`: every page shows "Locus is
+  being set up" and the auth API answers 503.
+- Email (`EMAIL_MODE`, `RESEND_API_KEY`, `EMAIL_FROM`): pages and the auth API fail with a
+  server error.
+- Anything else (GoHighLevel, GitHub, Vercel, Turso, `LOCUS_SECRETS_KEY`): only that feature
+  fails, for example connecting GoHighLevel or adding a client.
 
 ## Settings
 
@@ -32,7 +39,7 @@ deployment is not considered set up without it.
 | `BETTER_AUTH_URL` | yes | The deployment's public URL, e.g. `https://locus.example.com`. Used for email links, OAuth callbacks and Stripe return pages |
 | `LOCUS_CONTROL_DB_URL` | yes | The control database's `libsql://` URL |
 | `LOCUS_CONTROL_DB_TOKEN` | yes | A token for the control database |
-| `EMAIL_MODE` | yes | `resend` in production (`console` only prints, and is refused) |
+| `EMAIL_MODE` | yes | `resend` in production. `console` prints messages, including sign-in and reset links, to the log: never use it in production |
 | `RESEND_API_KEY` | yes | Resend API key |
 | `EMAIL_FROM` | yes | The sender, e.g. `Locus <no-reply@example.com>`, on a domain verified in Resend |
 | `LOCUS_SECRETS` | no | `encrypted`, the default and only choice in production |
@@ -54,13 +61,15 @@ deployment is not considered set up without it.
 | `STRIPE_WEBHOOK_SECRET` | with Stripe | The signing secret of your Stripe webhook endpoint |
 | `LOCUS_OPERATORS` | no | Comma-separated emails of the deployment's operators (verified accounts only). Unset means nobody can open `/operator` |
 
-The `*_MODE` switches exist so development can use stand-ins; in production leave them unset
-or set them to `live`. A production deployment with any of them set to `stub` (or
-`EMAIL_MODE=console`) logs it as a problem and refuses to use it.
+The `GHL_MODE`, `GITHUB_MODE` and `VERCEL_MODE` switches exist so development can use
+stand-ins; in production leave them unset or set them to `live`. Set to `stub` in production,
+they are logged as a problem and refused. `EMAIL_MODE=console` is logged as a problem but still
+used, so check it yourself.
 
 GoHighLevel's OAuth scopes are not a setting: they are `GHL_SCOPES` in
 [`packages/connect/src/ghl-scopes.ts`](../packages/connect/src/ghl-scopes.ts), and your app
-must have exactly those ticked.
+must have exactly those ticked. (The app id in that file's comment is Otaku's own app, not one
+you need.)
 
 ## 1. Turso: the databases
 
@@ -82,7 +91,7 @@ Accounts are Better Auth (email and password). It needs no outside account, only
 
 - Email verification is mandatory, and invitations require a verified email.
 - Forgot password sends a reset link (at most a few per account per hour), and a reset signs
-  out every other session.
+  out every session.
 - Sign-in, sign-up and verification emails are rate limited per IP, per email, and per email
   and IP. The counters live in the control database, so they hold across instances. The IP is
   read from `x-forwarded-for`, which must hold only the client's address (Vercel's does). A
@@ -150,7 +159,8 @@ DNS provider: Locus shows the records to add there and checks them.
 
 ## 6. Deploy
 
-Locus is built for Vercel, but any host that runs Node 22.12+ and Next.js works.
+Locus is built for Vercel, but any host that runs Node 22.18+ and Next.js works. (The
+migration script runs TypeScript directly, which Node supports from 22.18.)
 
 ### On Vercel
 
@@ -183,8 +193,8 @@ Run `db:migrate` before starting each new version. The proxy in front must set
 
 ## 7. Stripe: billing (optional)
 
-Without `STRIPE_SECRET_KEY`, billing is off and agencies may add any number of clients. To turn
-it on:
+Without `STRIPE_SECRET_KEY`, billing is off and agencies may add any number of clients. With
+it on, an agency needs a plan (or a comp) before it can add a client. To turn it on:
 
 1. In Stripe, create one product per plan with one **recurring monthly price** each, and give
    each price the plan's **lookup key**: `locus_starter_monthly`, `locus_growth_monthly` and
@@ -209,8 +219,8 @@ may add clients up to its plan's limit. An overdue agency keeps its clients but 
 | GitHub | `/api/webhooks/github` | `GITHUB_WEBHOOK_SECRET` (`X-Hub-Signature-256`) |
 | Stripe | `/api/auth/stripe/webhook` | `STRIPE_WEBHOOK_SECRET` |
 
-Each checks the signature against the raw body before reading anything, and answers 503 while
-its setting is missing.
+Each checks the signature against the raw body before reading anything. The GoHighLevel and
+GitHub webhooks answer 503 while their setting is missing; Stripe's answers with an error.
 
 ## Callback URLs at a glance
 

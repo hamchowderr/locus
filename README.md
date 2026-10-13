@@ -23,8 +23,9 @@ only the clients they are given.
 - **Sites** (`/sites`): link a client's site to a project on the agency's Vercel team and
   connect its custom domain. Locus lists the DNS records to add at the client's DNS provider
   and checks them.
-- **Billing** (`/billing`): three monthly plans through Stripe, limiting how many clients an
-  agency may add. Optional: without a Stripe key billing is off and nothing is limited.
+- **Billing** (`/billing`): three monthly plans through Stripe. An agency needs a plan to add
+  clients, and the Starter plan caps them at five. Optional: without a Stripe key billing is
+  off and nothing is limited.
 - **Operator page** (`/operator`): the deployment's operators see every agency and can comp
   one (free access without a subscription).
 - **Agent harness** (`packages/harness`): a Mastra agent with `query_data` and
@@ -54,7 +55,7 @@ Each package has its own README with the details.
 
 ## Develop
 
-Requires Node 22.12+ and pnpm 10. Nothing else: outside production every outside service has a
+Requires Node 22.18+ and pnpm 10. Nothing else: outside production every outside service has a
 stand-in (a pretend GHL agency, GitHub org and Vercel team, email printed to the log, SQLite
 files for the databases).
 
@@ -81,5 +82,5 @@ each one needs, deploying, and the webhooks to register.
 
 ## More
 
-Product docs live in the Obsidian vault; start with the PRD's "What changed in v0.5". Agent and
-contributor rules: [`CLAUDE.md`](CLAUDE.md).
+Product docs live in Otaku's private Obsidian vault; start with the PRD's "What changed in
+v0.5". Agent and contributor rules: [`CLAUDE.md`](CLAUDE.md).
