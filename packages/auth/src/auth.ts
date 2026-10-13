@@ -84,13 +84,10 @@ export function createAuth(config: LocusAuthConfig) {
       requireEmailVerification: true,
       // Sign-up answers the same whether or not the address exists, so this must not say which:
       // an unverified owner gets a fresh link, a verified one gets nothing.
-      onExistingUserSignUp: async ({ user }, request) => {
+      onExistingUserSignUp: async ({ user }) => {
         if (user.emailVerified) return;
-        // Over HTTP, pass the sign-up's headers so the resend counts against the caller's IP.
-        await auth.api.sendVerificationEmail({
-          body: { email: user.email },
-          ...(request ? { headers: request.headers } : {}),
-        });
+        // Without headers only the per-email resend limit applies; sign-up has its own limits.
+        await auth.api.sendVerificationEmail({ body: { email: user.email } });
       },
       // The request answers the same whether or not the address exists; only an owner gets mail.
       // The link lasts an hour, works once, and signs every device out when it is used.
