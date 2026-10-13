@@ -184,9 +184,40 @@ describe("linking a Vercel project to a client", () => {
     const other = await authorizeClient(db, ctx("owner"), "client-2");
     await expect(
       linkHostProject(deps(), ctx("owner"), other, { projectId: STUB_VERCEL_PROJECT.id }),
-    ).rejects.toThrow(/another client's site/);
+    ).rejects.toThrow(/already another site/);
     const [entry] = await db.select().from(auditLog).where(eq(auditLog.action, "site.link"));
     expect(entry).toMatchObject({ actorUserId: "owner", locationId: "client-1" });
+  });
+
+  it("follows Vercel's pages when listing projects", async () => {
+    const fake = fakeVercel({
+      "GET /v10/projects": (call) =>
+        call.url.searchParams.get("until") === "1700"
+          ? [200, { projects: [{ id: "prj_old", name: "old" }], pagination: { next: null } }]
+          : [200, { projects: [{ id: "prj_new", name: "new" }], pagination: { next: 1700 } }],
+    });
+    expect((await listHostProjects(deps(fake.fetch), ctx("owner"))).map((p) => p.id)).toEqual([
+      "prj_new",
+      "prj_old",
+    ]);
+  });
+
+  it("holds one site per project in the database too, for agencies sharing a team", async () => {
+    await expect(
+      db.insert(site).values([
+        { id: "s1", locationId: "client-1", host: "vercel", hostProjectId: "prj_x" },
+        { id: "s2", locationId: "client-b", host: "vercel", hostProjectId: "prj_x" },
+      ]),
+    ).rejects.toThrow();
+    await connectHost("agency-b");
+    const other = await authorizeClient(db, ctx("other-owner", "agency-b"), "client-b");
+    const mine = await authorizeClient(db, ctx("owner"), "client-1");
+    await linkHostProject(deps(), ctx("owner"), mine, { projectId: STUB_VERCEL_PROJECT.id });
+    await expect(
+      linkHostProject(deps(), ctx("other-owner", "agency-b"), other, {
+        projectId: STUB_VERCEL_PROJECT.id,
+      }),
+    ).rejects.toThrow(/already another site/);
   });
 
   it("refuses a project that isn't on the agency's team", async () => {
@@ -351,6 +382,39 @@ describe("a site's domain", () => {
     ).rejects.toThrow("Vercel: The domain is already assigned to another Vercel project");
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.customDomain).toBeNull();
+  });
+
+  it("keeps nothing when Vercel refuses and the project doesn't have the domain", async () => {
+    const { client, siteId } = await linkedSite();
+    const fake = fakeVercel({
+      "POST /v10/projects/prj_stub/domains": () => [
+        400,
+        { error: { code: "invalid_domain", message: "Domain is already reserved" } },
+      ],
+    });
+    await expect(
+      attachSiteDomain(deps(fake.fetch), ctx("owner"), client, { siteId, domain: "acme.com" }),
+    ).rejects.toThrow("Vercel: Domain is already reserved");
+    const [row] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(row?.customDomain).toBeNull();
+  });
+
+  it("keeps a domain the project already had", async () => {
+    const { client, siteId } = await linkedSite();
+    const fake = fakeVercel({
+      "POST /v10/projects/prj_stub/domains": () => [400, { error: { message: "exists" } }],
+      "GET /v9/projects/prj_stub/domains/acme.com": () => [
+        200,
+        { name: "acme.com", apexName: "acme.com", verified: true },
+      ],
+      "GET /v6/domains/acme.com/config": () => [200, { misconfigured: false }],
+    });
+    expect(
+      await attachSiteDomain(deps(fake.fetch), ctx("owner"), client, {
+        siteId,
+        domain: "acme.com",
+      }),
+    ).toMatchObject({ state: "live" });
   });
 
   it("keeps one domain per site until it is removed", async () => {

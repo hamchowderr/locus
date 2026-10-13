@@ -93,7 +93,15 @@ export default async function Sites({
               {names.get(s.hostProjectId ?? "") ?? s.hostProjectId ?? "Site"}
             </h2>
             {isProblem(status) ? (
-              <Notice tone="error">{status.problem}</Notice>
+              <>
+                {s.customDomain && (
+                  <p>
+                    <strong>{s.customDomain}</strong>
+                  </p>
+                )}
+                <Notice tone="error">{status.problem}</Notice>
+                {manager && s.customDomain && <RemoveDomain siteId={s.id} />}
+              </>
             ) : status ? (
               <DomainPanel status={status} siteId={s.id} manager={manager} />
             ) : manager ? (
@@ -194,15 +202,19 @@ function DomainPanel({
             Check again
           </a>
         )}
-        {manager && (
-          <form action={deleteSiteDomain}>
-            <input type="hidden" name="siteId" value={siteId} />
-            <button type="submit" className="underline">
-              Remove domain
-            </button>
-          </form>
-        )}
+        {manager && <RemoveDomain siteId={siteId} />}
       </div>
     </div>
+  );
+}
+
+function RemoveDomain({ siteId }: { siteId: string }) {
+  return (
+    <form action={deleteSiteDomain} className="text-sm">
+      <input type="hidden" name="siteId" value={siteId} />
+      <button type="submit" className="underline">
+        Remove domain
+      </button>
+    </form>
   );
 }
