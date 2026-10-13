@@ -4,7 +4,7 @@ import { sql } from "drizzle-orm";
 
 export interface AttemptRule {
   /** What the attempts are counted by. */
-  by: "ip" | "email";
+  by: "ip" | "email" | "email+ip";
   max: number;
   windowMs: number;
 }
@@ -12,19 +12,25 @@ export interface AttemptRule {
 const MINUTE = 60 * 1000;
 
 /**
- * How often one IP address, and one email address, may try to sign in or sign up. Counting by
- * IP slows guessing many accounts from one place; counting by email slows guessing one
- * account's password from many places, and caps the verification emails a sign-up can trigger.
- * Every attempt counts, successful or not.
+ * How often attempts may come from one IP address, for one email address from one IP, and for
+ * one email address from anywhere. Every attempt counts, successful or not.
+ *
+ * Per IP slows guessing many accounts from one place. Per email and IP slows guessing one
+ * account's password, and caps the verification emails a sign-up can trigger, without letting
+ * someone else lock the owner out from elsewhere. The per-email ceiling is far higher, so only
+ * guessing spread across many IPs reaches it.
  */
 export const ATTEMPT_LIMITS: Record<string, AttemptRule[]> = {
   "/sign-in/email": [
     { by: "ip", max: 30, windowMs: 15 * MINUTE },
-    { by: "email", max: 10, windowMs: 15 * MINUTE },
+    { by: "email+ip", max: 10, windowMs: 15 * MINUTE },
+    { by: "email", max: 100, windowMs: 15 * MINUTE },
   ],
   "/sign-up/email": [
-    { by: "ip", max: 10, windowMs: 60 * MINUTE },
-    { by: "email", max: 3, windowMs: 60 * MINUTE },
+    // Invited staff sign up here, often several from one office network.
+    { by: "ip", max: 30, windowMs: 60 * MINUTE },
+    { by: "email+ip", max: 3, windowMs: 60 * MINUTE },
+    { by: "email", max: 20, windowMs: 60 * MINUTE },
   ],
 };
 
@@ -71,7 +77,7 @@ export async function consumeAttempt(
 
 /**
  * Checks every limit for `path` and returns the longest wait among those exceeded, or null
- * when the attempt may go ahead. A missing IP (no trusted header) skips the IP limit only.
+ * when the attempt may go ahead. Without an IP (no trusted header) only the per-email limit applies.
  */
 export async function checkAttemptLimits(
   db: ControlDb,
@@ -80,7 +86,8 @@ export async function checkAttemptLimits(
 ): Promise<number | null> {
   let wait: number | null = null;
   for (const rule of ATTEMPT_LIMITS[path] ?? []) {
-    const value = rule.by === "ip" ? who.ip : who.email.trim().toLowerCase();
+    const email = who.email.trim().toLowerCase();
+    const value = { ip: who.ip, email, "email+ip": who.ip && `${email}|${who.ip}` }[rule.by];
     if (!value) continue;
     const result = await consumeAttempt(db, `${path}|${rule.by}|${value}`, rule);
     if (!result.allowed) wait = Math.max(wait ?? 0, result.retryAfterSeconds);
