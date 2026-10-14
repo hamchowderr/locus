@@ -54,15 +54,23 @@ Rates, markup and the plans' credit limits are placeholders until pricing is val
 
 - `creditsFor(measurement)`: pure pricing — tokens by model-id prefix (an unknown model is priced
   like the most expensive one), images by size, sandbox by the second. Rounds up.
-- `checkAllowance(db, { organizationId, locationId, now })` before generating: refuses when the
-  agency isn't entitled, the client is paused, the agency's `creditsPerMonth` or the client's own
-  monthly cap is used up, or the client's rolling 5-hour window (`creditsPer5Hours`) is full —
-  with a sentence for the user and, when waiting helps, `retryAt`. Months are calendar months in
-  UTC, not the Stripe period. Comped agencies have no plan limits; a client's own cap still applies.
-- `recordUsage(db, …)` after each measurement: stores a `usage_event` and returns alerts newly
-  crossed (the client's `alert_at_percent` and 100% of its cap, 80% and 100% of the agency's
-  month), each fired once per month (`usage_alert`) and written to `audit_log`.
-- `usageSummary(db, …)` for the usage page; `setUsageLimit(db, ctx, client, …)` sets a client's
-  cap, alert threshold or pause — owners and admins only, audited.
+- `checkAllowance(db, client, { now })` before generating, with the `AuthorizedClient`: refuses
+  when the agency isn't entitled, the client is paused, the agency's `creditsPerMonth` or the
+  client's own monthly cap is used up, or the client's rolling 5-hour window (`creditsPer5Hours`)
+  is full — with a sentence for the user and, when waiting helps, `retryAt`. Months are calendar
+  months in UTC, not the Stripe period. Comped agencies have no plan limits; a client's own cap
+  still applies.
+- `recordUsage(db, client, { usage, … })` after each measurement: stores a `usage_event` and adds
+  it to the client's `usage_month` rollup in one batch, and returns alerts newly crossed (the
+  client's `alert_at_percent` and 100% of its cap, 80% and 100% of the agency's month). Each fires
+  once per month (`usage_alert`), recorded together with its `audit_log` row.
+- **Nothing is reserved** between the check and the record, so generations started at the same
+  time can each take a total past its limit by about one generation. The next check refuses.
+- `usageSummary(db, ctx, { client? })` for the usage page: the whole agency for owners and admins;
+  with a `client`, that client only, and the agency's total only for owners and admins.
+- `setUsageLimit(db, ctx, client, …)` sets a client's cap, alert threshold or pause — owners and
+  admins only, audited.
 
-The ids come from the session (`AuthorizedClient`, the active organisation), never a request.
+The agency is always read from the `AuthorizedClient` or the session, never from a request.
+Monthly totals come from `usage_month` (a row per client per month); only the 5-hour window sums
+events.
