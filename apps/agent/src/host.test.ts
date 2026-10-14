@@ -1,7 +1,8 @@
+import { createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionContext } from "@locus/auth";
+import { chatKitKey, type SessionContext } from "@locus/auth";
 import { connectAgency, createStubGhl, STUB_CODE } from "@locus/connect";
 import { type ControlDb, LocalProvisioner, migrateControlDb, openControlDb } from "@locus/db";
 import {
@@ -18,7 +19,7 @@ import { MastraClient } from "@mastra/client-js";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createHost, PREFIX } from "./host.ts";
+import { createHost, PREFIX, sessionFromKitToken } from "./host.ts";
 import { SCRIPTED_REPLY, scriptedModel } from "./scripted-model.ts";
 
 const mock = useAimock();
@@ -480,5 +481,121 @@ describe("the agent server", () => {
       new Promise((r) => setTimeout(() => r(false), 2_000)),
     ]);
     expect(ended).toBe(true);
+  });
+});
+
+/** A token as the chat kit's proxy signs it. */
+function kitToken(key: string, sub: string, exp = Math.floor(Date.now() / 1000) + 300) {
+  const b64 = (v: unknown) => Buffer.from(JSON.stringify(v)).toString("base64url");
+  const body = `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub, exp })}`;
+  return `${body}.${createHmac("sha256", key).update(body).digest("base64url")}`;
+}
+
+describe("the chat kit", () => {
+  test("a token from the web app names a signed-in session; a bad or stale one, nobody", async () => {
+    await agency();
+    const key = chatKitKey("secret");
+    const lookup = sessionFromKitToken(db, key);
+    const bearer = (token: string) => new Headers({ authorization: `Bearer ${token}` });
+    expect(await lookup(bearer(kitToken(key, "s")))).toMatchObject({ id: "s", userId: "owner" });
+    expect(await lookup(bearer(kitToken(chatKitKey("other"), "s")))).toBeNull();
+    expect(await lookup(bearer(kitToken(key, "nobody")))).toBeNull();
+    await db
+      .update(authSession)
+      .set({ expiresAt: new Date(Date.now() - 1) })
+      .where(eq(authSession.id, "s"));
+    expect(await lookup(bearer(kitToken(key, "s")))).toBeNull();
+    expect(await lookup(new Headers())).toBeUndefined();
+  });
+
+  test("a message streams its reply on the kit's own route", async () => {
+    const { host } = await hostFor({ as: "owner" }, await scriptedModel());
+    const res = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "Hello there" }),
+      }),
+    );
+    expect(res.headers.get("content-type")).toMatch(/^text\/event-stream/);
+    const text = await res.text();
+    expect(text).toContain(SCRIPTED_REPLY);
+    expect(text).toContain('"type":"__done__"');
+  });
+
+  test("a message may carry attachments larger than other posts", async () => {
+    const { host } = await hostFor({ as: "owner" }, await scriptedModel());
+    const post = (path: string) =>
+      host.fetch(
+        new Request(`http://agent.test${PREFIX}/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "Hello there", padding: "x".repeat(1_500_000) }),
+        }),
+      );
+    const kit = await post("kit/agent-controller/stream");
+    expect(kit.status).not.toBe(413);
+    await kit.text();
+    expect((await post("kit/agent-controller/answer")).status).toBe(413);
+  });
+
+  test("a member removed while a change waits loses the run, not just the stream", async () => {
+    mock().llm.on(
+      { userMessage: /delete contact c3/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "kh-del",
+            name: "perform_action",
+            arguments: JSON.stringify({
+              operation: "contacts.delete-contact",
+              params: { path: { contactId: "c3" } },
+            }),
+          },
+        ],
+      },
+    );
+    const { connect, sessions, client } = await agency();
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: client.id });
+    const host = createHost({
+      db,
+      session: async () => sessions.staff ?? null,
+      connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      fetch: createFakeGhl({ "*": { body: {} } }).fetch,
+      origin: "http://locus.test",
+      streamCheckMs: 50,
+    });
+    const kit = (path: string, body: unknown) =>
+      host.fetch(
+        new Request(`http://agent.test${PREFIX}/kit/agent-controller/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    const res = await kit("stream", { text: "Delete contact c3" });
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    let text = "";
+    while (!text.includes("tool_approval_required")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream ended early: ${text}`);
+      text += new TextDecoder().decode(value);
+    }
+
+    await db.delete(memberLocation).where(eq(memberLocation.memberId, "m-staff"));
+    while (!(await reader.read()).done) {}
+    // Let them back in: the change they were asked about is gone with the run.
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: client.id });
+    const approve = await kit("approve", { decision: "approve", toolCallId: "kh-del" });
+    expect(approve.status).toBe(409);
+  });
+
+  test("a member who may not act on their client is refused there too", async () => {
+    const { host } = await hostFor({ as: "staff" });
+    const res = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/threads`),
+    );
+    expect(res.status).toBe(401);
   });
 });
