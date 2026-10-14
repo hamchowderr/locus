@@ -242,7 +242,12 @@ describe("resolving the builder session", () => {
     expect(siteRuntimeKey(client, siteId)).toBe(`${clientA}/${siteId}`);
     expect([...runtimes.runtimes.keys()]).toEqual([`${clientA}/${siteId}`]);
 
-    const listed = await call(builder.tools, "list_files", {}, context({ [SITE_ID_KEY]: siteId }));
+    const listed = await call(
+      builder.tools,
+      "files",
+      { action: "list" },
+      context({ [SITE_ID_KEY]: siteId }),
+    );
     expect(listed.files.map((f: { path: string }) => f.path)).toContain("app/page.tsx");
   });
 
@@ -378,8 +383,18 @@ describe("publishing saved versions", () => {
     });
     const builder = createSiteBuilder(deps(), { client });
     const rc = context({ [SITE_ID_KEY]: siteId });
-    await call(builder.tools, "write_file", { path: "app/about/page.tsx", content: "about" }, rc);
-    const saved = await call(builder.tools, "save_version", { message: "Add about" }, rc);
+    await call(
+      builder.tools,
+      "files",
+      { action: "write", path: "app/about/page.tsx", content: "about" },
+      rc,
+    );
+    const saved = await call(
+      builder.tools,
+      "versions",
+      { action: "save", message: "Add about" },
+      rc,
+    );
     expect(saved).toMatchObject({ saved: true, version: 2, commitUrl: expect.any(String) });
     expect(saved.publishError).toBeUndefined();
 
@@ -483,7 +498,7 @@ describe("rechecking access on every call", () => {
     expect((await builder.resolve(rc)).workspace.siteId).toBe(siteId);
     await db.delete(memberLocation).where(eq(memberLocation.memberId, "staff@agency-a"));
     await expect(builder.resolve(rc)).rejects.toBeInstanceOf(ClientAccessDenied);
-    await expect(call(builder.tools, "list_files", {}, rc)).rejects.toBeInstanceOf(
+    await expect(call(builder.tools, "files", { action: "list" }, rc)).rejects.toBeInstanceOf(
       ClientAccessDenied,
     );
   });
@@ -520,8 +535,8 @@ describe("pooled client connections", () => {
     closeClientDbs();
     const builder = createSiteBuilder(counting, { client });
     const rc = context({ [SITE_ID_KEY]: siteId });
-    await call(builder.tools, "list_files", {}, rc);
-    await call(builder.tools, "list_files", {}, rc);
+    await call(builder.tools, "files", { action: "list" }, rc);
+    await call(builder.tools, "files", { action: "list" }, rc);
     expect(opens).toBe(1);
     expect(pooledUsers(clientA)).toBe(0);
 
@@ -532,7 +547,7 @@ describe("pooled client connections", () => {
     held.release();
     await new Promise((r) => setTimeout(r, 10));
     await expect(held.db.$client.execute("select 1")).rejects.toThrow();
-    await call(builder.tools, "list_files", {}, rc);
+    await call(builder.tools, "files", { action: "list" }, rc);
     expect(opens).toBe(2);
   });
 

@@ -12,6 +12,7 @@
       "!packages/skills/catalog",
       "!packages/skills/source",
       "!packages/skills/src/generated",
+      "!packages/builder/src/skills/bundle.generated.ts",
       "!.claude/skills/mastra",
       "!.beads",
       "!packages/db/src/control/auth-schema.ts",

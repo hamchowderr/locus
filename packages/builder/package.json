@@ -8,7 +8,9 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "skills:bundle": "node scripts/bundle-skills.ts",
+    "skills:check": "node scripts/bundle-skills.ts --check"
   },
   "dependencies": {
     "@locus/sandbox": "workspace:*",
