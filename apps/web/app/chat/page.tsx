@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MinimalChat } from "@/components/chat-minimal/minimal-chat";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { Notice } from "../ui";
 
@@ -24,7 +25,7 @@ export default async function ChatPage() {
         </Link>{" "}
         · Chat about <strong>{client.location.name}</strong>
       </p>
-      {process.env.LOCUS_AGENT_URL ? (
+      {chatKitEnabled() ? (
         // The chat kit's conversation. Its requests go through this site's
         // /api/agent-controller routes, which the agent server checks against the sign-in.
         <TooltipProvider>
