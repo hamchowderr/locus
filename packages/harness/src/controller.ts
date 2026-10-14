@@ -31,7 +31,7 @@ import {
   type BuiltinToolId,
 } from "@mastra/core/agent-controller";
 import type { MastraModelConfig } from "@mastra/core/llm";
-import { createLocusAgent } from "./agent.ts";
+import { createLocusAgent, type LocusAgentConfig } from "./agent.ts";
 import { type ConversationStore, clientResource } from "./conversation.ts";
 import type { ToolDeps } from "./tools.ts";
 
@@ -77,6 +77,8 @@ export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   /** Further controller tools, available to modes that list them. */
   tools?: ToolsInput;
   disableBuiltinTools?: BuiltinToolId[];
+  /** Further processors for the modes and tools added here (see `LocusAgentConfig`). */
+  processors?: LocusAgentConfig["processors"];
 }
 
 export async function createLocusController({
@@ -87,6 +89,7 @@ export async function createLocusController({
   modes = [],
   tools,
   disableBuiltinTools = DISABLED_BUILTINS,
+  processors,
   ...deps
 }: LocusControllerConfig): Promise<AgentController> {
   const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
@@ -98,7 +101,13 @@ export async function createLocusController({
     }
     return current;
   };
-  const agent = createLocusAgent({ ...deps, model, session: checkedSession, storage });
+  const agent = createLocusAgent({
+    ...deps,
+    model,
+    session: checkedSession,
+    storage,
+    ...(processors ? { processors } : {}),
+  });
   const controller = new AgentController({
     id: CONTROLLER_ID,
     agent,

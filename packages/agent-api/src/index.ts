@@ -13,7 +13,12 @@
  *   another's session or reads its event stream. A change waiting for approval belongs to the
  *   client's thread, though: any member who may act on that client may decide it, as with
  *   `decideApproval`;
- * - drops any `requestContext` the browser sends.
+ * - drops any `requestContext` the browser sends;
+ * - decodes the path once and serves only the exact paths the chat uses, forwarding the path it
+ *   checked, so an encoded path never reads differently to the guard and the router.
+ *
+ * Threads belong to the client, not the member: any member who may act on a client can list,
+ * open and rename its conversations. Live sessions and their event streams are per member.
  *
  * Not served: switching the model, setting session state (`yolo` would approve deletions),
  * permission rules, rebinding the resource, listing other resources or every active run,
@@ -84,15 +89,26 @@ export interface AgentApiConfig {
   authorize: (request: Request) => Promise<AgentApiMember | null>;
   /** The controller for one client (`createLocusController`), created once and reused. */
   controllerFor: (locationId: string) => Promise<AgentController>;
+  /**
+   * Values the host puts on each run's request context, worked out server-side (for example
+   * the site being built, after checking it belongs to the member's client). Whatever the
+   * browser sends as `requestContext` is dropped; these replace it.
+   */
+  requestContext?: (request: Request, member: AgentApiMember) => Promise<Record<string, unknown>>;
 }
 
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-function deny(status: 401 | 403 | 404, error: string) {
+function deny(status: 400 | 401 | 403 | 404, error: string) {
   return Response.json({ error }, { status });
 }
 
-export function createAgentApi({ prefix, authorize, controllerFor }: AgentApiConfig) {
+export function createAgentApi({
+  prefix,
+  authorize,
+  controllerFor,
+  requestContext,
+}: AgentApiConfig) {
   const base = `${prefix}/agent-controller/${CONTROLLER_ID}`;
   const apps = new Map<string, Promise<Hono>>();
 
@@ -124,41 +140,51 @@ export function createAgentApi({ prefix, authorize, controllerFor }: AgentApiCon
   return {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
-      if (url.pathname !== base && !url.pathname.startsWith(`${base}/`)) {
+      if (!url.pathname.startsWith(`${base}/`)) {
         return deny(404, "not found");
       }
       const member = await authorize(request);
       if (!member) return deny(401, "sign in first");
       const resourceId = clientResource({ token: "", tokenKind: "location", ...member });
       const scope = `member:${member.memberId}`;
+      const context = (await requestContext?.(request, member)) ?? {};
+      const hasContext = Object.keys(context).length > 0;
 
-      // ["sessions", resourceId, ...] or ["modes"]
-      const rest = url.pathname.slice(base.length + 1).split("/");
-      let body: string | undefined;
-      if (rest[0] === "sessions") {
-        if (rest.length === 1) {
-          // Create or resume a session: the client and scope are ours, not the request's.
-          const sent = await readJson(request);
-          if (sent === undefined) return deny(403, "bad request");
-          if (sent.resourceId !== resourceId) return deny(403, "not your client");
-          body = JSON.stringify({ ...withoutContext(sent), resourceId, sessionScope: scope });
-        } else {
-          if (decodeURIComponent(rest[1] ?? "") !== resourceId) {
-            return deny(403, "not your client");
-          }
-          if (BODY_METHODS.has(request.method)) {
-            const sent = await readJson(request);
-            if (sent === undefined) return deny(403, "bad request");
-            body = JSON.stringify(withoutContext(sent));
-          }
-        }
-        url.searchParams.set("sessionScope", scope);
-      } else if (BODY_METHODS.has(request.method)) {
-        const sent = await readJson(request);
-        if (sent === undefined) return deny(403, "bad request");
-        body = JSON.stringify(withoutContext(sent));
+      // Decode the path once, as the router will, and serve only the exact shapes the chat
+      // uses. The forwarded request carries the path rebuilt from the decoded segments, so the
+      // guard and the router can never read it differently.
+      const segments = decodeSegments(url.pathname.slice(base.length));
+      if (!segments) return deny(400, "bad path");
+      const shape = routeShape(request.method, segments);
+      if (!shape) return deny(404, "not found");
+      if (shape !== "modes" && shape !== "create" && segments[1] !== resourceId) {
+        return deny(403, "not your client");
       }
+
+      let body: string | undefined;
+      if (BODY_METHODS.has(request.method)) {
+        const sent = await readJson(request);
+        if (sent === undefined) return deny(400, "bad request");
+        if (shape === "create") {
+          // Create or resume a session: the client and scope are ours, not the request's.
+          if (sent.resourceId !== resourceId) return deny(403, "not your client");
+          const { tags: _tags, ...rest } = sent;
+          body = JSON.stringify({
+            ...withHostContext(rest, context),
+            resourceId,
+            sessionScope: scope,
+          });
+        } else {
+          body = JSON.stringify(withHostContext(sent, context));
+        }
+      }
+      url.pathname = [base, ...segments.map(encodeURIComponent)].join("/");
+      url.searchParams.delete("sessionScope");
+      if (shape !== "modes") url.searchParams.set("sessionScope", scope);
       url.searchParams.delete("requestContext");
+      if (hasContext && !BODY_METHODS.has(request.method)) {
+        url.searchParams.set("requestContext", JSON.stringify(context));
+      }
 
       const headers = new Headers(request.headers);
       if (body !== undefined) {
@@ -177,6 +203,53 @@ export function createAgentApi({ prefix, authorize, controllerFor }: AgentApiCon
   };
 }
 
+/** The path's segments, each decoded, or null when one is malformed, empty or a dot segment. */
+function decodeSegments(path: string): string[] | null {
+  const segments: string[] = [];
+  for (const raw of path.slice(1).split("/")) {
+    let segment: string;
+    try {
+      segment = decodeURIComponent(raw);
+    } catch {
+      return null;
+    }
+    if (segment === "" || segment === "." || segment === "..") return null;
+    segments.push(segment);
+  }
+  return segments;
+}
+
+/** Session routes after `sessions/:resourceId`, by method. */
+const SESSION_TAILS: Record<string, readonly string[]> = {
+  GET: ["", "stream", "threads"],
+  POST: [
+    "messages",
+    "steer",
+    "follow-up",
+    "abort",
+    "tool-approval",
+    "tool-suspension",
+    "mode",
+    "thread",
+    "threads",
+  ],
+};
+
+/** Which served route a decoded path is, or null for anything else. */
+function routeShape(method: string, segments: string[]): "modes" | "create" | "session" | null {
+  const [first, , ...tail] = segments;
+  if (first === "modes") return segments.length === 1 && method === "GET" ? "modes" : null;
+  if (first !== "sessions") return null;
+  if (segments.length === 1) return method === "POST" ? "create" : null;
+  if (tail.length <= 1 && SESSION_TAILS[method]?.includes(tail[0] ?? "")) return "session";
+  // threads/:threadId (rename) and threads/:threadId/messages
+  if (tail[0] === "threads" && tail.length === 2 && method === "PUT") return "session";
+  if (tail[0] === "threads" && tail.length === 3 && tail[2] === "messages" && method === "GET") {
+    return "session";
+  }
+  return null;
+}
+
 async function readJson(request: Request): Promise<Record<string, unknown> | undefined> {
   const text = await request.text();
   if (!text) return {};
@@ -190,7 +263,8 @@ async function readJson(request: Request): Promise<Record<string, unknown> | und
   }
 }
 
-function withoutContext(body: Record<string, unknown>) {
+/** The body without the browser's `requestContext`, and with the host's when it has one. */
+function withHostContext(body: Record<string, unknown>, context: Record<string, unknown>) {
   const { requestContext: _dropped, ...rest } = body;
-  return rest;
+  return Object.keys(context).length > 0 ? { ...rest, requestContext: context } : rest;
 }

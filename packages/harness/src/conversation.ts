@@ -53,8 +53,14 @@ export function clientResource(session: GhlSession): string {
 }
 
 /**
- * What a stored tool result is replaced with. Only `load_skill` (our own text) is kept; a GHL
- * error can quote GHL data (a duplicate contact's email), so errors keep only that they failed.
+ * The tools whose results are GHL data. Other tools' results (`load_skill`'s text, other
+ * features' tools) are kept as they are.
+ */
+const GHL_TOOLS = new Set(["query_data", "perform_action"]);
+
+/**
+ * What a stored GHL tool result is replaced with. A GHL error can quote GHL data (a duplicate
+ * contact's email), so errors keep only that they failed.
  * `keepTaint` keeps the untrusted-content mark, so a paused run that resumes from memory is
  * still tainted (see `untrusted.ts`); a finished run's stubs drop it, so a later turn in the
  * thread is not tainted by what an earlier one read.
@@ -64,7 +70,7 @@ export function forgetResult(
   result: unknown,
   { keepTaint = false }: { keepTaint?: boolean } = {},
 ): unknown {
-  if (toolName === "load_skill") return result;
+  if (!GHL_TOOLS.has(toolName)) return result;
   if (!result || typeof result !== "object") return { notKept: NOT_KEPT };
   const wrapped = "warning" in result && "result" in result;
   const inner = wrapped ? (result as { result: unknown }).result : result;
