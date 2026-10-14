@@ -136,7 +136,7 @@
   Retrieve Google campaigns, ad groups, or ads based on entity type
 - `ad-publishing.google-get-integration` — **Get Google integration** — `GET /ad-publishing/google/integration` (read, location)
   Retrieve the Google Ads integration details for a location
-- `ad-publishing.google-get-keyword-ideas` — **Get keyword ideas** — `POST /ad-publishing/google/keyword-ideas` (write, location)
+- `ad-publishing.google-get-keyword-ideas` — **Get keyword ideas** — `POST /ad-publishing/google/keyword-ideas` (read, location)
   Retrieve keyword suggestions for Google Ads campaigns
 - `ad-publishing.google-get-publishing-progress` — **Get ad publishing progress** — `GET /ad-publishing/google/ads/{adId}/publishing-progress` (read, location)
   Returns Redis-backed publish progress for a Google campaign while it is publishing.
