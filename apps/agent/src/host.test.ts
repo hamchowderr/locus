@@ -422,4 +422,42 @@ describe("the agent server", () => {
     expect(seen.slice(before)).toEqual([]);
     expect(ended).not.toEqual([]);
   });
+
+  test("an event stream asked for by an encoded path is cut for a removed member too", async () => {
+    const { connect, client, sessions } = await agency();
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: client.id });
+    const host = createHost({
+      db,
+      session: async () => sessions.staff ?? null,
+      connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      origin: "http://locus.test",
+      streamCheckMs: 50,
+    });
+    const chat = new MastraClient({
+      baseUrl: "http://agent.test",
+      apiPrefix: PREFIX,
+      retries: 0,
+      fetch: (input, init) => host.fetch(new Request(input, init)),
+    });
+    const resource = `client:${client.ghlLocationId}`;
+    await chat.getAgentController("locus").session(resource).create();
+
+    const response = await host.fetch(
+      new Request(
+        `http://agent.test${PREFIX}/agent-controller/locus/sessions/${encodeURIComponent(resource)}/%73tream`,
+      ),
+    );
+    expect(response.headers.get("content-type")).toMatch(/^text\/event-stream/);
+    const reader = response.body?.getReader();
+    await db.delete(memberLocation).where(eq(memberLocation.memberId, "m-staff"));
+    const ended = await Promise.race([
+      (async () => {
+        while (!(await reader?.read())?.done) {}
+        return true;
+      })(),
+      new Promise((r) => setTimeout(() => r(false), 2_000)),
+    ]);
+    expect(ended).toBe(true);
+  });
 });
