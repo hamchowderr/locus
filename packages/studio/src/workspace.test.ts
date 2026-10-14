@@ -31,6 +31,11 @@ describe("normalizeSitePath", () => {
     "node_modules/x/index.js",
     ".env",
     "config/.env.local",
+    ".ENV",
+    ".envrc",
+    ".npmrc",
+    "app/.git/hooks/pre-commit",
+    "packages/x/node_modules/y.js",
     "a\0b",
     "",
   ])("refuses %j", (path) => {
@@ -118,6 +123,30 @@ describe("SiteWorkspace", () => {
     const other = new SiteWorkspace(db, "site-2");
     await expect(other.setBookmark(v1.id, false)).rejects.toThrow(/isn't one of this site's/);
     await expect(other.restoreVersion(v1.id)).rejects.toThrow(/isn't one of this site's/);
+  });
+
+  it("keeps bytes intact even under a text file name", async () => {
+    const notUtf8 = new Uint8Array([0xff, 0xfe, 0x00, 0x41]);
+    await ws.writeFile("data.json", notUtf8);
+    await ws.writeFile("logo.png", notUtf8);
+    expect(await ws.readFile("data.json")).toEqual(notUtf8);
+    expect(await ws.readFile("logo.png")).toEqual(notUtf8);
+    // Valid UTF-8 bytes under a text name read back as text.
+    await ws.writeFile("note.txt", new TextEncoder().encode("héllo"));
+    expect(await ws.readFile("note.txt")).toBe("héllo");
+  });
+
+  it("numbers concurrent saves without a clash", async () => {
+    await ws.writeFile("a.txt", "one");
+    await ws.saveVersion({ message: "First", source: "agent" });
+    await ws.writeFile("a.txt", "two");
+    const saves = await Promise.all([
+      ws.saveVersion({ message: "A", source: "agent" }),
+      ws.saveVersion({ message: "B", source: "agent" }),
+    ]);
+    // One saved version 2; the other found nothing new to save.
+    expect(saves.filter(Boolean).map((v) => v?.number)).toEqual([2]);
+    expect((await ws.listVersions()).map((v) => v.number)).toEqual([2, 1]);
   });
 
   it("stores identical content once", async () => {
