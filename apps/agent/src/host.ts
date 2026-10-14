@@ -242,7 +242,8 @@ export function createHost({
       if (request.method === "GET" || request.method === "HEAD") {
         const response = await api.fetch(request);
         const stream = opened.get(request);
-        if (!pathname.endsWith("/stream") || !stream || !response.body) return response;
+        const events = response.headers.get("content-type")?.startsWith("text/event-stream");
+        if (!events || !stream || !response.body) return response;
         // A member who loses access must stop receiving the client's live chat too.
         return new Response(
           guarded(response.body, () => authorizedFor(stream.ctx, stream.clientId), streamCheckMs),
@@ -271,52 +272,76 @@ export function createHost({
 }
 
 /**
- * The stream, while `check` passes: checked before passing on what arrives after a quiet
- * spell, and every `STREAM_CHECK_MS` while nothing arrives. It ends the stream when it fails.
+ * The stream, while `check` passes. It is checked before passing on what arrives once the last
+ * check is `everyMs` old, and on a timer while nothing arrives, so a member who loses access
+ * stops receiving within about `everyMs`. The stream ends when a check fails.
  */
 function guarded(body: ReadableStream<Uint8Array>, check: () => Promise<unknown>, everyMs: number) {
-  let checkedAt = Date.now();
-  let timer: ReturnType<typeof setInterval> | undefined;
   const reader = body.getReader();
-  const stillAllowed = async () => {
+  let checkedAt = Date.now();
+  let checking: Promise<boolean> | undefined;
+  let finished = false;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+
+  /** Ends everything once, whatever ends it first; never throws. */
+  const stop = (error?: unknown) => {
+    if (finished) return;
+    finished = true;
+    clearInterval(timer);
     try {
-      await check();
-      checkedAt = Date.now();
-      return true;
-    } catch {
-      return false;
-    }
+      if (error === undefined) controller.close();
+      else controller.error(error);
+    } catch {}
+    reader.cancel().catch(() => {});
   };
+
+  /** One check at a time, shared by the timer and the reader. */
+  const stillAllowed = () => {
+    checking ??= check()
+      .then(
+        () => {
+          checkedAt = Date.now();
+          return true;
+        },
+        () => false,
+      )
+      .finally(() => {
+        checking = undefined;
+      });
+    return checking;
+  };
+
   return new ReadableStream<Uint8Array>({
-    start(controller) {
-      timer = setInterval(async () => {
-        if (Date.now() - checkedAt < everyMs) return;
-        if (!(await stillAllowed())) {
-          clearInterval(timer);
-          controller.close();
-          void reader.cancel();
-        }
+    start(c) {
+      controller = c;
+      timer = setInterval(() => {
+        if (finished || Date.now() - checkedAt < everyMs) return;
+        void stillAllowed().then((ok) => {
+          if (!ok) stop();
+        });
       }, everyMs);
       timer.unref?.();
     },
-    async pull(controller) {
-      const { done, value } = await reader.read();
-      if (done) {
-        clearInterval(timer);
-        controller.close();
+    async pull() {
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try {
+        next = await reader.read();
+      } catch (error) {
+        stop(error);
         return;
       }
-      if (Date.now() - checkedAt >= everyMs && !(await stillAllowed())) {
-        clearInterval(timer);
-        controller.close();
-        await reader.cancel();
-        return;
-      }
-      controller.enqueue(value);
+      if (finished) return;
+      if (next.done) return stop();
+      if (Date.now() - checkedAt >= everyMs && !(await stillAllowed())) return stop();
+      if (finished) return;
+      controller.enqueue(next.value);
     },
-    cancel(reason) {
+    cancel() {
+      if (finished) return;
+      finished = true;
       clearInterval(timer);
-      return reader.cancel(reason);
+      reader.cancel().catch(() => {});
     },
   });
 }
