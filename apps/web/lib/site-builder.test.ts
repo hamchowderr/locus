@@ -119,6 +119,7 @@ function deps(overrides: Partial<SiteBuilderDeps> = {}): SiteBuilderDeps {
     runtimes: () => runtimes,
     images: null,
     publish: publishDeps,
+    locusUrl: "https://locus.test",
     ...overrides,
   };
 }
@@ -242,7 +243,12 @@ describe("resolving the builder session", () => {
     expect(siteRuntimeKey(client, siteId)).toBe(`${clientA}/${siteId}`);
     expect([...runtimes.runtimes.keys()]).toEqual([`${clientA}/${siteId}`]);
 
-    const listed = await call(builder.tools, "list_files", {}, context({ [SITE_ID_KEY]: siteId }));
+    const listed = await call(
+      builder.tools,
+      "files",
+      { action: "list" },
+      context({ [SITE_ID_KEY]: siteId }),
+    );
     expect(listed.files.map((f: { path: string }) => f.path)).toContain("app/page.tsx");
   });
 
@@ -378,8 +384,18 @@ describe("publishing saved versions", () => {
     });
     const builder = createSiteBuilder(deps(), { client });
     const rc = context({ [SITE_ID_KEY]: siteId });
-    await call(builder.tools, "write_file", { path: "app/about/page.tsx", content: "about" }, rc);
-    const saved = await call(builder.tools, "save_version", { message: "Add about" }, rc);
+    await call(
+      builder.tools,
+      "files",
+      { action: "write", path: "app/about/page.tsx", content: "about" },
+      rc,
+    );
+    const saved = await call(
+      builder.tools,
+      "versions",
+      { action: "save", message: "Add about" },
+      rc,
+    );
     expect(saved).toMatchObject({ saved: true, version: 2, commitUrl: expect.any(String) });
     expect(saved.publishError).toBeUndefined();
 
@@ -388,7 +404,11 @@ describe("publishing saved versions", () => {
     const expected = Object.fromEntries(
       snapshot.map((f) => [f.path, typeof f.content === "string" ? f.content : ""]),
     );
-    expect(github.repoFiles(repoFullName as string)).toEqual(expected);
+    // The published copy points the site's forms at this site's Locus endpoint.
+    const pushed = github.repoFiles(repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain(`"https://locus.test/api/sites/${siteId}/leads"`);
+    expect(expected["lib/locus.ts"]).toContain("leadEndpoint: null");
+    expect({ ...pushed, "lib/locus.ts": "" }).toEqual({ ...expected, "lib/locus.ts": "" });
     expect(github.repoFiles(repoFullName as string)?.["app/about/page.tsx"]).toBe("about");
     const latest = await session.workspace.latestVersion();
     expect(latest?.commitSha).toMatch(/\w+/);
@@ -483,7 +503,7 @@ describe("rechecking access on every call", () => {
     expect((await builder.resolve(rc)).workspace.siteId).toBe(siteId);
     await db.delete(memberLocation).where(eq(memberLocation.memberId, "staff@agency-a"));
     await expect(builder.resolve(rc)).rejects.toBeInstanceOf(ClientAccessDenied);
-    await expect(call(builder.tools, "list_files", {}, rc)).rejects.toBeInstanceOf(
+    await expect(call(builder.tools, "files", { action: "list" }, rc)).rejects.toBeInstanceOf(
       ClientAccessDenied,
     );
   });
@@ -520,8 +540,8 @@ describe("pooled client connections", () => {
     closeClientDbs();
     const builder = createSiteBuilder(counting, { client });
     const rc = context({ [SITE_ID_KEY]: siteId });
-    await call(builder.tools, "list_files", {}, rc);
-    await call(builder.tools, "list_files", {}, rc);
+    await call(builder.tools, "files", { action: "list" }, rc);
+    await call(builder.tools, "files", { action: "list" }, rc);
     expect(opens).toBe(1);
     expect(pooledUsers(clientA)).toBe(0);
 
@@ -532,7 +552,7 @@ describe("pooled client connections", () => {
     held.release();
     await new Promise((r) => setTimeout(r, 10));
     await expect(held.db.$client.execute("select 1")).rejects.toThrow();
-    await call(builder.tools, "list_files", {}, rc);
+    await call(builder.tools, "files", { action: "list" }, rc);
     expect(opens).toBe(2);
   });
 

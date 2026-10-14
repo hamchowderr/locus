@@ -62,3 +62,14 @@ test("the agent loads a skill, queries GHL and answers from the SQL result", asy
     .join("\n");
   expect(toolResults).toContain('\\"n\\":3');
 });
+
+test("ownTextTools can't name the harness's own tools", () => {
+  const config = {
+    model: { id: "anthropic/claude-test" as const, url: `${mock().url}/v1`, apiKey: "test-key" },
+    session: { token: "tok", tokenKind: "location" as const, locationId: "loc-A" },
+  };
+  for (const name of ["query_data", "perform_action", "load_skill"]) {
+    expect(() => createLocusAgent({ ...config, ownTextTools: ["skill", name] })).toThrow(name);
+  }
+  expect(() => createLocusAgent({ ...config, ownTextTools: ["skill"] })).not.toThrow();
+});

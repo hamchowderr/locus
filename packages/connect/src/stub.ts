@@ -1,8 +1,9 @@
 /**
  * `GHL_MODE=stub`: a pretend GHL agency, so the connect flow can be built and run without a
  * GoHighLevel account or the Marketplace app. It answers the OAuth endpoints Locus uses, as the
- * live docs describe them, for one fixture company — plus users search for its staff, and
- * reading a sub-account with that sub-account's own token.
+ * live docs describe them, for one fixture company — plus users search for its staff, reading a
+ * sub-account with that sub-account's own token, and taking a site's lead (contact upsert, tags,
+ * note) without keeping it.
  */
 
 export interface StubAgency {
@@ -85,6 +86,23 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
       const own = agency.locations.find((l) => l._id === asLocation);
       if (method === "GET" && own && url.pathname === `/locations/${own._id}`) {
         return Response.json({ location: { id: own._id, name: own.name } });
+      }
+      // A site's lead form (`submitSiteLead`): accepted and forgotten, nothing is kept.
+      if (own && method === "POST" && url.pathname === "/contacts/upsert") {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { locationId?: string };
+        if (body.locationId !== own._id) {
+          return Response.json(
+            { statusCode: 403, message: "Not this sub-account" },
+            { status: 403 },
+          );
+        }
+        return Response.json({ new: true, contact: { id: `stub-contact-${++issued}` } });
+      }
+      if (own && method === "POST" && /^\/contacts\/stub-contact-\d+\/tags$/.test(url.pathname)) {
+        return Response.json({ tags: [] }, { status: 201 });
+      }
+      if (own && method === "POST" && /^\/contacts\/stub-contact-\d+\/notes$/.test(url.pathname)) {
+        return Response.json({ note: { id: `stub-note-${++issued}` } }, { status: 201 });
       }
       return Response.json({ statusCode: 403, message: "Not this sub-account" }, { status: 403 });
     }

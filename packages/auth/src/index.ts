@@ -36,6 +36,7 @@ export {
   setComped,
 } from "./operator.ts";
 export { CREDIT, PLANS, type Plan, type PlanLimits, planNamed } from "./plans.ts";
+export { type AttemptRule, consumeAttempt } from "./rate-limit.ts";
 export {
   type Allowance,
   BURST_WINDOW_MS,
