@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `site_repo_full_name_unique` ON `site` (`repo_full_name`);
