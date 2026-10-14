@@ -15,7 +15,8 @@
     },
     "allowImportingTsExtensions": true,
     // The chat kit's components (installed from its registry, not edited here) are written
-    // without these two checks. Restore them once the kit compiles with them (locus-8c0.18).
+    // without these two checks. `pnpm typecheck` still checks Locus's own code
+    // with them (scripts/typecheck-strict.ts). Restore them once the kit compiles (locus-8c0.18).
     "exactOptionalPropertyTypes": false,
     "noUncheckedIndexedAccess": false
   },
