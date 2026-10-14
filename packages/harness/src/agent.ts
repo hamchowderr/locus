@@ -1,6 +1,7 @@
 import { Mastra } from "@mastra/core";
 import { Agent } from "@mastra/core/agent";
 import type { MastraModelConfig } from "@mastra/core/llm";
+import type { InputProcessorOrWorkflow, OutputProcessorOrWorkflow } from "@mastra/core/processors";
 import { type ConversationStore, createLocusMemory, ForgetGhlData } from "./conversation.ts";
 import { createLocusTools, type ToolDeps, waitsForApproval } from "./tools.ts";
 import { UntrustedContentProcessor } from "./untrusted.ts";
@@ -30,13 +31,30 @@ export interface LocusAgentConfig extends ToolDeps {
    * one, every request starts from nothing.
    */
   storage?: ConversationStore;
+  /**
+   * Further processors from features that add tools (for example the site builder's screen
+   * for untrusted tool output). They run after Locus's GHL screen; GHL data is still dropped
+   * from memory last.
+   */
+  processors?: { input?: InputProcessorOrWorkflow[]; output?: OutputProcessorOrWorkflow[] };
+  /**
+   * Tools whose results can never hold GHL data, so memory stores them as they are (for
+   * example the site builder reading its own files). Every other result is forgotten.
+   */
+  keepResults?: readonly string[];
 }
 
 /**
  * The Locus agent, bound to one client's session. Each run keeps its own taint on its request
  * context (see `untrusted.ts`), so the same agent can serve many runs.
  */
-export function createLocusAgent({ model, storage, ...deps }: LocusAgentConfig): Agent {
+export function createLocusAgent({
+  model,
+  storage,
+  processors = {},
+  keepResults = [],
+  ...deps
+}: LocusAgentConfig): Agent {
   const untrusted = new UntrustedContentProcessor();
   const tools = createLocusTools(deps);
   const agent = new Agent({
@@ -45,11 +63,13 @@ export function createLocusAgent({ model, storage, ...deps }: LocusAgentConfig):
     instructions: INSTRUCTIONS,
     model,
     tools,
-    inputProcessors: [untrusted],
-    // ForgetGhlData runs after the screen and before memory's own processors save the run.
-    outputProcessors: storage
-      ? [untrusted, new ForgetGhlData(waitsForApproval(tools))]
-      : [untrusted],
+    inputProcessors: [untrusted, ...(processors.input ?? [])],
+    // ForgetGhlData runs after the screens and before memory's own processors save the run.
+    outputProcessors: [
+      untrusted,
+      ...(processors.output ?? []),
+      ...(storage ? [new ForgetGhlData(waitsForApproval(tools), keepResults)] : []),
+    ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
   });
   if (!storage) return agent;
