@@ -3,11 +3,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { briefForAgent, DesignBrief, openQuestions, readBrief } from "./brief.ts";
 import { startSite } from "./start.ts";
 import {
+  LOCUS_SETTINGS_PATH,
+  leadEndpoint,
   readableOn,
   renderTemplate,
   SHADCN_COMPONENTS,
   SITE_STACK,
   TEMPLATES,
+  withLocusSettings,
 } from "./templates/index.ts";
 import { tenantDbForTest } from "./test-db.ts";
 import { type SiteFile, SiteWorkspace } from "./workspace.ts";
@@ -112,13 +115,22 @@ describe("templates", () => {
           expect(paths).toContain(`components/ui/${name}.tsx`);
         }
       }
-      // Forms keep posting to the site's own route, with labelled fields.
+      // Every site has the form route and Locus's settings, unset until it is published.
+      expect(paths).toContain("app/api/lead/route.ts");
+      expect(file(files, "lib/locus.ts")).toContain("leadEndpoint: null as string | null");
+      const route = String(file(files, "app/api/lead/route.ts"));
+      expect(route).toContain("fetch(locus.leadEndpoint");
+      expect(route).toContain('"x-locus-visitor-ip"');
+      // Forms keep posting to the site's own route, with labelled fields and the spam checks.
       const form = file(files, "components/lead-form.tsx");
       if (form !== undefined) {
         expect(form).toContain('fetch("/api/lead"');
         expect(form).toContain('<FieldLabel htmlFor="lead-email">');
-        expect(paths).toContain("app/api/lead/route.ts");
+        expect(form).toContain('name="fax"');
+        expect(form).toContain("elapsedMs: Date.now() - shownAt.current");
       }
+      // The route forwards without any credential of its own.
+      expect(route).not.toMatch(/authorization|bearer|process\.env/i);
       const layout = String(files.find((f) => f.path === "app/layout.tsx")?.content);
       expect(layout).toContain("import { Playfair_Display, Inter }");
       // The name is quoted as a string literal, never pasted into code.
@@ -126,6 +138,30 @@ describe("templates", () => {
       expect(site).toContain(`name: "Joe's \\"Best\\" Plumbing"`);
     },
   );
+});
+
+describe("Locus settings at publish", () => {
+  it("points the site's form route at its own Locus endpoint, replacing any edited copy", () => {
+    const files = [
+      {
+        path: "lib/locus.ts",
+        content: "export const locus = { leadEndpoint: 'https://evil.test' };",
+      },
+      { path: "app/page.tsx", content: "page" },
+    ];
+    const published = withLocusSettings(files, {
+      siteId: "site-1",
+      locusUrl: "https://app.locus.test",
+    });
+    expect(published.filter((f) => f.path === LOCUS_SETTINGS_PATH)).toHaveLength(1);
+    const settings = String(published.find((f) => f.path === LOCUS_SETTINGS_PATH)?.content);
+    expect(settings).toContain('"https://app.locus.test/api/sites/site-1/leads"');
+    expect(settings).not.toContain("evil");
+    expect(published.find((f) => f.path === "app/page.tsx")?.content).toBe("page");
+    expect(leadEndpoint("https://app.locus.test/", "a/b")).toBe(
+      "https://app.locus.test/api/sites/a%2Fb/leads",
+    );
+  });
 });
 
 describe("readableOn", () => {

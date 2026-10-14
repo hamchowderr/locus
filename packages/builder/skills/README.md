@@ -25,4 +25,4 @@ path), components through `add_dependency` instead of the shadcn CLI.
 
 | Skill | Why |
 |---|---|
-| `site-forms` | Forms on a Locus site post to its own `/api/lead` route and never carry a key: a rule no public skill covers. |
+| `site-forms` | Forms on a Locus site post to its own `/api/lead` route, which forwards to Locus and the client's CRM, with the fields and spam checks Locus expects and never a key: a contract no public skill covers. |

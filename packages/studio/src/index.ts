@@ -22,6 +22,11 @@ export {
   baseFiles,
   DEFAULT_PALETTE,
   defaultTemplate,
+  LEAD_ROUTE_PATH,
+  LOCUS_SETTINGS_PATH,
+  leadEndpoint,
+  leadRouteFile,
+  locusSettingsFile,
   packageName,
   readableOn,
   renderTemplate,
@@ -30,6 +35,7 @@ export {
   type SiteTemplate,
   TEMPLATES,
   templateById,
+  withLocusSettings,
 } from "./templates/index.ts";
 export {
   type FileChanges,

@@ -1,5 +1,6 @@
 import { type DesignBrief, FONTS } from "../brief.ts";
 import type { SiteFile } from "../workspace.ts";
+import { leadRouteFile, locusSettingsFile } from "./forms.ts";
 import { shadcnComponentFiles } from "./shadcn.ts";
 
 // The project every generated site starts as: Next.js App Router with TypeScript, Tailwind and
@@ -450,9 +451,13 @@ npm run dev
 UI components live in \`components/ui\` as source (shadcn/ui); the theme is in
 \`app/globals.css\`.
 
-Settings the site reads at run time come from the host's environment variables, never from
-files in this repository.
+Forms post to the site's own \`/api/lead\` route, which forwards them to Locus and on to the
+business's CRM. \`lib/locus.ts\` says where; Locus writes it on every publish, and it holds no
+key or token. Other settings the site reads at run time come from the host's environment
+variables, never from files in this repository.
 `,
     },
+    locusSettingsFile({ leadEndpoint: null }),
+    leadRouteFile(),
   ];
 }
