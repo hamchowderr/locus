@@ -48,7 +48,9 @@ async function softly<T>(
   } catch (error) {
     if (error instanceof ConnectError) return { problem: error.message };
     if (error instanceof NotConfigured) return { problem: notConfigured };
-    throw error;
+    // A network failure or a bad stored key shows as a notice, never a broken page.
+    console.error("Sites page: a lookup failed", error);
+    return { problem: "Locus couldn't load this just now. Reload to try again." };
   }
 }
 const KIND_LABELS: Record<(typeof SITE_KINDS)[number], string> = {
@@ -121,8 +123,8 @@ export default async function Sites({
   const repoChoices = isProblem(repos) ? [] : linkableRepos(repos, sites);
   const deployments = await Promise.all(
     sites.map((s) =>
-      s.host === "vercel" && s.hostProjectId
-        ? softly(() => latestDeployment(publishDeps(), client, s.id))
+      s.host === "vercel" && s.hostProjectId && !gone(s.hostProjectId)
+        ? softly(() => latestDeployment(siteDeps(), client, s.id))
         : undefined,
     ),
   );
