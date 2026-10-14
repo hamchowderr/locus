@@ -1,8 +1,9 @@
 import { useAimock } from "@locus/testing";
 import { RequestContext } from "@mastra/core/request-context";
 import { afterEach, expect, test } from "vitest";
-import { createSiteBuilderAgent, siteBuilderMode } from "./agent.ts";
+import { createSiteBuilderAgent, SITE_BUILDER_INSTRUCTIONS, SITE_BUILDER_MODE } from "./agent.ts";
 import { type TestSession, testSession } from "./test-session.ts";
+import { createSiteBuilderTools } from "./tools.ts";
 
 const mock = useAimock();
 let t: TestSession;
@@ -62,16 +63,12 @@ test("the builder writes a page, checks the build and saves a version", async ()
   expect(t.runtimes.runtimes.get("site-1")?.readText("app/about/page.tsx")).toContain("About");
 });
 
-test("the mode carries the instructions and every builder tool", () => {
-  const mode = siteBuilderMode({ resolve: async () => t.session });
-  expect(mode.id).toBe("site-builder");
-  expect(Object.keys(mode.additionalTools)).toEqual(
-    expect.arrayContaining([
-      "write_file",
-      "check_site",
-      "preview",
-      "save_version",
-      "generate_image",
-    ]),
-  );
+test("the mode exposes every builder tool by name, and the tools match", () => {
+  expect(SITE_BUILDER_MODE).toMatchObject({ id: "site-builder", name: "Site builder" });
+  expect(SITE_BUILDER_MODE.instructions).toBe(SITE_BUILDER_INSTRUCTIONS);
+  expect("additionalTools" in SITE_BUILDER_MODE).toBe(false);
+  const tools = createSiteBuilderTools({ resolve: async () => t.session });
+  expect([...(SITE_BUILDER_MODE.availableTools ?? [])].sort()).toEqual(Object.keys(tools).sort());
+  // The ids the model sees are the record's keys.
+  for (const [name, tool] of Object.entries(tools)) expect(tool.id).toBe(name);
 });
