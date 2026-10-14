@@ -25,7 +25,7 @@ import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
-import { siteDeps } from "@/lib/hosts";
+import { publishDeps, siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
 import {
@@ -35,6 +35,7 @@ import {
   SiteInputError,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
+import { giveSiteProject, giveSiteRepo } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -344,6 +345,7 @@ async function siteAction(
     ctx: ReturnType<typeof sessionContext>,
     client: Awaited<ReturnType<typeof resolveActiveClient>>,
   ) => Promise<unknown>,
+  notConfigured = "Vercel isn't set up here yet.",
 ) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
@@ -352,7 +354,7 @@ async function siteAction(
     await change(ctx, await resolveActiveClient(locus().db, ctx));
   } catch (error) {
     if (error instanceof ClientAccessDenied || error instanceof ConnectError) back("/sites", error);
-    if (error instanceof NotConfigured) back("/sites", new Error("Vercel isn't set up here yet."));
+    if (error instanceof NotConfigured) back("/sites", new Error(notConfigured));
     throw error;
   }
   // The redirect lands on the page the form was on, so drop its cached render.
@@ -443,5 +445,29 @@ export async function chooseSite(form: FormData) {
 export async function unlinkSiteProject(form: FormData) {
   await siteAction((ctx, client) =>
     unlinkHostProject(siteDeps(), ctx, client, text(form, "siteId")),
+  );
+}
+
+/**
+ * Gives one of the active client's sites a GitHub repository in the agency's account: a new
+ * private one, or an existing empty one the Locus app can see. Owners and admins only.
+ */
+export async function giveSiteRepository(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      giveSiteRepo(publishDeps(), ctx, client, {
+        siteId: text(form, "siteId"),
+        repo: text(form, "repo"),
+        name: text(form, "name"),
+      }),
+    "Publishing to GitHub isn't set up here yet.",
+  );
+}
+
+/** Gives one of the active client's sites a Vercel project that builds its repository. */
+export async function giveSiteVercelProject(form: FormData) {
+  await siteAction(
+    (ctx, client) => giveSiteProject(publishDeps(), ctx, client, text(form, "siteId")),
+    "Publishing to GitHub and Vercel isn't set up here yet.",
   );
 }
