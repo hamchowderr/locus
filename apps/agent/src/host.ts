@@ -80,6 +80,8 @@ export interface HostDeps {
   fetch?: typeof fetch;
   /** The web app's origin, the only one whose pages may post to the agent. */
   origin: string;
+  /** How often an open event stream re-checks access; tests shorten it. */
+  streamCheckMs?: number;
 }
 
 export function hostDepsFromEnv(env: Env = process.env): HostDeps {
@@ -121,42 +123,49 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
 /** The largest request body the agent reads; a chat message is far smaller. */
 const MAX_BODY_BYTES = 1_000_000;
 
-/** The run request-context key naming the Better Auth session a run acts for. Set here, never by the browser. */
-export const RUN_SESSION_KEY = "locus.sessionId";
+/** The run request-context key naming the session a run acts for. Set here, never by the browser. */
+export const RUN_SESSION_KEY = "locus.session";
 
-export function createHost({ db, session, connect, model, fetch, origin }: HostDeps) {
-  // Sessions seen on requests, by id, so a run's context can name the one it acts for.
-  const sessions = new Map<string, SessionContext>();
+/** An open event stream re-checks access at least this often, and before events after a gap. */
+const STREAM_CHECK_MS = 5_000;
+
+export function createHost({
+  db,
+  session,
+  connect,
+  model,
+  fetch,
+  origin,
+  streamCheckMs = STREAM_CHECK_MS,
+}: HostDeps) {
   // Per client, the sessions that opened it, newest last: its database token is the client's,
   // not one run's, so any of them still allowed in will do.
-  const openers = new Map<string, Set<string>>();
-  const signedIn = new WeakMap<Request, SessionContext>();
+  const openers = new Map<string, Map<string, SessionContext>>();
+  const opened = new WeakMap<Request, { ctx: SessionContext; clientId: string }>();
 
-  /** The staff check again, for one session: still signed in, still a member allowed this client. */
-  const authorizedFor = async (sessionId: string, clientId: string) => {
-    const ctx = sessions.get(sessionId);
-    const [row] = ctx
-      ? await db
-          .select({ expiresAt: authSession.expiresAt })
-          .from(authSession)
-          .where(eq(authSession.id, sessionId))
-      : [];
-    if (!ctx || !row || row.expiresAt.getTime() <= Date.now()) {
-      sessions.delete(sessionId);
-      throw new ClientAccessDenied("signed out");
-    }
+  /**
+   * The staff check again, for the session a request or run came with (as it was then, so a
+   * switch of agency in another tab changes nothing here): still signed in, still a member
+   * allowed this client.
+   */
+  const authorizedFor = async (ctx: SessionContext, clientId: string) => {
+    const [row] = await db
+      .select({ expiresAt: authSession.expiresAt })
+      .from(authSession)
+      .where(eq(authSession.id, ctx.id));
+    if (!row || row.expiresAt.getTime() <= Date.now()) throw new ClientAccessDenied("signed out");
     return authorizeClient(db, ctx, clientId);
   };
 
   /** For the client's own database: any session that opened it and may still. */
   const anyAuthorized = async (clientId: string) => {
-    const ids = openers.get(clientId) ?? new Set<string>();
-    for (const id of [...ids].reverse()) {
+    const byId = openers.get(clientId) ?? new Map<string, SessionContext>();
+    for (const [id, ctx] of [...byId].reverse()) {
       try {
-        return await authorizedFor(id, clientId);
+        return await authorizedFor(ctx, clientId);
       } catch (error) {
         if (!(error instanceof ClientAccessDenied)) throw error;
-        ids.delete(id);
+        byId.delete(id);
       }
     }
     throw new ClientAccessDenied("nobody may open this client now");
@@ -173,23 +182,19 @@ export function createHost({ db, session, connect, model, fetch, origin }: HostD
       } catch {
         return null;
       }
-      sessions.set(ctx.id, ctx);
-      const ids = openers.get(client.location.id) ?? new Set<string>();
-      ids.delete(ctx.id);
-      ids.add(ctx.id);
-      openers.set(client.location.id, ids);
-      signedIn.set(request, ctx);
-      return {
-        memberId: client.memberId,
-        locationId: client.location.ghlLocationId,
-        clientId: client.location.id,
-      };
+      const clientId = client.location.id;
+      const byId = openers.get(clientId) ?? new Map<string, SessionContext>();
+      byId.delete(ctx.id);
+      byId.set(ctx.id, ctx);
+      openers.set(clientId, byId);
+      opened.set(request, { ctx, clientId });
+      return { memberId: client.memberId, locationId: client.location.ghlLocationId, clientId };
     },
     // Each run carries the session it acts for, so its GHL calls are checked against that
     // member, not whoever used the client last.
     requestContext: async (request) => {
-      const ctx = signedIn.get(request);
-      return ctx ? { [RUN_SESSION_KEY]: ctx.id } : {};
+      const ctx = opened.get(request)?.ctx;
+      return ctx ? { [RUN_SESSION_KEY]: ctx } : {};
     },
     controllerFor: async ({ clientId, locationId }) => {
       const { location } = await anyAuthorized(clientId);
@@ -220,9 +225,9 @@ export function createHost({ db, session, connect, model, fetch, origin }: HostD
         model,
         locationId,
         session: async (requestContext) => {
-          const sessionId = requestContext?.get(RUN_SESSION_KEY);
-          if (typeof sessionId !== "string") throw new ClientAccessDenied("run has no session");
-          return clientGhlSession(connect, await authorizedFor(sessionId, clientId));
+          const ctx = requestContext?.get(RUN_SESSION_KEY) as SessionContext | undefined;
+          if (!ctx?.id) throw new ClientAccessDenied("run has no session");
+          return clientGhlSession(connect, await authorizedFor(ctx, clientId));
         },
         storage,
         ...(fetch ? { fetch } : {}),
@@ -234,7 +239,16 @@ export function createHost({ db, session, connect, model, fetch, origin }: HostD
     async fetch(request: Request): Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/health") return new Response("ok");
-      if (request.method === "GET" || request.method === "HEAD") return api.fetch(request);
+      if (request.method === "GET" || request.method === "HEAD") {
+        const response = await api.fetch(request);
+        const stream = opened.get(request);
+        if (!pathname.endsWith("/stream") || !stream || !response.body) return response;
+        // A member who loses access must stop receiving the client's live chat too.
+        return new Response(
+          guarded(response.body, () => authorizedFor(stream.ctx, stream.clientId), streamCheckMs),
+          response,
+        );
+      }
       // The session cookie authenticates these, so only the web app's pages may send them, and
       // a body only as JSON: a cross-site form or text/plain post can't.
       const from = request.headers.get("origin");
@@ -254,6 +268,57 @@ export function createHost({ db, session, connect, model, fetch, origin }: HostD
       );
     },
   };
+}
+
+/**
+ * The stream, while `check` passes: checked before passing on what arrives after a quiet
+ * spell, and every `STREAM_CHECK_MS` while nothing arrives. It ends the stream when it fails.
+ */
+function guarded(body: ReadableStream<Uint8Array>, check: () => Promise<unknown>, everyMs: number) {
+  let checkedAt = Date.now();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const reader = body.getReader();
+  const stillAllowed = async () => {
+    try {
+      await check();
+      checkedAt = Date.now();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      timer = setInterval(async () => {
+        if (Date.now() - checkedAt < everyMs) return;
+        if (!(await stillAllowed())) {
+          clearInterval(timer);
+          controller.close();
+          void reader.cancel();
+        }
+      }, everyMs);
+      timer.unref?.();
+    },
+    async pull(controller) {
+      const { done, value } = await reader.read();
+      if (done) {
+        clearInterval(timer);
+        controller.close();
+        return;
+      }
+      if (Date.now() - checkedAt >= everyMs && !(await stillAllowed())) {
+        clearInterval(timer);
+        controller.close();
+        await reader.cancel();
+        return;
+      }
+      controller.enqueue(value);
+    },
+    cancel(reason) {
+      clearInterval(timer);
+      return reader.cancel(reason);
+    },
+  });
 }
 
 /** The whole stream, or null as soon as it passes `max` bytes. */
