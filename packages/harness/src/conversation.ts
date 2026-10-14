@@ -13,9 +13,15 @@
 
 import type { GhlSession } from "@locus/ghl";
 import type { Agent } from "@mastra/core/agent";
-import type { ProcessOutputResultArgs, Processor } from "@mastra/core/processors";
+import type {
+  ProcessOutputResultArgs,
+  ProcessOutputStepArgs,
+  Processor,
+  ToolCallInfo,
+} from "@mastra/core/processors";
 import type { MastraCompositeStore } from "@mastra/core/storage";
 import { Memory } from "@mastra/memory";
+import { TAINT_MARK } from "./untrusted.ts";
 
 /** The conversation store for one client: a `LibSQLStore` over that client's own database. */
 export type ConversationStore = MastraCompositeStore;
@@ -46,45 +52,91 @@ export function clientResource(session: GhlSession): string {
   return `client:${session.locationId}`;
 }
 
-/** What a stored tool result is replaced with. Errors are ours and are kept. */
-export function forgetResult(toolName: string, result: unknown): unknown {
+/**
+ * What a stored tool result is replaced with. Only `load_skill` (our own text) is kept; a GHL
+ * error can quote GHL data (a duplicate contact's email), so errors keep only that they failed.
+ * `keepTaint` keeps the untrusted-content mark, so a paused run that resumes from memory is
+ * still tainted (see `untrusted.ts`); a finished run's stubs drop it, so a later turn in the
+ * thread is not tainted by what an earlier one read.
+ */
+export function forgetResult(
+  toolName: string,
+  result: unknown,
+  { keepTaint = false }: { keepTaint?: boolean } = {},
+): unknown {
   if (toolName === "load_skill") return result;
-  if (result && typeof result === "object" && "error" in result) return result;
-  const inner =
-    result && typeof result === "object" && "warning" in result && "result" in result
-      ? (result as { result: unknown }).result
-      : result;
-  // The stub holds no GHL text, so it drops the taint mark too: a later turn in the thread is
-  // not tainted by what an earlier one read. (A paused run resumes from its snapshot, which
-  // still has the marks, not from memory.)
-  if (toolName === "query_data" && inner && typeof inner === "object" && "rowCount" in inner) {
-    return { notKept: NOT_KEPT, rowCount: (inner as { rowCount: unknown }).rowCount };
+  if (!result || typeof result !== "object") return { notKept: NOT_KEPT };
+  const wrapped = "warning" in result && "result" in result;
+  const inner = wrapped ? (result as { result: unknown }).result : result;
+  const taint =
+    keepTaint && "taint" in result && result.taint === TAINT_MARK ? { taint: TAINT_MARK } : {};
+  if (inner && typeof inner === "object" && "error" in inner) {
+    return { notKept: NOT_KEPT, failed: true, ...taint };
   }
-  return { notKept: NOT_KEPT };
+  if (toolName === "query_data" && inner && typeof inner === "object" && "rowCount" in inner) {
+    return { notKept: NOT_KEPT, rowCount: (inner as { rowCount: unknown }).rowCount, ...taint };
+  }
+  return { notKept: NOT_KEPT, ...taint };
 }
 
+/** Whether a tool call will wait for a person before it runs, by the tool's own rule. */
+export type WaitsForApproval = (call: ToolCallInfo, requestContext: unknown) => Promise<boolean>;
+
 /**
- * Runs as an output processor, before memory's own processors save the run, and replaces each
- * GHL-derived tool result in the run with a stub. The run's answer is already final by then.
+ * Replaces each GHL-derived tool result in a run with a stub, before memory saves the run:
+ *
+ * - `processOutputResult`: when the run finishes, the answer is final.
+ * - `processOutputStep`: when a step is about to stop for an approval. A paused run is saved
+ *   as it stands and may never be decided, so its data must go now. The run resumes without
+ *   it and reads GHL again if it needs to.
  */
 export class ForgetGhlData implements Processor<"locus-forget-ghl-data"> {
   readonly id = "locus-forget-ghl-data" as const;
   readonly name = "Keep GoHighLevel data out of memory";
 
-  processOutputResult({ messages, messageList }: ProcessOutputResultArgs) {
-    for (const message of messages) {
-      for (const part of message.content.parts ?? []) {
-        if (part.type !== "tool-invocation" || part.toolInvocation.state !== "result") continue;
-        const { toolName, result } = part.toolInvocation;
-        const kept = forgetResult(toolName, result);
-        if (kept === result) continue;
-        messageList.updateToolInvocation({
-          type: "tool-invocation",
-          toolInvocation: { ...part.toolInvocation, result: kept },
-        });
+  readonly #waitsForApproval: WaitsForApproval;
+
+  constructor(waitsForApproval: WaitsForApproval) {
+    this.#waitsForApproval = waitsForApproval;
+  }
+
+  async processOutputStep({
+    messages,
+    messageList,
+    toolCalls,
+    requestContext,
+  }: ProcessOutputStepArgs) {
+    for (const call of toolCalls ?? []) {
+      if (await this.#waitsForApproval(call, requestContext)) {
+        forgetAll(messages, messageList, true);
+        break;
       }
     }
     return messages;
+  }
+
+  processOutputResult({ messages, messageList }: ProcessOutputResultArgs) {
+    forgetAll(messages, messageList, false);
+    return messages;
+  }
+}
+
+function forgetAll(
+  messages: ProcessOutputResultArgs["messages"],
+  messageList: ProcessOutputResultArgs["messageList"],
+  keepTaint: boolean,
+) {
+  for (const message of messages) {
+    for (const part of message.content.parts ?? []) {
+      if (part.type !== "tool-invocation" || part.toolInvocation.state !== "result") continue;
+      const { toolName, result } = part.toolInvocation;
+      const kept = forgetResult(toolName, result, { keepTaint });
+      if (kept === result) continue;
+      messageList.updateToolInvocation({
+        type: "tool-invocation",
+        toolInvocation: { ...part.toolInvocation, result: kept },
+      });
+    }
   }
 }
 
