@@ -4,6 +4,7 @@ export {
   DEV_CONTROL_DB_URL,
   migrateControlDb,
   openControlDb,
+  openTenantDb,
   TENANT_MIGRATIONS,
   type TenantDb,
 } from "./client.ts";
