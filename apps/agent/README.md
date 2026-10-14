@@ -27,8 +27,8 @@ docker build -f apps/agent/Dockerfile -t locus-agent .
 | `LOCUS_SECRETS_KEY` | Opens agencies' sealed GoHighLevel tokens, as the web app's |
 | `TURSO_ORG`, `TURSO_GROUP`, `TURSO_API_TOKEN` | Mint tokens for clients' databases |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | Renew agencies' GoHighLevel grants |
-| `LOCUS_AGENT_MODEL` | The model, as a Mastra model id, e.g. `anthropic/claude-sonnet-5-5` |
-| The model provider's key | e.g. `ANTHROPIC_API_KEY` |
+| `LOCUS_AGENT_MODEL` | The model, as a Mastra model id, e.g. `anthropic/claude-sonnet-5-5`; or `scripted` for a fixed reply with no AI provider (for staging: no key, no cost) |
+| The model provider's key | e.g. `ANTHROPIC_API_KEY`; not needed with `scripted` |
 | `PORT` | Defaults to 3000 |
 
 `GET /health` answers `ok`.
