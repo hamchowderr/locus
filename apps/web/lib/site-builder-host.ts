@@ -2,7 +2,7 @@ import { type AuthorizedClient, authorizeClient, ClientAccessDenied } from "@loc
 import { imagesFromEnv } from "@locus/builder";
 import { provisionerFromEnv } from "@locus/db";
 import type { RuntimeProvider } from "@locus/sandbox";
-import { configured } from "./connect.ts";
+import { baseUrl, configured } from "./connect.ts";
 import { publishDeps } from "./hosts.ts";
 import { billingEnabled, locus, configured as locusConfigured, sessionContext } from "./locus.ts";
 import {
@@ -33,6 +33,7 @@ export function siteBuilderDeps(): SiteBuilderDeps {
     runtimes: siteRuntimes,
     images,
     publish: publishDeps,
+    locusUrl: baseUrl(),
     billing: billingEnabled(),
   };
 }

@@ -40,7 +40,8 @@ How to work:
 Rules:
 - Server components by default; add "use client" only where a component needs state or events.
 - Build with the shadcn/ui components and the theme's colour variables in app/globals.css.
-- Forms post to the site's own /api/lead route. Never put keys, tokens or secrets in code.
+- Forms post to the site's own /api/lead route with the site-forms skill's fields and spam
+  checks; never edit that route or lib/locus.ts. Never put keys, tokens or secrets in code.
 - Images: generate_image into public/images, with alt text that describes them.
 - Packages and components only through add_dependency; never install with run_command or edit
   versions by hand. The site's files here are the source of truth: what a command changes in

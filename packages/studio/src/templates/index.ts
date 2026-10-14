@@ -3,6 +3,14 @@ import type { SiteFile } from "../workspace.ts";
 import { baseFiles, lit } from "./base.ts";
 
 export { baseFiles, DEFAULT_PALETTE, packageName, readableOn, SITE_STACK } from "./base.ts";
+export {
+  LEAD_ROUTE_PATH,
+  LOCUS_SETTINGS_PATH,
+  leadEndpoint,
+  leadRouteFile,
+  locusSettingsFile,
+  withLocusSettings,
+} from "./forms.ts";
 export { SHADCN_COMPONENTS } from "./shadcn.ts";
 
 export interface SiteTemplate {
@@ -15,22 +23,25 @@ export interface SiteTemplate {
   files: (brief: DesignBrief) => SiteFile[];
 }
 
-// A form that posts to the site's own /api/lead route. Locus connects that route to the
-// client's CRM; until then it accepts the submission and says so.
+// A form that posts to the site's own /api/lead route (in the base files), which forwards it to
+// Locus and on to the client's CRM. The hidden \`fax\` field and \`elapsedMs\` are Locus's spam
+// checks: people never see the one and always take longer than a bot for the other.
 const leadForm = (button: string): SiteFile[] => [
   {
     path: "components/lead-form.tsx",
     content: `"use client";
 
 import { CheckIcon } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 
-export function LeadForm() {
+export function LeadForm({ form = "contact" }: { form?: string }) {
   const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
+  const [error, setError] = useState("");
+  const shownAt = useRef(Date.now());
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,9 +50,17 @@ export function LeadForm() {
     const response = await fetch("/api/lead", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(data),
+      body: JSON.stringify({
+        ...data,
+        form,
+        page: window.location.pathname,
+        elapsedMs: Date.now() - shownAt.current,
+      }),
     }).catch(() => null);
-    setState(response?.ok ? "sent" : "failed");
+    if (response?.ok) return setState("sent");
+    const result = await response?.json().catch(() => null);
+    setError(typeof result?.error === "string" ? result.error : "");
+    setState("failed");
   }
 
   if (state === "sent") {
@@ -57,44 +76,43 @@ export function LeadForm() {
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor="lead-name">Name</FieldLabel>
-          <Input id="lead-name" name="name" required autoComplete="name" />
+          <Input id="lead-name" name="name" required maxLength={120} autoComplete="name" />
         </Field>
         <Field>
           <FieldLabel htmlFor="lead-email">Email</FieldLabel>
-          <Input id="lead-email" name="email" type="email" required autoComplete="email" />
+          <Input
+            id="lead-email"
+            name="email"
+            type="email"
+            required
+            maxLength={254}
+            autoComplete="email"
+          />
         </Field>
         <Field>
           <FieldLabel htmlFor="lead-phone">Phone (optional)</FieldLabel>
-          <Input id="lead-phone" name="phone" type="tel" autoComplete="tel" />
+          <Input id="lead-phone" name="phone" type="tel" maxLength={32} autoComplete="tel" />
         </Field>
         <Field>
           <FieldLabel htmlFor="lead-message">How can we help?</FieldLabel>
-          <Textarea id="lead-message" name="message" rows={4} />
+          <Textarea id="lead-message" name="message" rows={4} maxLength={5000} />
         </Field>
+        {/* Spam trap: hidden from people, filled in by bots. Keep it. */}
+        <div aria-hidden="true" className="absolute -left-[9999px] h-px w-px overflow-hidden">
+          <label htmlFor="lead-fax">Leave this empty</label>
+          <input id="lead-fax" name="fax" type="text" tabIndex={-1} autoComplete="off" />
+        </div>
         <Field>
           <Button type="submit" size="lg" disabled={state === "sending"}>
             {state === "sending" ? "Sending…" : ${lit(button)}}
           </Button>
-          {state === "failed" && <FieldError>That didn't send. Please try again.</FieldError>}
+          {state === "failed" && (
+            <FieldError>{error || "That didn't send. Please try again."}</FieldError>
+          )}
         </Field>
       </FieldGroup>
     </form>
   );
-}
-`,
-  },
-  {
-    path: "app/api/lead/route.ts",
-    content: `import { NextResponse } from "next/server";
-
-/** Receives the site's form submissions. Locus connects this to the client's CRM. */
-export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  const email = typeof body?.email === "string" ? body.email.trim() : "";
-  if (!email.includes("@")) {
-    return NextResponse.json({ error: "An email address is required." }, { status: 400 });
-  }
-  return NextResponse.json({ ok: true });
 }
 `,
   },

@@ -62,12 +62,41 @@ account, and a project on the agency's own Vercel team builds it.
 
 Each change is in the audit log. Another client's site id looks like a missing site.
 
+## A published site's lead form (`site-leads.ts`)
+
+`submitSiteLead(deps, { siteId, raw, visitorIp })` takes one submission that a site's own
+`/api/lead` route forwarded (server to server) to `POST /api/sites/<siteId>/leads` in apps/web.
+
+- **Which client:** the site id is public (baked into the site's `lib/locus.ts` at publish); the
+  client is read from that site's registry row. Unknown sites, drafts (never published) and
+  sites of suspended clients get the same 404. A body naming `locationId`, `companyId`,
+  `contactId`, `tags`, `source`, `customFields` or similar is refused with a 400.
+- **Validation:** a flat JSON object of text answers, at most 16 KB, with per-field limits
+  (name 120, email 254, phone 32, message 5000, up to 10 extra answers of 1000); control
+  characters stripped; an email or a phone is required.
+- **Spam:** a filled `fax` honeypot or an `elapsedMs` under 3 s is answered `{ ok: true }` and
+  dropped. Fixed windows per site (60 an hour) and per visitor IP per site (5 per 10 minutes),
+  counted with `consumeAttempt` from `@locus/auth` in `auth_rate_limit`, the IP hashed. The IP
+  comes from the site's route (`x-locus-visitor-ip`) and is only a hint; the per-site limit
+  holds regardless. A captcha (Turnstile) would be checked here, before the limits.
+- **GHL:** the client's location token is minted for this request only, then
+  `contacts.upsert-contact` (with `source`), `contacts.add-tags` ("website lead",
+  "website form: <form>") and, when there is a message or extra answers, `contacts.create-note`,
+  all through `ghlRequest` and the shared burst limiter. Nothing is stored.
+- **Errors:** any GHL or token failure is a 502 with one fixed sentence; the log names the site,
+  the operation and the status, never the visitor's details or GHL's text. Retrying is safe:
+  the upsert finds the same contact and tags are idempotent.
+
+Submission text is untrusted: it reaches GHL as contact fields and a note, and no agent from
+this path.
+
 ## Without a GoHighLevel account
 
 `GHL_MODE=stub` (the default outside production) uses `createStubGhl()`: a pretend agency with
 three sub-accounts and two staff users (`avery@stub-agency.test`, an admin, and
 `sam@stub-agency.test`, restricted to two clients), answering the OAuth and users-search endpoints
-as GHL's live docs describe them.
+as GHL's live docs describe them, plus a site lead's contact upsert, tags and note (accepted and
+forgotten).
 
 `GITHUB_MODE=stub` and `VERCEL_MODE=stub` (`createStubGithub`, `createStubVercel`) run the
 connect flows and the whole publishing flow: installation tokens (the stub checks the JWT's

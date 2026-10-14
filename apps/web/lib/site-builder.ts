@@ -39,6 +39,7 @@ import {
   templateById,
   type VersionInfo,
   WorkspaceError,
+  withLocusSettings,
 } from "@locus/studio";
 import { and, count, eq, gte, inArray } from "drizzle-orm";
 
@@ -72,6 +73,11 @@ export interface SiteBuilderDeps {
    * reported to the person after the version is saved.
    */
   publish?: (() => PublishDeps) | null;
+  /**
+   * This deployment's public address. Each published version gets `lib/locus.ts` pointing the
+   * site's form route at `<locusUrl>/api/sites/<siteId>/leads` (`withLocusSettings`).
+   */
+  locusUrl: string;
   /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
   billing?: boolean;
 }
@@ -231,6 +237,7 @@ export function publishHook(
   publish: () => PublishDeps,
   client: AuthorizedClient,
   siteId: string,
+  locusUrl: string,
 ): NonNullable<BuilderSession["onVersionSaved"]> {
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
@@ -239,7 +246,11 @@ export function publishHook(
       const { commitSha, url } = await commitSiteVersion(publish(), client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
-        files: files.map(({ path, content }) => ({ path, content })),
+        // The version's files, with this site's form endpoint in `lib/locus.ts`.
+        files: withLocusSettings(
+          files.map(({ path, content }) => ({ path, content })),
+          { siteId, locusUrl },
+        ),
       });
       return { commitSha, url };
     } catch (error) {
@@ -388,7 +399,7 @@ export function createSiteBuilder(
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
       ...(deps.publish
-        ? { onVersionSaved: publishHook(deps.db, deps.publish, client, siteId) }
+        ? { onVersionSaved: publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl) }
         : {}),
     };
   };
