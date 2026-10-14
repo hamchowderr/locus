@@ -6,7 +6,7 @@ import {
   type SessionContext,
 } from "@locus/auth";
 import { auditLog, githubInstallation, site } from "@locus/db/control";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNull, ne } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { GITHUB_API_VERSION, type GithubHttp } from "./github.ts";
 import { audit, type SiteDeps, type SiteRow } from "./sites.ts";
@@ -28,8 +28,10 @@ import { hostGrant, refused, type VercelResult, vercel } from "./vercel-api.ts";
 //
 // Vercel contracts read on 2026-10-14 (vercel.com/docs through search): `POST /v11/projects`
 // (`name`, `framework`, `gitRepository: { type, repo }`; team in the query, never the body),
-// `GET /v6/deployments` (`projectId`, `limit`; a deployment's `url` is a hostname, null until
-// it has finished uploading) and `POST /v13/deployments` with a `gitSource`.
+// `GET /v6/deployments` (`projectId`, `limit`, `target`; a deployment's `url` is a hostname,
+// null until it has finished uploading, and sits behind deployment protection by default),
+// `GET /v9/projects/{id}` (its production aliases; `<name>.vercel.app` unless configured
+// otherwise) and `POST /v13/deployments` with a `gitSource`.
 
 /**
  * The Locus GitHub App's own credentials. The private key is never an environment variable:
@@ -210,6 +212,10 @@ interface ApiRepo {
   default_branch?: string;
 }
 
+/**
+ * At most this many pages of 100 are read (1,000 repositories). An installation with more must
+ * narrow the app's repository access before a site can be linked to one past the cap.
+ */
 const MAX_REPO_PAGES = 10;
 
 async function installationRepos(deps: PublishDeps, installationId: string): Promise<ApiRepo[]> {
@@ -293,16 +299,64 @@ export async function ensureSiteRepo(
     .select({ id: site.id })
     .from(site)
     .where(and(eq(site.repoFullName, repoFullName), ne(site.id, row.id)));
-  if (taken) throw new ConnectError("That repository is already another site's.");
+  if (taken) throw alreadyAnotherSite();
+  if (action === "site.repo.link") {
+    await assertRepoEmpty(deps, installation.installationId, repoFullName);
+  }
 
+  // Only while the site has no repository; the unique index stops a second site taking it.
   const [updated] = await deps.db
     .update(site)
     .set({ repoFullName })
-    .where(eq(site.id, row.id))
-    .returning();
+    .where(and(eq(site.id, row.id), isNull(site.repoFullName)))
+    .returning()
+    .catch((error: unknown) => {
+      const text = `${error} ${(error as { cause?: unknown })?.cause ?? ""}`;
+      if (/UNIQUE constraint failed/i.test(text)) throw alreadyAnotherSite();
+      throw error;
+    });
+  if (!updated) {
+    // A concurrent request gave this site its repository first: it is already linked.
+    return clientSiteRow(deps, client, row.id);
+  }
   await audit(deps.db, ctx, client, action, { siteId: row.id, repoFullName });
-  // biome-ignore lint/style/noNonNullAssertion: the row was read above
-  return updated!;
+  return updated;
+}
+
+const alreadyAnotherSite = () => new ConnectError("That repository is already another site's.");
+
+/**
+ * Refuses a repository with commits on its default branch: every save replaces the whole
+ * tree, so linking it would wipe what is there. GitHub answers 409 for an empty repository.
+ */
+async function assertRepoEmpty(deps: PublishDeps, installationId: string, repoFullName: string) {
+  const repo = splitRepo(repoFullName);
+  const token = await installationToken(deps, installationId, {
+    repository: repo.name,
+    permissions: { contents: "read" },
+  });
+  const about = await github<{ default_branch?: string; size?: number }>(
+    deps,
+    token,
+    "GET",
+    repo.path,
+  );
+  if (!about.ok) throw githubRefused(about, "GitHub didn't show the repository. Try again.");
+  const branch = about.body.default_branch || "main";
+  const ref = await github(
+    deps,
+    token,
+    "GET",
+    `${repo.path}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`,
+  );
+  if (ref.status === 409) return;
+  if (ref.status === 404 && !about.body.size) return;
+  if (ref.ok || ref.status === 404) {
+    throw new ConnectError(
+      `${repoFullName} already has files, and each save replaces everything in the repository. Pick an empty repository, or create one.`,
+    );
+  }
+  throw githubRefused(ref, "GitHub didn't show the repository's branch. Try again.");
 }
 
 async function createOrgRepo(
@@ -359,7 +413,11 @@ async function createOrgRepo(
 export interface SiteFile {
   path: string;
   content: string | Uint8Array;
+  /** Set for a file that must stay executable (e.g. a script); otherwise a plain file. */
+  executable?: boolean;
 }
+
+const modeOf = (file: SiteFile) => (file.executable ? "100755" : "100644");
 
 /**
  * Throws unless every path is a plain relative path inside the repository. Generated code must
@@ -395,7 +453,8 @@ export function checkSitePaths(files: SiteFile[]): void {
  * Commits a full snapshot of the site's files to its repository's default branch, with the
  * branch's current commit as the parent. The tree is built without a base, so a file left out
  * of the snapshot is deleted. Pass `parentSha` (the commit the version was made from) to refuse
- * the save if the branch has moved since.
+ * the save if the branch has moved since, or `null` to say the repository should still be
+ * empty. Left out, the branch's current head is the parent, whatever it is.
  *
  * Anyone who may work on the client may save; the repository is reached with a token scoped to
  * it, with `contents: write` only.
@@ -403,7 +462,7 @@ export function checkSitePaths(files: SiteFile[]): void {
 export async function commitSiteVersion(
   deps: PublishDeps,
   client: AuthorizedClient,
-  input: { siteId: string; files: SiteFile[]; message: string; parentSha?: string },
+  input: { siteId: string; files: SiteFile[]; message: string; parentSha?: string | null },
 ): Promise<{ commitSha: string; url: string }> {
   assertAuthorizedClient(client);
   checkSitePaths(input.files);
@@ -467,10 +526,16 @@ export async function commitSiteVersion(
     refExists = true;
   }
 
-  const tree: { path: string; mode: "100644"; type: "blob"; sha?: string; content?: string }[] = [];
+  const tree: {
+    path: string;
+    mode: "100644" | "100755";
+    type: "blob";
+    sha?: string;
+    content?: string;
+  }[] = [];
   for (const file of input.files) {
     if (typeof file.content === "string") {
-      tree.push({ path: file.path, mode: "100644", type: "blob", content: file.content });
+      tree.push({ path: file.path, mode: modeOf(file), type: "blob", content: file.content });
       continue;
     }
     const blob = await call<{ sha?: string }>("POST", "/git/blobs", {
@@ -478,7 +543,7 @@ export async function commitSiteVersion(
       encoding: "base64",
     });
     if (!blob.ok || !blob.body.sha) throw githubRefused(blob, "GitHub didn't take a file.");
-    tree.push({ path: file.path, mode: "100644", type: "blob", sha: blob.body.sha });
+    tree.push({ path: file.path, mode: modeOf(file), type: "blob", sha: blob.body.sha });
   }
   // No `base_tree`: the tree is exactly the snapshot.
   const madeTree = await call<{ sha?: string }>("POST", "/git/trees", { tree });
@@ -537,12 +602,29 @@ function projectName(repoName: string): string {
   return name || "site";
 }
 
-/** Vercel refused because its own GitHub app can't see the repository. */
+/**
+ * Vercel refused because its own GitHub app can't see the repository. Vercel documents no
+ * dedicated code for this: it answers `bad_request` with "To link a GitHub repository, you need
+ * to install the GitHub integration first", or says the repository "can't be found". Only those
+ * sentences (or a code naming a missing repository or Git link) count, so an unrelated 400
+ * keeps Vercel's own message.
+ */
 function cannotSeeRepo(result: VercelResult<unknown>): boolean {
-  if (result.ok || result.status === 401 || result.status === 403) return false;
+  if (result.status !== 400 && result.status !== 404) return false;
   const { code = "", message = "" } = result.body.error ?? {};
-  return /repo|git|integration/i.test(code) || /github|repositor|integration/i.test(message);
+  return (
+    /^(repo_not_found|git_repository_not_found|missing_git_integration|github_app_not_installed)$/i.test(
+      code,
+    ) ||
+    /install the GitHub integration|GitHub repository can(?:'|no)t be found|(?:can(?:'|no)t|could not|unable to) (?:find|access) (?:the )?(?:GitHub )?repository/i.test(
+      message,
+    )
+  );
 }
+
+/** A suffix for a second try when the team already has a project with the repository's name. */
+const nameWithSuffix = (base: string, siteId: string) =>
+  projectName(`${base.slice(0, 90)}-${siteId.replace(/[^a-z0-9]/gi, "").slice(0, 8)}`);
 
 /**
  * Gives the client's site a project on the agency's Vercel team that builds its GitHub
@@ -563,17 +645,32 @@ export async function ensureSiteDeployment(
   const grant = await hostGrant(deps, organizationId);
   const repo = splitRepo(row.repoFullName);
 
-  const created = await vercel<{
-    id?: string;
-    name?: string;
-    link?: { productionBranch?: string };
-  }>(deps, grant, "POST", "/v11/projects", {
-    body: {
-      name: projectName(repo.name),
-      framework: "nextjs",
-      gitRepository: { type: "github", repo: row.repoFullName },
-    },
-  });
+  const create = (name: string) =>
+    vercel<{ id?: string; name?: string; link?: { productionBranch?: string } }>(
+      deps,
+      grant,
+      "POST",
+      "/v11/projects",
+      {
+        body: {
+          name,
+          framework: "nextjs",
+          gitRepository: { type: "github", repo: row.repoFullName },
+        },
+      },
+    );
+  const firstName = projectName(repo.name);
+  let created = await create(firstName);
+  if (created.status === 409) {
+    // The team already has a project by that name: try once more with the site's id on it.
+    const second = nameWithSuffix(firstName, row.id);
+    created = await create(second);
+    if (created.status === 409) {
+      throw new ConnectError(
+        `Your Vercel team already has projects named ${firstName} and ${second}. Rename or remove one on Vercel, then try again.`,
+      );
+    }
+  }
   if (cannotSeeRepo(created)) {
     throw new ConnectError(
       `Vercel can't see ${row.repoFullName}. On GitHub, give Vercel's GitHub app access to that repository (or to all repositories), then try again.`,
@@ -587,8 +684,10 @@ export async function ensureSiteDeployment(
   const [updated] = await deps.db
     .update(site)
     .set({ host: "vercel", hostProjectId: projectId })
-    .where(eq(site.id, row.id))
+    .where(and(eq(site.id, row.id), isNull(site.hostProjectId)))
     .returning();
+  // A concurrent request gave the site its project first; that one stays.
+  if (!updated) return clientSiteRow(deps, client, row.id);
   await audit(deps.db, ctx, client, "site.project.create", {
     siteId: row.id,
     projectId,
@@ -600,7 +699,7 @@ export async function ensureSiteDeployment(
     // here leaves the project in place: the next save deploys it.
     await vercel(deps, grant, "POST", "/v13/deployments", {
       body: {
-        name: created.body.name ?? projectName(repo.name),
+        name: created.body.name ?? firstName,
         project: projectId,
         target: "production",
         gitSource: {
@@ -612,21 +711,46 @@ export async function ensureSiteDeployment(
       },
     });
   }
-  // biome-ignore lint/style/noNonNullAssertion: the row was read above
-  return updated!;
+  return updated;
 }
 
 export interface SiteDeployment {
   /** Vercel's state: QUEUED, INITIALIZING, BUILDING, READY, ERROR or CANCELED. */
   state: string;
-  /** `https://…` once Vercel has one. */
+  /**
+   * The site's public production address (`https://…`): the project's production alias, never
+   * the deployment's own URL, which Vercel's deployment protection hides by default. While a
+   * new deployment builds, the address already live; null before the first one is ready.
+   */
   url: string | null;
   createdAt: number | null;
 }
 
+type ProjectAlias = string | { domain?: string };
+
+/** The project's production address: its `<name>.vercel.app` alias when it has one. */
+function productionHost(project: {
+  name?: string;
+  targets?: { production?: { alias?: ProjectAlias[] | null } | null } | null;
+  alias?: ProjectAlias[] | null;
+}): string | null {
+  const aliases = [...(project.targets?.production?.alias ?? []), ...(project.alias ?? [])]
+    .map((a) => (typeof a === "string" ? a : a.domain))
+    .filter((a): a is string => !!a);
+  const own = project.name ? `${project.name}.vercel.app` : null;
+  return (
+    (own && aliases.includes(own) ? own : undefined) ??
+    aliases.find((a) => a.endsWith(".vercel.app")) ??
+    aliases[0] ??
+    own
+  );
+}
+
 /**
- * The site's latest deployment on Vercel, for showing its live address. Keeps the address on
- * the site once the deployment is ready. Anyone who may work on the client may look.
+ * The site's latest production deployment on Vercel, for showing its live address. Keeps the
+ * project's production address on the site once a deployment is ready, and marks the site
+ * failed when the latest production build failed. Preview deployments change nothing. Anyone
+ * who may work on the client may look.
  */
 export async function latestDeployment(
   deps: PublishDeps,
@@ -644,23 +768,38 @@ export async function latestDeployment(
       readyState?: string;
       created?: number;
       createdAt?: number;
+      target?: string | null;
     }[];
   }>(deps, grant, "GET", "/v6/deployments", {
-    query: { projectId: row.hostProjectId, limit: "1" },
+    query: { projectId: row.hostProjectId, limit: "1", target: "production" },
   });
   if (!result.ok) throw refused(result, "Vercel didn't show the site's deployments. Try again.");
   const latest = result.body.deployments?.[0];
-  if (!latest) return null;
+  // Asked for production only; anything else (a preview) is not the live site.
+  if (!latest || (latest.target != null && latest.target !== "production")) return null;
   const state = latest.readyState ?? latest.state ?? "QUEUED";
-  const url = latest.url ? `https://${latest.url.replace(/^https?:\/\//, "")}` : null;
+  const createdAt = latest.created ?? latest.createdAt ?? null;
 
-  if (state === "READY" && url && (row.deployUrl !== url || row.status !== "deployed")) {
-    await deps.db
-      .update(site)
-      .set({ deployUrl: url, status: "deployed" })
-      .where(eq(site.id, row.id));
-  } else if (state === "ERROR" && row.status !== "failed") {
+  if (state === "READY") {
+    const project = await vercel<Parameters<typeof productionHost>[0]>(
+      deps,
+      grant,
+      "GET",
+      `/v9/projects/${encodeURIComponent(row.hostProjectId)}`,
+    );
+    if (!project.ok) throw refused(project, "Vercel didn't show the site's project. Try again.");
+    const host = productionHost(project.body);
+    const url = host ? `https://${host}` : null;
+    if (url && (row.deployUrl !== url || row.status !== "deployed")) {
+      await deps.db
+        .update(site)
+        .set({ deployUrl: url, status: "deployed" })
+        .where(eq(site.id, row.id));
+    }
+    return { state, url, createdAt };
+  }
+  if (state === "ERROR" && row.status !== "failed") {
     await deps.db.update(site).set({ status: "failed" }).where(eq(site.id, row.id));
   }
-  return { state, url, createdAt: latest.created ?? latest.createdAt ?? null };
+  return { state, url: row.deployUrl, createdAt };
 }

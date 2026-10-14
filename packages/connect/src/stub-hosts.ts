@@ -342,7 +342,22 @@ function createStubVercelPublishing() {
       deployments.push({ uid, projectId: project.id });
       return json({ id: uid, readyState: "QUEUED", url: `${project.name}-${uid}.vercel.app` });
     }
+    const got = url.pathname.match(/^\/v9\/projects\/([^/]+)$/);
+    const own = got ? projects.get(decodeURIComponent(got[1] ?? "")) : undefined;
+    if (own && method === "GET") {
+      const alias = [`${own.name}.vercel.app`, `${own.name}-stub-agency.vercel.app`];
+      return json({
+        id: own.id,
+        name: own.name,
+        framework: "nextjs",
+        targets: { production: { alias } },
+      });
+    }
     if (url.pathname === "/v6/deployments" && method === "GET") {
+      const target = url.searchParams.get("target");
+      if (target && target !== "production") {
+        return json({ deployments: [], pagination: { count: 0, next: null } });
+      }
       const projectId = url.searchParams.get("projectId") ?? "";
       const project =
         projects.get(projectId) ??
@@ -354,7 +369,7 @@ function createStubVercelPublishing() {
             uid: `dpl_${project.id}`,
             name: project.name,
             projectId: project.id,
-            url: `${project.name}.vercel.app`,
+            url: `${project.name}-a1b2c3d4e-stub-agency.vercel.app`,
             state: "READY",
             readyState: "READY",
             target: "production",
