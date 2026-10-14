@@ -16,7 +16,8 @@
       "!.beads",
       "!packages/db/src/control/auth-schema.ts",
       "!packages/db/migrations",
-      "!packages/db/src/generated"
+      "!packages/db/src/generated",
+      "!packages/agent-api/src/mastra"
     ]
   },
   "formatter": {
