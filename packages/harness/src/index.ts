@@ -3,6 +3,7 @@ export { createLocusAgent, INSTRUCTIONS, type LocusAgentConfig } from "./agent.t
 export {
   ASK_TOOLS,
   CONTROLLER_ID,
+  controllerStorage,
   createLocusController,
   LOCUS_MODES,
   type LocusControllerConfig,

@@ -6,11 +6,13 @@
  */
 
 import { createClient } from "@libsql/client";
-import { createAgentApi } from "@locus/agent-api";
+import { createAgentApi, KIT_STREAM_BODY_LIMIT } from "@locus/agent-api";
 import {
   type AuthorizedClient,
   authorizeClient,
   ClientAccessDenied,
+  chatKitKey,
+  chatKitSessionId,
   createAuth,
   mintClientDbToken,
   resolveActiveClient,
@@ -100,9 +102,13 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
       throw new Error("the agent server sends no email");
     },
   });
+  const kitSession = sessionFromKitToken(db, chatKitKey(config.authSecret));
   return {
     db,
     session: async (headers) => {
+      // The chat kit's proxy (on the web app) vouches with a token naming the session.
+      const vouched = await kitSession(headers);
+      if (vouched !== undefined) return vouched;
       const current = await auth.api.getSession({ headers });
       if (!current) return null;
       const { id, userId, activeOrganizationId, activeLocationId } = current.session;
@@ -123,8 +129,37 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
   };
 }
 
+/**
+ * The session a chat kit token names (see `chatKitSessionId`), as long as it is still signed in;
+ * null for a bad or stale token; undefined when the request carries no token at all.
+ */
+export function sessionFromKitToken(db: ControlDb, key: string) {
+  return async (headers: Headers): Promise<SessionContext | null | undefined> => {
+    const bearer = headers.get("authorization")?.match(/^Bearer (\S+)$/)?.[1];
+    if (!bearer) return undefined;
+    const id = chatKitSessionId(bearer, key);
+    if (!id) return null;
+    const [row] = await db
+      .select({
+        id: authSession.id,
+        userId: authSession.userId,
+        expiresAt: authSession.expiresAt,
+        activeOrganizationId: authSession.activeOrganizationId,
+        activeLocationId: authSession.activeLocationId,
+      })
+      .from(authSession)
+      .where(eq(authSession.id, id));
+    if (!row || row.expiresAt.getTime() <= Date.now()) return null;
+    const { expiresAt: _expiresAt, ...ctx } = row;
+    return ctx;
+  };
+}
+
 /** The largest request body the agent reads; a chat message is far smaller. */
 const MAX_BODY_BYTES = 1_000_000;
+
+/** The chat kit's stream route, whose messages may carry attachments. */
+const KIT_STREAM_PATH = `${PREFIX}/kit/agent-controller/stream`;
 
 /** The run request-context key naming the session a run acts for. Set here, never by the browser. */
 export const RUN_SESSION_KEY = "locus.session";
@@ -238,38 +273,49 @@ export function createHost({
     },
   });
 
+  /**
+   * An event stream, cut off once the member it was opened for loses access. `cut` also stops
+   * the run the stream belongs to, so nothing keeps working (or waits on an approval nobody
+   * can give) for a member who may no longer act.
+   */
+  const guardStream = (request: Request, response: Response, cut?: () => void) => {
+    const stream = opened.get(request);
+    const events = response.headers.get("content-type")?.startsWith("text/event-stream");
+    if (!events || !stream || !response.body) return response;
+    // A member who loses access must stop receiving the client's live chat too. The chat
+    // kit's runs stream on the response to a POST, so this covers every method.
+    return new Response(
+      guarded(response.body, () => authorizedFor(stream.ctx, stream.clientId), streamCheckMs, cut),
+      response,
+    );
+  };
+
   return {
     async fetch(request: Request): Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/health") return new Response("ok");
       if (request.method === "GET" || request.method === "HEAD") {
-        const response = await api.fetch(request);
-        const stream = opened.get(request);
-        const events = response.headers.get("content-type")?.startsWith("text/event-stream");
-        if (!events || !stream || !response.body) return response;
-        // A member who loses access must stop receiving the client's live chat too.
-        return new Response(
-          guarded(response.body, () => authorizedFor(stream.ctx, stream.clientId), streamCheckMs),
-          response,
-        );
+        return guardStream(request, await api.fetch(request));
       }
       // The session cookie authenticates these, so only the web app's pages may send them, and
       // a body only as JSON: a cross-site form or text/plain post can't.
       const from = request.headers.get("origin");
       if (from && from !== origin) return Response.json({ error: "wrong origin" }, { status: 403 });
-      const body = request.body ? await readCapped(request.body, MAX_BODY_BYTES) : Buffer.alloc(0);
+      const max = pathname === KIT_STREAM_PATH ? KIT_STREAM_BODY_LIMIT : MAX_BODY_BYTES;
+      const body = request.body ? await readCapped(request.body, max) : Buffer.alloc(0);
       if (!body) return Response.json({ error: "too large" }, { status: 413 });
       if (body.length > 0 && !request.headers.get("content-type")?.startsWith("application/json")) {
         return Response.json({ error: "send JSON" }, { status: 415 });
       }
-      return api.fetch(
-        new Request(request.url, {
-          method: request.method,
-          headers: request.headers,
-          signal: request.signal,
-          ...(body.length > 0 ? { body } : {}),
-        }),
-      );
+      // Aborting the request is how a run streamed on its response is stopped.
+      const cut = new AbortController();
+      const forwarded = new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        signal: AbortSignal.any([request.signal, cut.signal]),
+        ...(body.length > 0 ? { body } : {}),
+      });
+      return guardStream(forwarded, await api.fetch(forwarded), () => cut.abort());
     },
   };
 }
@@ -277,9 +323,15 @@ export function createHost({
 /**
  * The stream, while `check` passes. It is checked before passing on what arrives once the last
  * check is `everyMs` old, and on a timer while nothing arrives, so a member who loses access
- * stops receiving within about `everyMs`. The stream ends when a check fails.
+ * stops receiving within about `everyMs`. The stream ends, and `denied` is called, when a check
+ * fails.
  */
-function guarded(body: ReadableStream<Uint8Array>, check: () => Promise<unknown>, everyMs: number) {
+function guarded(
+  body: ReadableStream<Uint8Array>,
+  check: () => Promise<unknown>,
+  everyMs: number,
+  denied: () => void = () => {},
+) {
   const reader = body.getReader();
   let checkedAt = Date.now();
   let checking: Promise<boolean> | undefined;
@@ -297,6 +349,13 @@ function guarded(body: ReadableStream<Uint8Array>, check: () => Promise<unknown>
       else controller.error(error);
     } catch {}
     reader.cancel().catch(() => {});
+  };
+
+  /** Ends the stream because a check failed. */
+  const refuse = () => {
+    if (finished) return;
+    stop();
+    denied();
   };
 
   /** One check at a time, shared by the timer and the reader. */
@@ -321,7 +380,7 @@ function guarded(body: ReadableStream<Uint8Array>, check: () => Promise<unknown>
       timer = setInterval(() => {
         if (finished || Date.now() - checkedAt < everyMs) return;
         void stillAllowed().then((ok) => {
-          if (!ok) stop();
+          if (!ok) refuse();
         });
       }, everyMs);
       timer.unref?.();
@@ -336,7 +395,7 @@ function guarded(body: ReadableStream<Uint8Array>, check: () => Promise<unknown>
       }
       if (finished) return;
       if (next.done) return stop();
-      if (Date.now() - checkedAt >= everyMs && !(await stillAllowed())) return stop();
+      if (Date.now() - checkedAt >= everyMs && !(await stillAllowed())) return refuse();
       if (finished) return;
       controller.enqueue(next.value);
     },
