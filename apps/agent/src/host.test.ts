@@ -4,7 +4,14 @@ import { join } from "node:path";
 import type { SessionContext } from "@locus/auth";
 import { connectAgency, createStubGhl, STUB_CODE } from "@locus/connect";
 import { type ControlDb, LocalProvisioner, migrateControlDb, openControlDb } from "@locus/db";
-import { location, member, organization, user } from "@locus/db/control";
+import {
+  session as authSession,
+  location,
+  member,
+  memberLocation,
+  organization,
+  user,
+} from "@locus/db/control";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
@@ -28,6 +35,18 @@ afterEach(async () => {
   db.$client.close();
   await rm(dir, { recursive: true, force: true });
 });
+
+/** A signed-in Better Auth session row, as the web app's sign-in leaves. */
+async function signIn(id: string, userId: string) {
+  await db.insert(authSession).values({
+    id,
+    token: `token-${id}`,
+    userId,
+    expiresAt: new Date(Date.now() + 3_600_000),
+    createdAt: now,
+    updatedAt: now,
+  });
+}
 
 /** An agency connected to the stub GHL, an owner and a restricted member, and their sessions. */
 async function agency() {
@@ -54,6 +73,8 @@ async function agency() {
     },
     http: { fetch: createStubGhl(), baseUrl: "https://stub.ghl.local" },
   };
+  await signIn("s", "owner");
+  await signIn("s2", "staff");
   const ownerCtx: SessionContext = { id: "s", userId: "owner", activeOrganizationId: "org" };
   await connectAgency(connect, ownerCtx, STUB_CODE);
   const [first] = await db.select().from(location).limit(1);
@@ -81,6 +102,7 @@ async function secondAgencyFor(
     role: "owner",
     createdAt: now,
   });
+  await signIn("s3", "owner2");
   const { dbName, hostname } = await connect.provisioner.create("other");
   await db.insert(location).values({
     id: "client-b",
@@ -253,5 +275,98 @@ describe("the agent server", () => {
     expect(
       (await post({ "content-type": "application/json", origin: "http://locus.test" })).status,
     ).toBe(200);
+  });
+
+  test("Stop works: an abort with an empty body and no content type goes through", async () => {
+    const { chat, host, client } = await hostFor({ as: "owner" });
+    const resource = `client:${client.ghlLocationId}`;
+    await chat.getAgentController("locus").session(resource).create();
+    // As the Node server hands it over: every POST has a body stream, even an empty one.
+    const empty = new ReadableStream({ start: (c) => c.close() });
+    const res = await host.fetch(
+      new Request(
+        `http://agent.test${PREFIX}/agent-controller/locus/sessions/${encodeURIComponent(resource)}/abort`,
+        {
+          method: "POST",
+          headers: { origin: "http://locus.test" },
+          body: empty,
+          duplex: "half",
+        } as RequestInit,
+      ),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  test("a member removed mid-run gets no more GHL calls, even after someone else uses the client", async () => {
+    const signedIn = { as: "staff" as string | null };
+    const update = (id: string, contactId: string) => ({
+      toolCalls: [
+        {
+          id,
+          name: "perform_action",
+          arguments: JSON.stringify({
+            operation: "contacts.update-contact",
+            params: { path: { contactId }, body: { firstName: "A" } },
+          }),
+        },
+      ],
+    });
+    mock().llm.on(
+      { userMessage: /update two contacts/i, hasToolResult: false },
+      update("r1", "c1"),
+    );
+    mock().llm.on({ toolCallId: "r1" }, update("r2", "c2"));
+    mock().llm.on({ toolCallId: "r2" }, { content: "Done." });
+
+    let revoked: Promise<unknown> | undefined;
+    const ghl = createFakeGhl({
+      "*": (req) => {
+        // While the first change is with GHL, an admin takes the client away from staff, and
+        // then the owner uses the client.
+        if (req.url.pathname === "/contacts/c1") {
+          revoked = (async () => {
+            await db.delete(memberLocation).where(eq(memberLocation.memberId, "m-staff"));
+            signedIn.as = "owner";
+            await chat.getAgentController("locus").session(resource).create();
+          })();
+        }
+        return { body: {} };
+      },
+    });
+    const { connect, client, sessions } = await agency();
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: client.id });
+    const resource = `client:${client.ghlLocationId}`;
+    const host = createHost({
+      db,
+      session: async () => (signedIn.as ? (sessions[signedIn.as] ?? null) : null),
+      connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      fetch: ghl.fetch,
+      origin: "http://locus.test",
+    });
+    const chat = new MastraClient({
+      baseUrl: "http://agent.test",
+      apiPrefix: PREFIX,
+      retries: 0,
+      fetch: (input, init) => host.fetch(new Request(input, init)),
+    });
+    const session = chat.getAgentController("locus").session(resource);
+    await session.create();
+    const done = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
+      void session.subscribe({
+        onEvent: (event) => {
+          if ((event as { type: string }).type === "agent_end") {
+            clearTimeout(timer);
+            resolve();
+          }
+        },
+      });
+    });
+    await session.sendMessage("Update two contacts");
+    await done;
+    await revoked;
+
+    expect(ghl.requests.map((r) => r.url.pathname)).toEqual(["/contacts/c1"]);
   });
 });

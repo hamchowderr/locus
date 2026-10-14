@@ -13,13 +13,19 @@ import { QueryError, type QueryLimits, runQuery } from "./query-data.ts";
 import type { WriteGuard } from "./test-mode.ts";
 import { isTainted } from "./untrusted.ts";
 
+/** What a tool can read of its run's request context. */
+export interface RunContext {
+  get(key: string): unknown;
+}
+
 export interface ToolDeps {
   /**
    * Resolved server-side from the signed-in user; the model can never change it. A function is
    * called for each tool call, so a long-lived host (the agent controller) always uses a
-   * current token.
+   * current token. It gets the run's request context, which the host sets (never the
+   * browser), so the host can check the member whose run is asking.
    */
-  session: GhlSession | (() => Promise<GhlSession>);
+  session: GhlSession | ((requestContext?: RunContext) => Promise<GhlSession>);
   fetch?: typeof fetch;
   limits?: Partial<QueryLimits>;
   /** Test-write mode for a real client's account; see `test-mode.ts`. */
@@ -47,7 +53,8 @@ const requestInput = z
  */
 export function createLocusTools(deps: ToolDeps) {
   const rateLimiter = deps.rateLimiter ?? sharedRateLimiter;
-  const session = async () => (typeof deps.session === "function" ? deps.session() : deps.session);
+  const session = async (requestContext: RunContext | undefined) =>
+    typeof deps.session === "function" ? deps.session(requestContext) : deps.session;
   const loadSkillTool = createTool({
     id: "load_skill",
     description:
@@ -89,10 +96,10 @@ export function createLocusTools(deps: ToolDeps) {
       sql: z.string().describe("One SELECT over the source tables"),
     }),
     requireApproval: () => false,
-    execute: async (spec) =>
+    execute: async (spec, context) =>
       recoverable(async () =>
         runQuery(spec, {
-          session: await session(),
+          session: await session(context?.requestContext),
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
           ...(deps.limits ? { limits: deps.limits } : {}),
           rateLimiter,
@@ -112,10 +119,10 @@ export function createLocusTools(deps: ToolDeps) {
     // A run that read untrusted content (see `untrusted.ts`) approves every write.
     requireApproval: ({ operation }, ctx) =>
       isTainted(ctx?.requestContext) || needsApproval(operation),
-    execute: async (input) =>
+    execute: async (input, context) =>
       recoverable(async () =>
         performAction(input, {
-          session: await session(),
+          session: await session(context?.requestContext),
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
           ...(deps.writeGuard ? { writeGuard: deps.writeGuard } : {}),
           rateLimiter,

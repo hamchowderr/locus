@@ -8,7 +8,8 @@ import type { Client } from "@libsql/client";
  * The client it replaces stays in use until the new one has opened, and is closed `graceMs`
  * after that, so a query already running on it can finish (a transaction held longer than
  * that is cut off). If a renewal fails, the current client keeps serving and the renewal is
- * tried again after `retryMs`.
+ * tried again after `retryMs`, unless the failure says access is gone (`revoked`): then the
+ * current client is closed too.
  */
 export function refreshingClient(
   open: () => Promise<Client>,
@@ -16,8 +17,16 @@ export function refreshingClient(
     renewMs,
     graceMs = 60_000,
     retryMs = 30_000,
+    revoked = () => false,
     now = Date.now,
-  }: { renewMs: number; graceMs?: number; retryMs?: number; now?: () => number },
+  }: {
+    renewMs: number;
+    graceMs?: number;
+    retryMs?: number;
+    /** A renewal error meaning access is gone: the current client is closed, not kept. */
+    revoked?: (error: unknown) => boolean;
+    now?: () => number;
+  },
 ): Client {
   let current: Client | undefined;
   let renewAt = 0;
@@ -38,6 +47,10 @@ export function refreshingClient(
       (error: unknown) => {
         opening = undefined;
         renewAt = now() + retryMs;
+        if (revoked(error)) {
+          current?.close();
+          current = undefined;
+        }
         throw error;
       },
     );
@@ -49,7 +62,9 @@ export function refreshingClient(
     if (!current) return renew();
     if (now() >= renewAt) {
       // Keep serving from the current client; a failed renewal is retried later.
-      renew().catch(() => {});
+      renew().catch((error: unknown) => {
+        if (!revoked(error)) console.error(`Database token renewal failed: ${String(error)}`);
+      });
     }
     return current;
   };
