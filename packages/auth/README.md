@@ -32,7 +32,8 @@ before any GHL or Turso token for it exists.
 
 `emailFromEnv()`: `EMAIL_MODE=console` prints the message (the default outside production),
 `EMAIL_MODE=resend` sends through Resend with `RESEND_API_KEY` and `EMAIL_FROM`. Unset in
-production is an error, never a silent fallback to the console.
+production is an error, never a silent fallback to the console, and `EMAIL_MODE=console` is refused
+in production.
 
 ## Billing and operators
 
