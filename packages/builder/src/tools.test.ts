@@ -27,29 +27,35 @@ const fakeImages: ImageGenerator = {
 describe("file tools", () => {
   it("write, read, edit, list and delete", async () => {
     const { call } = await setup();
-    expect(await call("write_file", { path: "./app/page.tsx", content: "a = 1" })).toEqual({
+    expect(
+      await call("files", { action: "write", path: "./app/page.tsx", content: "a = 1" }),
+    ).toEqual({
       written: "app/page.tsx",
     });
-    expect(await call("edit_file", { path: "app/page.tsx", find: "1", replace: "2" })).toEqual({
+    expect(
+      await call("files", { action: "edit", path: "app/page.tsx", find: "1", replace: "2" }),
+    ).toEqual({
       replacements: 1,
     });
-    expect(await call("read_file", { path: "app/page.tsx" })).toEqual({
+    expect(await call("files", { action: "read", path: "app/page.tsx" })).toEqual({
       path: "app/page.tsx",
       content: "a = 2",
     });
-    expect(await call("list_files")).toEqual({ files: [{ path: "app/page.tsx", size: 5 }] });
-    await call("delete_files", { paths: ["app/page.tsx"] });
-    expect(await call("read_file", { path: "app/page.tsx" })).toEqual({
+    expect(await call("files", { action: "list" })).toEqual({
+      files: [{ path: "app/page.tsx", size: 5 }],
+    });
+    await call("files", { action: "delete", paths: ["app/page.tsx"] });
+    expect(await call("files", { action: "read", path: "app/page.tsx" })).toEqual({
       error: "app/page.tsx doesn't exist.",
     });
   });
 
   it("returns refused paths as errors the model can fix", async () => {
     const { call } = await setup();
-    expect(await call("write_file", { path: ".env", content: "KEY=1" })).toMatchObject({
+    expect(await call("files", { action: "write", path: ".env", content: "KEY=1" })).toMatchObject({
       error: expect.stringContaining("Sites never contain .env"),
     });
-    expect(await call("write_file", { path: "../x", content: "" })).toMatchObject({
+    expect(await call("files", { action: "write", path: "../x", content: "" })).toMatchObject({
       error: expect.stringContaining("leaves the site root"),
     });
   });
@@ -98,7 +104,7 @@ describe("sandbox tools", () => {
   it("sync deletes files the draft no longer has, and skips what already matches", async () => {
     const { call } = await setup({ runtime: { files: { "old.txt": "stale" } } });
     const runtime = await t.runtimes.open("site-1");
-    await call("write_file", { path: "new.txt", content: "fresh" });
+    await call("files", { action: "write", path: "new.txt", content: "fresh" });
     await call("run_command", { command: "ls" });
     expect(runtime.files.has("old.txt")).toBe(false);
     expect(runtime.readText("new.txt")).toBe("fresh");
@@ -124,7 +130,7 @@ describe("sandbox tools", () => {
 
   it("a file changed inside the sandbox is put back to the draft's", async () => {
     const { call } = await setup();
-    await call("write_file", { path: "a.txt", content: "draft" });
+    await call("files", { action: "write", path: "a.txt", content: "draft" });
     await call("run_command", { command: "ls" });
     const runtime = await t.runtimes.open("site-1");
     runtime.files.set("a.txt", "changed by a command");
@@ -145,7 +151,7 @@ describe("sandbox tools", () => {
         },
       },
     });
-    await call("write_file", { path: "a.txt", content: "a" });
+    await call("files", { action: "write", path: "a.txt", content: "a" });
     await call("run_command", { command: "ls" });
     const runtime = await t.runtimes.open("site-1");
     expect([...runtime.files.keys()].sort()).toEqual([
@@ -189,7 +195,7 @@ describe("sandbox tools", () => {
         },
       },
     });
-    await call("write_file", { path: "package.json", content: '{"dependencies":{}}' });
+    await call("files", { action: "write", path: "package.json", content: '{"dependencies":{}}' });
     const result = await call("run_command", { command: "sh", args: ["-c", "npm i left-pad"] });
     expect(result).toMatchObject({ exitCode: 0, note: expect.stringContaining("add_dependency") });
     const runtime = await t.runtimes.open("site-1");
@@ -277,15 +283,16 @@ describe("add_dependency", () => {
     const { call } = await setup({
       runtime: npm({ zod: "4.1.0", "@radix-ui/react-dialog": "1.1.2" }),
     });
-    await call("write_file", {
+    await call("files", {
+      action: "write",
       path: "package.json",
       content: '{"name":"site","dependencies":{"next":"16.0.0"}}',
     });
-    expect(await call("add_dependency", { name: "zod" })).toEqual({
+    expect(await call("add_dependency", { package: "zod" })).toEqual({
       added: "zod@4.1.0",
       installed: true,
     });
-    expect(await call("add_dependency", { name: "@radix-ui/react-dialog", dev: true })).toEqual({
+    expect(await call("add_dependency", { package: "@radix-ui/react-dialog", dev: true })).toEqual({
       added: "@radix-ui/react-dialog@1.1.2",
       installed: true,
     });
@@ -316,20 +323,20 @@ describe("add_dependency", () => {
   ])("refuses the name %j", async (name) => {
     // npm would "find" anything; the name must be refused before it is asked.
     const { call } = await setup({ runtime: { handler: () => ({ stdout: "1.0.0" }) } });
-    await call("write_file", { path: "package.json", content: "{}" });
-    expect(await call("add_dependency", { name })).toHaveProperty("error");
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { package: name })).toHaveProperty("error");
     expect(await t.session.workspace.readFile("package.json")).toBe("{}");
     expect(t.runtimes.runtimes.size).toBe(0);
   });
 
   it("says when npm has no such package, or package.json is broken", async () => {
     const { call } = await setup({ runtime: npm({ zod: "4.1.0" }) });
-    await call("write_file", { path: "package.json", content: "{}" });
-    expect(await call("add_dependency", { name: "no-such-pkg" })).toEqual({
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { package: "no-such-pkg" })).toEqual({
       error: "npm has no package called no-such-pkg.",
     });
-    await call("write_file", { path: "package.json", content: "{ nope" });
-    expect(await call("add_dependency", { name: "zod" })).toMatchObject({
+    await call("files", { action: "write", path: "package.json", content: "{ nope" });
+    expect(await call("add_dependency", { package: "zod" })).toMatchObject({
       error: expect.stringContaining("package.json isn't valid JSON"),
     });
   });
@@ -381,15 +388,17 @@ describe("versions and brief", () => {
       published.push(`${version.number}:${files.length}`);
       return { commitSha: "abc123", url: "https://github.com/agency/site/commit/abc123" };
     };
-    await call("write_file", { path: "a.txt", content: "one" });
-    expect(await call("save_version", { message: "First page" })).toEqual({
+    await call("files", { action: "write", path: "a.txt", content: "one" });
+    expect(await call("versions", { action: "save", message: "First page" })).toEqual({
       saved: true,
       version: 1,
       commitUrl: "https://github.com/agency/site/commit/abc123",
     });
     expect(published).toEqual(["1:1"]);
     expect((await t.session.workspace.latestVersion())?.commitSha).toBe("abc123");
-    expect(await call("save_version", { message: "Again" })).toMatchObject({ saved: false });
+    expect(await call("versions", { action: "save", message: "Again" })).toMatchObject({
+      saved: false,
+    });
   });
 
   it("keeps the version when publishing fails, and says why in the person's words", async () => {
@@ -397,8 +406,8 @@ describe("versions and brief", () => {
     t.session.onVersionSaved = async () => {
       throw new PublishError("Connect GitHub on the Connections page first.");
     };
-    await call("write_file", { path: "a.txt", content: "one" });
-    expect(await call("save_version", { message: "First page" })).toEqual({
+    await call("files", { action: "write", path: "a.txt", content: "one" });
+    expect(await call("versions", { action: "save", message: "First page" })).toEqual({
       saved: true,
       version: 1,
       publishError: "Connect GitHub on the Connections page first.",
@@ -410,8 +419,8 @@ describe("versions and brief", () => {
     t.session.onVersionSaved = async () => {
       throw new Error("HttpError: Bad credentials - https://docs.github.com/rest (token ghs_x)");
     };
-    await call("write_file", { path: "a.txt", content: "one" });
-    const result = await call("save_version", { message: "First page" });
+    await call("files", { action: "write", path: "a.txt", content: "one" });
+    const result = await call("versions", { action: "save", message: "First page" });
     expect(result).toMatchObject({ saved: true, version: 1 });
     expect(JSON.stringify(result)).not.toMatch(/Bad credentials|ghs_|github\.com/);
     expect(result.publishError).toContain("couldn't be published");
@@ -426,8 +435,8 @@ describe("versions and brief", () => {
     t.session.workspace.setCommitSha = async () => {
       throw new Error("SQLITE_BUSY");
     };
-    await call("write_file", { path: "a.txt", content: "one" });
-    const result = await call("save_version", { message: "First page" });
+    await call("files", { action: "write", path: "a.txt", content: "one" });
+    const result = await call("versions", { action: "save", message: "First page" });
     expect(result).toEqual({
       saved: true,
       version: 1,
@@ -438,13 +447,16 @@ describe("versions and brief", () => {
 
   it("restores by version number", async () => {
     const { call } = await setup();
-    await call("write_file", { path: "a.txt", content: "one" });
-    await call("save_version", { message: "First" });
-    await call("write_file", { path: "a.txt", content: "two" });
-    await call("save_version", { message: "Second" });
-    expect(await call("restore_version", { number: 1 })).toEqual({ restored: 1, nowVersion: 3 });
+    await call("files", { action: "write", path: "a.txt", content: "one" });
+    await call("versions", { action: "save", message: "First" });
+    await call("files", { action: "write", path: "a.txt", content: "two" });
+    await call("versions", { action: "save", message: "Second" });
+    expect(await call("versions", { action: "restore", number: 1 })).toEqual({
+      restored: 1,
+      nowVersion: 3,
+    });
     expect(await t.session.workspace.readFile("a.txt")).toBe("one");
-    expect(await call("restore_version", { number: 9 })).toEqual({
+    expect(await call("versions", { action: "restore", number: 9 })).toEqual({
       error: "There's no version 9.",
     });
   });
@@ -452,12 +464,14 @@ describe("versions and brief", () => {
   it("reads and updates the brief", async () => {
     const { call } = await setup();
     await startSite(t.session.workspace, { brief: { name: "Acme", kind: "website" } });
-    expect(await call("get_brief")).toMatchObject({ brief: expect.stringContaining("Name: Acme") });
-    await call("update_brief", { goal: "Book a call", palette: { primary: "#112233" } });
-    const after = await call("get_brief");
+    expect(await call("brief")).toMatchObject({ brief: expect.stringContaining("Name: Acme") });
+    await call("brief", { changes: { goal: "Book a call", palette: { primary: "#112233" } } });
+    const after = await call("brief");
     expect(after.brief).toContain("Visitor goal: Book a call");
     expect(after.brief).toContain("primary #112233");
-    expect(await call("update_brief", { palette: { primary: "red" } })).toHaveProperty("error");
+    expect(await call("brief", { changes: { palette: { primary: "red" } } })).toHaveProperty(
+      "error",
+    );
   });
 });
 
@@ -471,9 +485,196 @@ describe("releasing the session", () => {
     const call = (name: keyof typeof tools, input: unknown) =>
       // biome-ignore lint/suspicious/noExplicitAny: each tool has its own input type
       (tools[name].execute as any)(input, {});
-    await call("write_file", { path: "a.txt", content: "one" });
+    await call("files", { action: "write", path: "a.txt", content: "one" });
     expect(released).toBe(1);
-    expect(await call("read_file", { path: "missing.txt" })).toHaveProperty("error");
+    expect(await call("files", { action: "read", path: "missing.txt" })).toHaveProperty("error");
     expect(released).toBe(2);
+  });
+});
+
+describe("consolidated tools", () => {
+  it("say which field an action is missing", async () => {
+    const { call } = await setup();
+    expect(await call("files", { action: "write", path: "a.txt" })).toEqual({
+      error: "write needs the file's content.",
+    });
+    expect(await call("files", { action: "read" })).toEqual({ error: "read needs a path." });
+    expect(await call("versions", { action: "restore" })).toEqual({
+      error: "restore needs a version number.",
+    });
+    expect(await call("add_dependency", {})).toEqual({
+      error: "Pass either package or component.",
+    });
+  });
+
+  it("lists versions and reads preview logs without starting a preview", async () => {
+    const { call } = await setup();
+    await call("files", { action: "write", path: "a.txt", content: "one" });
+    await call("versions", { action: "save", message: "First" });
+    expect(await call("versions", { action: "list" })).toMatchObject({
+      versions: [{ number: 1, message: "First", source: "agent" }],
+    });
+    (await t.runtimes.open("site-1")).setPreviewLogs("✓ Ready");
+    expect(await call("preview", { logs: true })).toEqual({ logs: "✓ Ready" });
+    expect(t.usage).toEqual([]);
+  });
+});
+
+describe("add_dependency with a component", () => {
+  const item = (name: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      name,
+      type: "registry:ui",
+      files: [
+        {
+          path: `registry/new-york-v4/ui/${name}.tsx`,
+          type: "registry:ui",
+          content: `import { Button } from "@/registry/new-york-v4/ui/button"\nexport const ${name.replace("-", "")} = 1\n`,
+        },
+      ],
+      ...extra,
+    });
+
+  /** A sandbox where node fetches registry items from `items` (by URL) and npm knows `versions`. */
+  const registry = (items: Record<string, string>, versions: Record<string, string> = {}) => ({
+    handler: (command: string, args: string[]) => {
+      if (command === "node") {
+        const url = args.at(-1) ?? "";
+        const body = items[url];
+        return body === undefined ? { exitCode: 2, stderr: "HTTP 404" } : { stdout: body };
+      }
+      if (command === "npm" && args[0] === "view") {
+        const version = versions[args[args.indexOf("--") + 1] ?? ""];
+        return version ? { stdout: `${version}\n` } : { exitCode: 1, stderr: "E404" };
+      }
+      return undefined;
+    },
+  });
+  const official = (name: string) => `https://ui.shadcn.com/r/styles/new-york-v4/${name}.json`;
+
+  it("writes the component and the ones it needs, rewrites imports, and pins its packages", async () => {
+    const { call } = await setup({
+      runtime: registry(
+        {
+          [official("dialog")]: item("dialog", {
+            dependencies: ["radix-ui", "@floating-ui/react@^0.27"],
+            registryDependencies: ["button", "utils"],
+            cssVars: { light: { overlay: "#000" } },
+          }),
+          [official("button")]: item("button"),
+          [official("utils")]: JSON.stringify({
+            name: "utils",
+            type: "registry:lib",
+            files: [
+              { path: "registry/new-york-v4/lib/utils.ts", type: "registry:lib", content: "x" },
+            ],
+          }),
+        },
+        { "@floating-ui/react": "0.27.5" },
+      ),
+    });
+    await call("files", {
+      action: "write",
+      path: "package.json",
+      content: '{"dependencies":{"radix-ui":"1.8.1"}}',
+    });
+    await call("files", { action: "write", path: "lib/utils.ts", content: "mine" });
+    const result = await call("add_dependency", { component: "dialog" });
+    expect(result).toMatchObject({
+      added: ["dialog", "button", "utils"],
+      files: ["components/ui/dialog.tsx", "components/ui/button.tsx"],
+      kept: ["lib/utils.ts"],
+      packages: ["@floating-ui/react@0.27.5"],
+      installed: true,
+      theme: expect.stringContaining("overlay"),
+    });
+    const dialog = (await t.session.workspace.readFile("components/ui/dialog.tsx")) as string;
+    expect(dialog).toContain('from "@/components/ui/button"');
+    expect(await t.session.workspace.readFile("lib/utils.ts")).toBe("mine");
+    const pkg = JSON.parse((await t.session.workspace.readFile("package.json")) as string);
+    expect(pkg.dependencies).toEqual({ "@floating-ui/react": "0.27.5", "radix-ui": "1.8.1" });
+    // Fetched inside the sandbox, never by Locus's servers.
+    const runtime = t.runtimes.runtimes.get("site-1");
+    expect(runtime?.calls.filter((c) => c.method === "run" && c.command === "node")).toHaveLength(
+      3,
+    );
+    expect(t.usage).toEqual([{ kind: "sandbox", seconds: expect.any(Number) }]);
+  });
+
+  it("keeps a component the site already has unless told to overwrite it", async () => {
+    const { call } = await setup({ runtime: registry({ [official("badge")]: item("badge") }) });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    await call("files", { action: "write", path: "components/ui/badge.tsx", content: "edited" });
+    expect(await call("add_dependency", { component: "badge" })).toMatchObject({
+      files: [],
+      kept: ["components/ui/badge.tsx"],
+    });
+    expect(await call("add_dependency", { component: "badge", overwrite: true })).toMatchObject({
+      files: ["components/ui/badge.tsx"],
+    });
+    expect(await t.session.workspace.readFile("components/ui/badge.tsx")).toContain("badge = 1");
+  });
+
+  it("takes another registry's item by https URL", async () => {
+    const url = "https://registry.example.com/r/pricing-table.json";
+    const { call } = await setup({ runtime: registry({ [url]: item("pricing-table") }) });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { component: url })).toMatchObject({
+      added: ["pricing-table"],
+      files: ["components/ui/pricing-table.tsx"],
+    });
+  });
+
+  it.each([
+    ["http://registry.example.com/x.json", "plain https address"],
+    ["https://user:pw@registry.example.com/x.json", "plain https address"],
+    ["Dialog Box", "isn't a component name"],
+  ])("refuses %j", async (component, message) => {
+    const { call } = await setup({ runtime: registry({}) });
+    expect(await call("add_dependency", { component })).toEqual({
+      error: expect.stringContaining(message),
+    });
+  });
+
+  it("says when an item can't be read or isn't a registry item", async () => {
+    const { call } = await setup({
+      runtime: registry({
+        [official("weird")]: '{"hello":1}',
+        [official("broken")]: "<html>",
+        [official("bad-dep")]: item("bad-dep", { dependencies: ["Not A Package"] }),
+      }),
+    });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { component: "missing" })).toEqual({
+      error: expect.stringContaining("couldn't be read: HTTP 404"),
+    });
+    expect(await call("add_dependency", { component: "weird" })).toEqual({
+      error: expect.stringContaining("isn't a registry item"),
+    });
+    expect(await call("add_dependency", { component: "broken" })).toEqual({
+      error: expect.stringContaining("not JSON"),
+    });
+    expect(await call("add_dependency", { component: "bad-dep" })).toEqual({
+      error: expect.stringContaining("isn't an npm package name"),
+    });
+  });
+
+  it("refuses a file a registry tries to put outside the site or in .env", async () => {
+    const { call } = await setup({
+      runtime: registry({
+        [official("sneaky")]: JSON.stringify({
+          name: "sneaky",
+          files: [{ path: "x", type: "registry:file", target: "../../etc/passwd", content: "x" }],
+        }),
+        [official("env")]: JSON.stringify({
+          name: "env",
+          files: [{ path: "x", type: "registry:file", target: ".env", content: "KEY=1" }],
+        }),
+      }),
+    });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { component: "sneaky" })).toHaveProperty("error");
+    expect(await call("add_dependency", { component: "env" })).toHaveProperty("error");
+    expect((await t.session.workspace.listFiles()).map((f) => f.path)).toEqual(["package.json"]);
   });
 });

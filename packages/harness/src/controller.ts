@@ -82,6 +82,8 @@ export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   processors?: LocusAgentConfig["processors"];
   /** Tools added here whose results hold no GHL data (see `LocusAgentConfig`). */
   keepResults?: LocusAgentConfig["keepResults"];
+  /** Tools added here whose results are Locus's own text (see `LocusAgentConfig`). */
+  ownTextTools?: LocusAgentConfig["ownTextTools"];
 }
 
 export async function createLocusController({
@@ -94,6 +96,7 @@ export async function createLocusController({
   disableBuiltinTools = DISABLED_BUILTINS,
   processors,
   keepResults,
+  ownTextTools,
   ...deps
 }: LocusControllerConfig): Promise<AgentController> {
   const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
@@ -112,6 +115,7 @@ export async function createLocusController({
     storage,
     ...(processors ? { processors } : {}),
     ...(keepResults ? { keepResults } : {}),
+    ...(ownTextTools ? { ownTextTools } : {}),
   });
   const controller = new AgentController({
     id: CONTROLLER_ID,

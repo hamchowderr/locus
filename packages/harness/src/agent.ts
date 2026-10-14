@@ -42,6 +42,12 @@ export interface LocusAgentConfig extends ToolDeps {
    * example the site builder reading its own files). Every other result is forgotten.
    */
   keepResults?: readonly string[];
+  /**
+   * Tools whose results are Locus's own text and that only read it (for example the site
+   * builder's skill tools): the GHL screen passes them through and memory keeps them. Never a
+   * tool that reads GHL or outside data.
+   */
+  ownTextTools?: readonly string[];
 }
 
 /**
@@ -53,9 +59,10 @@ export function createLocusAgent({
   storage,
   processors = {},
   keepResults = [],
+  ownTextTools = [],
   ...deps
 }: LocusAgentConfig): Agent {
-  const untrusted = new UntrustedContentProcessor();
+  const untrusted = new UntrustedContentProcessor(ownTextTools);
   const tools = createLocusTools(deps);
   const agent = new Agent({
     id: "locus",
@@ -68,7 +75,9 @@ export function createLocusAgent({
     outputProcessors: [
       untrusted,
       ...(processors.output ?? []),
-      ...(storage ? [new ForgetGhlData(waitsForApproval(tools), keepResults)] : []),
+      ...(storage
+        ? [new ForgetGhlData(waitsForApproval(tools), [...keepResults, ...ownTextTools])]
+        : []),
     ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
   });

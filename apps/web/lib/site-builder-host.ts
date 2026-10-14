@@ -44,7 +44,7 @@ export function siteBuilderDeps(): SiteBuilderDeps {
  * const client = await resolveActiveClient(locus().db, sessionContext(current));
  * const builder = siteBuilderForClient({ client });
  * createLocusController({ ..., modes: builder.modes, tools: builder.tools,
- *   processors: builder.processors });
+ *   processors: builder.processors, ownTextTools: builder.ownTextTools });
  * createAgentApi({ requestContext: async (request, member) =>
  *   ({ [SITE_ID_KEY]: await resolveActiveSiteId(request, member) }) });
  * ```
