@@ -28,7 +28,7 @@
   Lists files uploaded to a knowledge base, with optional pagination and name search.
 - `knowledge-base.get-knowledge-base-by-id` — **Get knowledge base by ID** — `GET /knowledge-bases/{knowledgeBaseId}` (read, location)
   Retrieves one knowledge base by id, including name, metadata, and timestamps.
-- `knowledge-base.get-sitemap-preview` — **Preview Sitemap URLs** — `POST /knowledge-bases/crawler/sitemap-preview` (write, location)
+- `knowledge-base.get-sitemap-preview` — **Preview Sitemap URLs** — `POST /knowledge-bases/crawler/sitemap-preview` (read, location)
   Returns a paginated, searchable list of sitemap URLs without starting a crawl.
 - `knowledge-base.list` — **Get all FAQs by knowledge base with pagination support** — `GET /knowledge-bases/faqs` (read, location)
   Retrieves Q&A entries for a knowledge base, with cursor or offset pagination and optional question search.
