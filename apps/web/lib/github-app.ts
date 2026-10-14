@@ -56,9 +56,10 @@ export class GithubAppKeyError extends Error {
 /**
  * Checks and stores the GitHub App's private key (`github-app-key` script).
  *
- * With `LOCUS_CONTROL_DB_URL` set it is always sealed in that control database with
- * `LOCUS_SECRETS_KEY` (`LOCUS_SECRETS=local` is refused then). Without it, outside production
- * only, it goes to the local development file, unencrypted, and the result says so.
+ * It goes where the app will look for it (`secretsFromEnv`): sealed with `LOCUS_SECRETS_KEY` in
+ * the control database (`LOCUS_CONTROL_DB_URL`) in production or with `LOCUS_SECRETS=encrypted`,
+ * otherwise to the local development file, unencrypted, and the result says so. Production
+ * never takes the local file.
  */
 export async function storeGithubAppKey(
   pem: string,
@@ -77,19 +78,25 @@ export async function storeGithubAppKey(
     throw new GithubAppKeyError(`GitHub App keys are RSA; that one is ${type ?? "unknown"}.`);
   }
   const value = `${pem.trim()}\n`;
-  const url = env.LOCUS_CONTROL_DB_URL;
-  if (!url) {
-    if (env.NODE_ENV === "production") {
-      throw new GithubAppKeyError("Set LOCUS_CONTROL_DB_URL (and LOCUS_CONTROL_DB_TOKEN).");
+  // The same choice the app makes when it reads the key (`secretsFromEnv`), so they agree.
+  const production = env.NODE_ENV === "production";
+  const mode = env.LOCUS_SECRETS ?? (production ? "encrypted" : "local");
+  if (mode === "local") {
+    if (production) {
+      throw new GithubAppKeyError(
+        "In production the key is only stored sealed; unset LOCUS_SECRETS.",
+      );
     }
     const file = options.localFile ?? ".data/secrets.json";
     await new LocalSecretStore(file, env).set(GITHUB_APP_KEY_SECRET, value);
     return { store: "local", file };
   }
-  if (env.LOCUS_SECRETS && env.LOCUS_SECRETS !== "encrypted") {
-    throw new GithubAppKeyError(
-      `LOCUS_SECRETS=${env.LOCUS_SECRETS} with a control database: the key is only stored sealed there.`,
-    );
+  if (mode !== "encrypted") {
+    throw new GithubAppKeyError(`LOCUS_SECRETS must be "local" or "encrypted" (got ${mode}).`);
+  }
+  const url = env.LOCUS_CONTROL_DB_URL;
+  if (!url) {
+    throw new GithubAppKeyError("Set LOCUS_CONTROL_DB_URL (and LOCUS_CONTROL_DB_TOKEN).");
   }
   const cipher = (() => {
     try {

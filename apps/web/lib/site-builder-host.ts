@@ -50,8 +50,10 @@ export function siteBuilderDeps(): SiteBuilderDeps {
  * ```
  *
  * On every tool call `resolve` runs the staff check again and checks the site against the
- * client. The host's hook sets `SITE_ID_KEY` (and, when one controller serves several members,
- * `CLIENT_KEY` with that request's `AuthorizedClient`), overwriting anything the browser sent.
+ * client. The host's hook sets `SITE_ID_KEY`, overwriting anything the browser sent.
+ * `CLIENT_KEY` works only where the request context keeps live objects in process; a context
+ * that is serialized (such as `@locus/agent-api`'s) loses the `AuthorizedClient`, so build one
+ * controller per client there and leave `CLIENT_KEY` unset.
  *
  * `client` must come from `resolveActiveClient` / `authorizeClient` for the signed-in session.
  */
