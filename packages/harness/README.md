@@ -25,6 +25,26 @@ Mistakes the model can fix (an unknown operation, a bad chain, a GHL 4xx) come b
 `query_data` uses an in-memory libSQL database per call, created and thrown away. Nested
 objects are stored as JSON text — query them with `json_extract`.
 
+## GoHighLevel data is untrusted
+
+Form submissions, messages and notes are written by the public, so a tool result can carry
+text aimed at the agent. `UntrustedContentProcessor` screens every GHL-derived result (Mastra
+`processToolResult`) before the model or memory sees it: strings and keys that read like
+instructions are replaced with a `withheld` marker. A run that hit one, or that read free text
+the public writes (submissions, messages, notes, reviews, comments) whether or not a pattern
+matched, is *tainted*, and from then on every `perform_action` waits for a person's approval.
+The taint is marked in the run's own tool results and re-derived before each model step
+(`processInputStep`), so it survives a run resumed in a later request. The patterns catch common
+phrasings, not all of them: for public free text the approval gate covers what they miss. No
+model is involved, so this costs nothing per call.
+
+## Rate limit
+
+Every request goes through the client's burst budget in `@locus/ghl` (`sharedRateLimiter`, 90
+per 10 s per location, under GHL's 100). Callers wait for a slot instead of failing. A 429
+pauses that client's whole budget for as long as GHL asks; the request that got it fails as a
+normal `{ error }` and is not retried in a loop. The budget is per process.
+
 ## Test-write mode
 
 The only way to write to a real client's account while testing. Pass a guard to the tools or
@@ -43,8 +63,7 @@ first, and is safe to repeat.
 
 ## Not here yet
 
-- A shared GHL rate-limit budget across agents (100 req / 10 s per location).
+- A rate-limit budget shared across serverless instances (today it is per process).
 - Cursor pagination (`after`, `cursor`, `startAfter`) — reported as incomplete for now.
 - Subagents per task or per client.
-- The prompt-injection processor on tool results.
 - Site Studio's workspace tools.
