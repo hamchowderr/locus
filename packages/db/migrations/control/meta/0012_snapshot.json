@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "3c7bceb9-750f-4c7a-8e32-791a72e77fe3",
+  "id": "4b01c0a0-1fa3-44cd-ad73-77be48569c04",
   "prevId": "57f98c17-bc19-4fc8-9d84-3425406957e5",
   "tables": {
     "account": {
@@ -1741,75 +1741,6 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
-    "usage_month": {
-      "name": "usage_month",
-      "columns": {
-        "location_id": {
-          "name": "location_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "month": {
-          "name": "month",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "credits": {
-          "name": "credits",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "usage_month_org_month_idx": {
-          "name": "usage_month_org_month_idx",
-          "columns": [
-            "organization_id",
-            "month"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "usage_month_organization_id_organization_id_fk": {
-          "name": "usage_month_organization_id_organization_id_fk",
-          "tableFrom": "usage_month",
-          "tableTo": "organization",
-          "columnsFrom": [
-            "organization_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "usage_month_location_id_month_pk": {
-          "columns": [
-            "location_id",
-            "month"
-          ],
-          "name": "usage_month_location_id_month_pk"
-        }
-      },
       "uniqueConstraints": {},
       "checkConstraints": {}
     }
