@@ -1,5 +1,5 @@
 import { chatKitKey } from "@locus/auth";
-import { configured, locus } from "@/lib/locus";
+import { configured, locus } from "./locus.ts";
 
 type Env = Record<string, string | undefined>;
 
