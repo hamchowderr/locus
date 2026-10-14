@@ -8,7 +8,7 @@ import {
 import type { ControlDb } from "@locus/db";
 import { auditLog, site } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import type { VercelGrant, VercelHttp } from "./vercel.ts";
 import { hostGrant, refused, vercel } from "./vercel-api.ts";
@@ -370,16 +370,26 @@ export async function unlinkHostProject(
     .from(site)
     .where(and(eq(site.id, siteId), eq(site.locationId, client.location.id)));
   if (!row) throw new ConnectError("That site isn't one of this client's.");
+  if (!row.hostProjectId) throw new ConnectError("This site has no linked project.");
   if (row.customDomain) {
     throw new ConnectError(`Remove ${row.customDomain} from this site first.`);
   }
-  if (row.repoFullName) {
-    await deps.db
-      .update(site)
-      .set({ host: null, hostProjectId: null, deployUrl: null, status: "pushed" })
-      .where(eq(site.id, row.id));
-  } else {
-    await deps.db.delete(site).where(eq(site.id, row.id));
+  // Still linked and still without a domain, so a domain added meanwhile is never orphaned.
+  const unchanged = and(
+    eq(site.id, row.id),
+    eq(site.hostProjectId, row.hostProjectId),
+    isNull(site.customDomain),
+  );
+  // TODO(site studio): a site made by Studio needs its own marker; "no repository" stands in.
+  const changed = row.repoFullName
+    ? await deps.db
+        .update(site)
+        .set({ host: null, hostProjectId: null, deployUrl: null, status: "pushed" })
+        .where(unchanged)
+        .returning({ id: site.id })
+    : await deps.db.delete(site).where(unchanged).returning({ id: site.id });
+  if (changed.length === 0) {
+    throw new ConnectError("This site changed while you were unlinking it. Try again.");
   }
   await audit(deps.db, ctx, client, "site.unlink", {
     siteId: row.id,

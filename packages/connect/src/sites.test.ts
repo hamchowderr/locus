@@ -262,6 +262,15 @@ describe("linking a Vercel project to a client", () => {
     ]);
   });
 
+  it("never removes a site that has no linked project", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await db.insert(site).values({ id: "draft", locationId: "client-1" });
+    await expect(unlinkHostProject(deps(), ctx("owner"), client, "draft")).rejects.toThrow(
+      /no linked project/,
+    );
+    expect(await listSites(db, client)).toHaveLength(1);
+  });
+
   it("unlinks only for owners and admins, and only this client's sites", async () => {
     const owner = await authorizeClient(db, ctx("owner"), "client-1");
     const row = await linkHostProject(deps(), ctx("owner"), owner, {
