@@ -369,4 +369,57 @@ describe("the agent server", () => {
 
     expect(ghl.requests.map((r) => r.url.pathname)).toEqual(["/contacts/c1"]);
   });
+
+  test("a member removed from a client stops receiving its live chat", async () => {
+    mock().llm.on({ userMessage: /status report/i }, { content: "Everything is on track." });
+    const signedIn = { as: "staff" as string | null };
+    const { connect, client, sessions } = await agency();
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: client.id });
+    const host = createHost({
+      db,
+      session: async () => (signedIn.as ? (sessions[signedIn.as] ?? null) : null),
+      connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      origin: "http://locus.test",
+      streamCheckMs: 50,
+    });
+    const chat = new MastraClient({
+      baseUrl: "http://agent.test",
+      apiPrefix: PREFIX,
+      retries: 0,
+      fetch: (input, init) => host.fetch(new Request(input, init)),
+    });
+    const resource = `client:${client.ghlLocationId}`;
+    const staff = chat.getAgentController("locus").session(resource);
+    await staff.create();
+    const thread = await staff.createThread("Shared");
+    const seen: string[] = [];
+    const ended: unknown[] = [];
+    await staff.subscribe({
+      onEvent: (e) => void seen.push((e as { type: string }).type),
+      // The stream is cut, and reconnecting is refused.
+      onError: (error) => void ended.push(error),
+    });
+
+    await db.delete(memberLocation).where(eq(memberLocation.memberId, "m-staff"));
+    await new Promise((r) => setTimeout(r, 200));
+    const before = seen.length;
+
+    signedIn.as = "owner";
+    const owner = chat.getAgentController("locus").session(resource);
+    await owner.create({ threadId: thread.id });
+    const ownerDone = new Promise<void>((resolve) => {
+      void owner.subscribe({
+        onEvent: (e) => {
+          if ((e as { type: string }).type === "agent_end") resolve();
+        },
+      });
+    });
+    await owner.sendMessage("Status report");
+    await ownerDone;
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(seen.slice(before)).toEqual([]);
+    expect(ended).not.toEqual([]);
+  });
 });
