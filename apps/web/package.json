@@ -9,14 +9,18 @@
     "start": "next start",
     "typecheck": "tsc -p tsconfig.json",
     "db:migrate": "node ../../packages/db/scripts/migrate.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "github-app-key": "node scripts/github-app-key.ts"
   },
   "dependencies": {
     "@locus/auth": "workspace:*",
+    "@locus/builder": "workspace:*",
     "@locus/connect": "workspace:*",
     "@locus/db": "workspace:*",
     "@locus/ghl": "workspace:*",
+    "@locus/sandbox": "workspace:*",
     "@locus/secrets": "workspace:*",
+    "@locus/studio": "workspace:*",
     "better-auth": "1.7.7",
     "drizzle-orm": "0.45.4",
     "next": "16.4.0",

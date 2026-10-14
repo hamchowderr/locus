@@ -8,11 +8,14 @@ const config: NextConfig = {
   // Workspace packages ship TypeScript source.
   transpilePackages: [
     "@locus/auth",
+    "@locus/builder",
     "@locus/connect",
     "@locus/db",
     "@locus/ghl",
+    "@locus/sandbox",
     "@locus/secrets",
     "@locus/skills",
+    "@locus/studio",
   ],
   // libSQL loads a native binding; keep it out of the server bundle.
   serverExternalPackages: ["@libsql/client", "libsql"],
