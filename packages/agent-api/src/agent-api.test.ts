@@ -278,3 +278,153 @@ describe("the guard", () => {
     expect(await theirs.approveTool("x2-del", true)).toEqual({ ok: true });
   });
 });
+
+/** Reads a chat kit SSE response, event by event, until `until` matches one or it ends. */
+function kitEvents(response: Response) {
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  const decoder = new TextDecoder();
+  const events: { type: string; [key: string]: unknown }[] = [];
+  let buffer = "";
+  return {
+    events,
+    async until(match: (e: (typeof events)[number]) => boolean) {
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const found = events.find(match);
+        if (found) return found;
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          if (frame.startsWith("data: ")) events.push(JSON.parse(frame.slice(6)));
+        }
+      }
+      throw new Error(`event never came; got ${events.map((e) => e.type).join(", ")}`);
+    },
+  };
+}
+
+describe("the chat kit's routes", () => {
+  const kit = (api: ReturnType<typeof apiFor>["api"], path: string, body?: unknown) =>
+    api.fetch(
+      new Request(`http://locus.test${PREFIX}/kit/agent-controller/${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        ...(body === undefined
+          ? {}
+          : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      }),
+    );
+
+  test("a deletion waits for the member, and goes through when they approve it", async () => {
+    mock().llm.on(
+      { userMessage: /delete contact c3/i, hasToolResult: false },
+      perform("k1-del", "contacts.delete-contact", { path: { contactId: "c3" } }),
+    );
+    mock().llm.on({ toolCallId: "k1-del" }, { content: "Deleted c3." });
+    const ghl = createFakeGhl({ "*": { body: {} } });
+    const { api } = apiFor(ghl);
+
+    const stream = kitEvents(await kit(api, "stream", { text: "Delete contact c3" }));
+    const asked = await stream.until((e) => e.type === "tool_approval_required");
+    expect(asked.toolCallId).toBe("k1-del");
+    expect(ghl.requests).toEqual([]);
+
+    const approved = await kit(api, "approve", { decision: "approve", toolCallId: "k1-del" });
+    expect(approved.status).toBe(200);
+    await stream.until((e) => e.type === "__done__");
+    expect(ghl.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
+      "DELETE /contacts/c3",
+    ]);
+
+    const thread = stream.events.find((e) => e.type === "__thread__")?.threadId as string;
+    const listed = (await (await kit(api, "threads")).json()) as { threads: { id: string }[] };
+    expect(listed.threads.map((t) => t.id)).toContain(thread);
+    const messages = await kit(api, `threads/${encodeURIComponent(thread)}/messages`);
+    expect(messages.status).toBe(200);
+  });
+
+  test("runs get the host's request context, not the browser's", async () => {
+    mock().llm.on(
+      { userMessage: /which site now/i, hasToolResult: false },
+      { toolCalls: [{ id: "k2-site", name: "current_site", arguments: "{}" }] },
+    );
+    mock().llm.on({ toolCallId: "k2-site" }, { content: "Done." });
+    const seen: unknown[] = [];
+    const currentSite = createTool({
+      id: "current_site",
+      description: "The site being built.",
+      inputSchema: z.object({}),
+      requireApproval: () => false,
+      execute: async (_input, context) => {
+        seen.push(context?.requestContext?.get("siteId"));
+        return {};
+      },
+    });
+    const { api } = apiFor(
+      createFakeGhl({}),
+      { tools: { current_site: currentSite } },
+      { siteId: "site-1" },
+    );
+    const stream = kitEvents(
+      await kit(api, "stream", { text: "Which site now?", requestContext: { siteId: "x" } }),
+    );
+    await stream.until((e) => e.type === "__done__");
+    expect(seen).toEqual(["site-1"]);
+  });
+
+  test("an answer resumes the agent's question once", async () => {
+    mock().llm.on(
+      { userMessage: /tidy up my tags/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "k3-ask",
+            name: "ask_user",
+            arguments: JSON.stringify({ question: "Which tags?" }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "k3-ask" }, { content: "Tidied the old ones." });
+    const { api } = apiFor(createFakeGhl({}));
+
+    const asking = kitEvents(await kit(api, "stream", { text: "Tidy up my tags" }));
+    // Locus doesn't yet exempt `ask_user` from approval (bead locus-8c0.16), so the question
+    // itself waits for a yes first.
+    await asking.until((e) => e.type === "tool_approval_required");
+    await kit(api, "approve", { decision: "approve", toolCallId: "k3-ask" });
+    await asking.until((e) => e.type === "__done__");
+    expect(asking.events.some((e) => e.type === "tool_suspended")).toBe(true);
+
+    const answer = { answer: "The old ones", toolCallId: "k3-ask" };
+    const [first, second] = await Promise.all([
+      kit(api, "answer", answer).then(kitEvents),
+      kit(api, "answer", answer).then(kitEvents),
+    ]);
+    await first.until((e) => e.type === "__done__");
+    await second.until((e) => e.type === "__done__");
+    const refused = (s: typeof first) =>
+      s.events.some((e) => e.type === "error" && /answer not accepted/.test(String(e.error)));
+    expect([first, second].filter(refused)).toHaveLength(1);
+    expect([first, second].filter((s) => !refused(s))[0]?.events.map((e) => e.type)).toContain(
+      "agent_end",
+    );
+  });
+
+  test("refuses the unsigned, always-allow, other routes and others' threads", async () => {
+    const { api, signIn } = apiFor(createFakeGhl({}));
+    expect((await kit(api, "approve", { decision: "always_allow_category" })).status).toBe(403);
+    for (const path of ["schedules", "threads/t1", "../../modes", "workspace/files"]) {
+      expect((await kit(api, path)).status).toBe(404);
+    }
+    // Encoded separators and dot segments survive URL parsing, so the guard itself must refuse them.
+    for (const path of ["threads%2Ft1", "%2E%2E%2Fmodes", "stream%2F..%2F..%2Fmodes"]) {
+      expect([400, 404]).toContain((await kit(api, path)).status);
+    }
+    expect((await kit(api, "threads/someone-elses/messages")).status).toBe(404);
+    signIn(null);
+    expect((await kit(api, "threads")).status).toBe(401);
+  });
+});
