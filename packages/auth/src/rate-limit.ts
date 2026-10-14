@@ -71,7 +71,7 @@ export async function consumeAttempt(
       },
     })
     .returning();
-  if (!row) throw new Error("Counting a sign-in attempt returned no row");
+  if (!row) throw new Error("Counting an attempt returned no row");
   // A fresh window is a good moment to drop keys nobody has used for a while.
   if (row.count === 1) {
     await db.delete(t).where(sql`${t.windowStart} < ${now - LONGEST_WINDOW_MS}`);
