@@ -1,4 +1,5 @@
 import type { GhlOperation, SessionParam, TokenKind } from "./operation.ts";
+import type { GhlRateLimiter } from "./rate-limit.ts";
 
 export const GHL_BASE_URL = "https://services.leadconnectorhq.com";
 
@@ -21,7 +22,12 @@ export interface GhlRequestInput {
 export interface GhlRequestOptions {
   fetch?: typeof fetch;
   baseUrl?: string;
+  /** The client's shared burst budget; see `rate-limit.ts`. Without one, nothing is throttled. */
+  rateLimiter?: GhlRateLimiter | undefined;
 }
+
+/** How long GHL asks us to wait after a 429 when it does not say. */
+const DEFAULT_RETRY_AFTER_MS = 10_000;
 
 export class GhlError extends Error {
   readonly operationId: string;
@@ -106,11 +112,14 @@ export async function ghlRequest<T = unknown>(
     encoded = JSON.stringify(body);
   }
 
+  const budget = rateLimitKey(session);
+  await options.rateLimiter?.acquire(budget);
   const res = await (options.fetch ?? fetch)(url, {
     method: operation.method,
     headers,
     ...(encoded === undefined ? {} : { body: encoded }),
   });
+  if (res.status === 429) options.rateLimiter?.pause(budget, retryAfterMs(res));
 
   const text = await res.text();
   const payload: unknown = text ? JSON.parse(text) : undefined;
@@ -142,6 +151,21 @@ function rejectCallerSessionParams(operation: GhlOperation, input: GhlRequestInp
       );
     }
   }
+}
+
+/** GHL counts requests per location, or per agency for agency tokens. */
+export function rateLimitKey(session: GhlSession): string {
+  return session.tokenKind === "location"
+    ? `location:${session.locationId ?? "none"}`
+    : `agency:${session.companyId ?? "none"}`;
+}
+
+function retryAfterMs(res: Response): number {
+  const seconds = Number(res.headers.get("retry-after"));
+  if (Number.isFinite(seconds) && seconds > 0) return seconds * 1000;
+  const interval = Number(res.headers.get("x-ratelimit-interval-milliseconds"));
+  if (Number.isFinite(interval) && interval > 0) return interval;
+  return DEFAULT_RETRY_AFTER_MS;
 }
 
 function sessionValue(param: SessionParam, session: GhlSession): string | undefined {
