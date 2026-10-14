@@ -25,6 +25,11 @@ export interface BuilderSession {
   images?: ImageGenerator | null;
   meter?: UsageMeter | null;
   userId?: string | null;
+  /**
+   * Called once the tool call that resolved this session has finished, successfully or not,
+   * e.g. to release a pooled database connection.
+   */
+  release?: () => void | Promise<void>;
   /** Called after each saved version, e.g. to commit it to the agency's repository. */
   onVersionSaved?: (
     version: VersionInfo,

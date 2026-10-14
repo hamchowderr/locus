@@ -22,12 +22,19 @@ import {
   unlinkHostProject,
 } from "@locus/connect";
 import { revalidatePath } from "next/cache";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
 import { siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
+import {
+  ACTIVE_SITE_COOKIE,
+  clientSite,
+  createClientSite,
+  SiteInputError,
+} from "@/lib/site-builder";
+import { siteBuilderDeps } from "@/lib/site-builder-host";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -375,6 +382,61 @@ export async function deleteSiteDomain(form: FormData) {
   await siteAction((ctx, client) =>
     removeSiteDomain(siteDeps(), ctx, client, text(form, "siteId")),
   );
+}
+
+/**
+ * Creates a site for the active client and starts it from a template, so version 1 exists.
+ * The client is the session's (after the staff check), never the form's.
+ */
+export async function createSite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  try {
+    const client = await resolveActiveClient(locus().db, ctx);
+    await createClientSite(siteBuilderDeps(), ctx, client, {
+      name: text(form, "name"),
+      kind: text(form, "kind"),
+      templateId: text(form, "templateId"),
+    });
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Client databases aren't set up here yet."));
+    }
+    throw error;
+  }
+  redirect("/sites?created=1");
+}
+
+/**
+ * Picks the site the site builder works on, for this browser. The site is checked against the
+ * session's client here, and again by the chat API (`resolveActiveSiteId`) and on every tool
+ * call; the cookie only names it.
+ */
+export async function chooseSite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  let siteId = "";
+  try {
+    const client = await resolveActiveClient(locus().db, ctx);
+    siteId = (await clientSite(locus().db, client, text(form, "siteId"))).id;
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) back("/sites", error);
+    if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
+    throw error;
+  }
+  (await cookies()).set(ACTIVE_SITE_COOKIE, siteId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+  redirect("/sites?chosen=1");
 }
 
 /** Takes a linked Vercel project off the active client. */

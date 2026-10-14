@@ -60,6 +60,9 @@ deployment is not considered set up without it.
 | `STRIPE_SECRET_KEY` | no | Turns billing on. Unset means billing is off and agencies are not limited |
 | `STRIPE_WEBHOOK_SECRET` | with Stripe | The signing secret of your Stripe webhook endpoint |
 | `LOCUS_OPERATORS` | no | Comma-separated emails of the deployment's operators (verified accounts only). Unset means nobody can open `/operator` |
+| `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID`, `LOCUS_SANDBOX_PROJECT_ID` | for the site builder | A Vercel token, team and project of your own (not an agency's) where each site's build-and-preview sandbox runs. Without them the site builder's sandbox tools fail in production |
+| `LOCUS_IMAGE_API_KEY` | no | An OpenAI-compatible images API key for the site builder's `generate_image`. Unset means no image generation |
+| `LOCUS_IMAGE_BASE_URL`, `LOCUS_IMAGE_MODEL` | no | That images API's base URL and model, when not the defaults |
 
 The `GHL_MODE`, `GITHUB_MODE` and `VERCEL_MODE` switches exist so development can use
 stand-ins; in production leave them unset or set them to `live`. Set to `stub` in production,
@@ -154,6 +157,21 @@ The App's private key is never an environment variable, in this table or anywher
 deployment's secret loader supplies it to Locus when Locus needs to sign (Locus asks for it
 through `GithubAppCredentials.privateKey`), and Locus keeps it only for that moment. Keep it in
 your secret manager.
+
+The web app reads it from its secret store (sealed in the control database with
+`LOCUS_SECRETS_KEY`, at `/locus/github-app/private-key`). Put it there once, and again after
+rotating it on GitHub, with the deployment's control database and secrets key in the
+environment:
+
+```
+pnpm --filter @locus/web github-app-key < your-app.private-key.pem
+```
+
+The script stores the key where the app reads it: sealed in the control database in production
+(or with `LOCUS_SECRETS=encrypted`), and in the local development file, unencrypted, otherwise.
+It says which, refuses the local file in production, accepts RSA keys only and never prints the
+key. Until the key is stored, saving a site version still works but says publishing isn't
+set up.
 
 GitHub Apps can't create repositories in a personal account. An agency that installed the app
 on a personal account creates an empty private repository itself, gives the app access to it,
