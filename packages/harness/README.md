@@ -25,6 +25,52 @@ Mistakes the model can fix (an unknown operation, a bad chain, a GHL 4xx) come b
 `query_data` uses an in-memory libSQL database per call, created and thrown away. Nested
 objects are stored as JSON text — query them with `json_extract`.
 
+## Conversations and approvals
+
+Pass the client's conversation store (a `LibSQLStore` over that client's own Turso database)
+as `storage` and the agent keeps message history per thread and parks changes that need
+approval as run snapshots, so a person can approve them in a later request:
+
+```ts
+const agent = createLocusAgent({ model, session, storage });
+await agent.generate(text, { memory: { thread: threadId, resource: clientResource(session) } });
+
+// later, in another request
+const later = createLocusAgent({ model, session, storage });
+await pendingApprovals(later, session, threadId);
+await decideApproval(later, session, { threadId, toolCallId, approve: true });
+```
+
+The resource is always `clientResource(session)`, so a thread, and anything pending in it, can
+only be read or decided for the client that owns it. GHL data is not cached between requests:
+`ForgetGhlData` replaces each tool result with a stub (keeping only `rowCount`, and that a call
+failed) before memory saves the run, and the next turn reads GHL again. That happens when a run
+finishes and also when a step is about to stop for an approval, since a paused run is saved as it
+stands and may never be decided. History is budgeted by tokens (`HISTORY_TOKENS`); titles and
+semantic recall are off because each would cost a model call. A paused run's stubs keep the taint
+mark, so a tainted run stays tainted when it resumes; a finished run's stubs drop it, so a later
+turn starts clean.
+
+## GoHighLevel data is untrusted
+
+Form submissions, messages and notes are written by the public, so a tool result can carry
+text aimed at the agent. `UntrustedContentProcessor` screens every GHL-derived result (Mastra
+`processToolResult`) before the model or memory sees it: strings and keys that read like
+instructions are replaced with a `withheld` marker. A run that hit one, or that read free text
+the public writes (submissions, messages, notes, reviews, comments) whether or not a pattern
+matched, is *tainted*, and from then on every `perform_action` waits for a person's approval.
+The taint is marked in the run's own tool results and re-derived before each model step
+(`processInputStep`), so it survives a run resumed in a later request. The patterns catch common
+phrasings, not all of them: for public free text the approval gate covers what they miss. No
+model is involved, so this costs nothing per call.
+
+## Rate limit
+
+Every request goes through the client's burst budget in `@locus/ghl` (`sharedRateLimiter`, 90
+per 10 s per location, under GHL's 100). Callers wait for a slot instead of failing. A 429
+pauses that client's whole budget for as long as GHL asks; the request that got it fails as a
+normal `{ error }` and is not retried in a loop. The budget is per process.
+
 ## Test-write mode
 
 The only way to write to a real client's account while testing. Pass a guard to the tools or
@@ -41,10 +87,25 @@ tags; updates and deletes only on records this run created; every created record
 ledger. `cleanupRun` (or `scripts/cleanup-test-run.ts <run> --delete`) removes them, newest
 first, and is safe to repeat.
 
+## The chat kit's controller
+
+`createLocusController` hosts the Locus agent in a Mastra `AgentController`, which is what
+Mastra's chat kit talks to. There is one controller per client, over that client's own
+database, and every session on it belongs to that client (`openClientSession`); a member only
+picks their own session. The host checks staff restrictions before opening one, and its
+`session` function returns a token for that client only (anything else is refused before a
+request is sent).
+
+- **Act** (default) reads and changes data with the usual approval rules. **Ask** offers only
+  reads. Other features add their own modes and tools.
+- Each tool decides whether a call waits for approval; the controller then asks the person.
+  "Always allow" approves only that call. Never set a session's `yolo` state or grant tools.
+- Planning and subagent built-ins are off: the GHL agent has no workspace.
+
 ## Not here yet
 
-- A shared GHL rate-limit budget across agents (100 req / 10 s per location).
+- A rate-limit budget shared across serverless instances (today it is per process).
 - Cursor pagination (`after`, `cursor`, `startAfter`) — reported as incomplete for now.
 - Subagents per task or per client.
-- The prompt-injection processor on tool results.
+- The agent API routes in `apps/web` that serve the controller to the chat kit.
 - Site Studio's workspace tools.

@@ -15,7 +15,7 @@
  */
 
 import { createClient, type InValue } from "@libsql/client";
-import { type GhlRequestInput, type GhlSession, ghlRequest } from "@locus/ghl";
+import { type GhlRateLimiter, type GhlRequestInput, type GhlSession, ghlRequest } from "@locus/ghl";
 import { isRead, operationById, type SkillOperation } from "@locus/skills";
 
 export interface QuerySource {
@@ -77,6 +77,7 @@ export interface QueryDeps {
   session: GhlSession;
   fetch?: typeof fetch;
   limits?: Partial<QueryLimits>;
+  rateLimiter?: GhlRateLimiter | undefined;
 }
 
 /** A query the engine refuses or cannot answer correctly. The message is meant for the model. */
@@ -178,6 +179,7 @@ async function fetchAllPages(
     }
     const payload = await ghlRequest(op, deps.session, input, {
       ...(deps.fetch ? { fetch: deps.fetch } : {}),
+      rateLimiter: deps.rateLimiter,
     });
     return extractRows(payload, source.rowsField, op.id);
   };
