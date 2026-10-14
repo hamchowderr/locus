@@ -17,8 +17,10 @@
  * are only screened, so a phrasing the patterns miss there reaches the model; the model is told
  * GHL data is never instructions, and deletions always need approval regardless.
  *
- * The taint is kept in the run's own messages (`TAINT_MARK` in the tool result), not only in
- * memory, so a run resumed after an approval, in another request, is still tainted.
+ * The taint lives on the run's request context (`TAINT_KEY`), which Mastra gives each run, and is
+ * marked in the run's own tool results (`TAINT_MARK`) so a run resumed after an approval, in
+ * another request or process, re-derives it. Nothing is shared between runs, so one agent or
+ * controller can serve many runs at once.
  */
 
 import type {
@@ -31,6 +33,32 @@ export const WITHHELD = "[withheld by Locus: this text from GoHighLevel read lik
 
 /** Present in every tool result that taints a run; how a resumed run knows it is tainted. */
 export const TAINT_MARK = "locus:untrusted";
+
+/** The request-context key a tainted run carries. */
+export const TAINT_KEY = "locus.tainted";
+
+interface ContextLike {
+  get?(key: string): unknown;
+  set?(key: string, value: unknown): void;
+}
+
+/**
+ * Whether a run is tainted, from its request context: Mastra hands processors a
+ * `RequestContext` and a tool's `requireApproval` a plain record of the same entries.
+ */
+export function isTainted(requestContext: unknown): boolean {
+  if (!requestContext || typeof requestContext !== "object") return false;
+  const ctx = requestContext as ContextLike & Record<string, unknown>;
+  return (typeof ctx.get === "function" ? ctx.get(TAINT_KEY) : ctx[TAINT_KEY]) === true;
+}
+
+function taint(requestContext: ContextLike | undefined): void {
+  // Without a context the run cannot be marked; refuse rather than run untainted.
+  if (typeof requestContext?.set !== "function") {
+    throw new Error("untrusted-content screen needs the run's request context");
+  }
+  requestContext.set(TAINT_KEY, true);
+}
 
 const PATTERNS: RegExp[] = [
   // "ignore / disregard / forget (all) (your|the) previous instructions", across line breaks.
@@ -94,17 +122,6 @@ export function readsPublicText(operationId: string): boolean {
   return PUBLIC_TEXT.test(operationId);
 }
 
-/** Shared by a run's processor and its tools: whether the run has read untrusted content. */
-export interface RunTaint {
-  tainted: boolean;
-  /** Strings withheld so far in this run. */
-  withheld: number;
-}
-
-export function createRunTaint(): RunTaint {
-  return { tainted: false, withheld: 0 };
-}
-
 /** Tools whose results are our own text, not GHL content. */
 const TRUSTED_TOOLS = new Set(["load_skill"]);
 
@@ -121,40 +138,40 @@ function sourceOperations(toolName: string, args: unknown): string[] {
 /**
  * Screens every GHL-derived tool result before the model or memory sees it (Mastra's
  * `processToolResult`, as an output processor), and re-derives the taint from the run's
- * messages before each model step (`processInputStep`, as an input processor). Register the
- * same instance in both lists.
+ * messages before each model step (`processInputStep`, as an input processor). Register it in
+ * both lists. It holds no state, so one instance can serve every run.
  */
 export class UntrustedContentProcessor implements Processor<"locus-untrusted-content"> {
   readonly id = "locus-untrusted-content" as const;
   readonly name = "Withhold instructions in GoHighLevel data";
 
-  private readonly taint: RunTaint;
-
-  constructor(taint: RunTaint) {
-    this.taint = taint;
-  }
-
-  processInputStep({ messages }: ProcessInputStepArgs) {
-    if (this.taint.tainted) return;
+  processInputStep({ messages, requestContext }: ProcessInputStepArgs) {
+    if (isTainted(requestContext)) return;
     for (const message of messages) {
       for (const part of message.content.parts ?? []) {
         if (part.type !== "tool-invocation" || part.toolInvocation.state !== "result") continue;
         if (JSON.stringify(part.toolInvocation.result ?? null).includes(TAINT_MARK)) {
-          this.taint.tainted = true;
+          taint(requestContext);
           return;
         }
       }
     }
   }
 
-  processToolResult({ toolName, toolCallId, args, result, messageList }: ProcessToolResultArgs) {
+  processToolResult({
+    toolName,
+    toolCallId,
+    args,
+    result,
+    messageList,
+    requestContext,
+  }: ProcessToolResultArgs) {
     if (TRUSTED_TOOLS.has(toolName)) return;
     const screened = withholdInstructions(result);
     const publicText = sourceOperations(toolName, args).some(readsPublicText);
     if (screened.withheld === 0 && !publicText) return;
 
-    this.taint.tainted = true;
-    this.taint.withheld += screened.withheld;
+    taint(requestContext);
     const why =
       screened.withheld > 0
         ? `${screened.withheld} value(s) from GoHighLevel read like instructions and were withheld.`

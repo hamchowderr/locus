@@ -3,7 +3,7 @@ import { Agent } from "@mastra/core/agent";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { type ConversationStore, createLocusMemory, ForgetGhlData } from "./conversation.ts";
 import { createLocusTools, type ToolDeps, waitsForApproval } from "./tools.ts";
-import { createRunTaint, UntrustedContentProcessor } from "./untrusted.ts";
+import { UntrustedContentProcessor } from "./untrusted.ts";
 
 /**
  * Deliberately short and identical on every request, so it caches. Nothing GHL-specific lives
@@ -22,7 +22,7 @@ Work in three steps:
 When a tool returns { error }, read it, fix the call and try again. Never invent ids: find them
 with query_data. Answer briefly and say what you changed.`;
 
-export interface LocusAgentConfig extends Omit<ToolDeps, "taint"> {
+export interface LocusAgentConfig extends ToolDeps {
   model: MastraModelConfig;
   /**
    * The client's own conversation store. With one, the agent keeps message history per thread
@@ -33,13 +33,12 @@ export interface LocusAgentConfig extends Omit<ToolDeps, "taint"> {
 }
 
 /**
- * One agent per request: its tools are bound to that request's session, and the run's taint
- * (see `untrusted.ts`) is shared by its tools and its processor only.
+ * The Locus agent, bound to one client's session. Each run keeps its own taint on its request
+ * context (see `untrusted.ts`), so the same agent can serve many runs.
  */
 export function createLocusAgent({ model, storage, ...deps }: LocusAgentConfig): Agent {
-  const taint = createRunTaint();
-  const untrusted = new UntrustedContentProcessor(taint);
-  const tools = createLocusTools({ ...deps, taint });
+  const untrusted = new UntrustedContentProcessor();
+  const tools = createLocusTools(deps);
   const agent = new Agent({
     id: "locus",
     name: "Locus",
