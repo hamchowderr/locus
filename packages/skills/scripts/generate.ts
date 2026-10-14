@@ -14,6 +14,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OVERRIDES } from "../src/docs/overrides.ts";
 import { type ParsedDocs, type ParsedService, parseDocs } from "../src/docs/parse.ts";
+import { isReadOperation } from "../src/reads.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE = join(ROOT, "source");
@@ -121,7 +122,7 @@ function operationsFile(service: ParsedService): string {
   ];
   for (const op of service.operations) {
     const flags = [
-      op.method === "GET" ? "read" : "write",
+      isReadOperation(op) ? "read" : "write",
       op.tokens.length === 0 ? "no auth" : op.tokens.join("/"),
       ...(op.body && op.body !== "json" ? [op.body] : []),
       ...(op.deprecated ? ["deprecated"] : []),

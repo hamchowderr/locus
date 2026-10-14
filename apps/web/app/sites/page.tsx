@@ -21,6 +21,7 @@ import {
   createSite,
   deleteSiteDomain,
   linkSiteProject,
+  unlinkSiteProject,
 } from "../actions";
 import { Button, Field, Notice, Page } from "../ui";
 
@@ -80,6 +81,9 @@ export default async function Sites({
     ? await softly(() => listHostProjects(siteDeps(), ctx))
     : [];
   const names = new Map(isProblem(projects) ? [] : projects.map((p) => [p.id, p.name]));
+  // Only known once the team's projects were listed.
+  const gone = (projectId: string | null) =>
+    !isProblem(projects) && manager && !!projectId && !names.has(projectId);
   const linked = new Set(sites.map((s) => s.hostProjectId));
   const linkable = isProblem(projects) ? [] : projects.filter((p) => !linked.has(p.id));
   const statuses = await Promise.all(
@@ -171,6 +175,17 @@ export default async function Sites({
               </form>
             ) : (
               <p className="text-sm text-neutral-600">No domain yet.</p>
+            )}
+            {gone(s.hostProjectId) && (
+              <Notice tone="error">This project is no longer on your Vercel team.</Notice>
+            )}
+            {manager && s.hostProjectId && !s.customDomain && (
+              <form action={unlinkSiteProject} className="text-sm">
+                <input type="hidden" name="siteId" value={s.id} />
+                <button type="submit" className="underline">
+                  Unlink project
+                </button>
+              </form>
             )}
           </section>
         );

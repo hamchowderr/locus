@@ -18,7 +18,7 @@
   Delete specific shipping rate with Id :shippingRateId
 - `store.delete-shipping-zone` — **Delete shipping zone** — `DELETE /store/shipping-zone/{shippingZoneId}` (write, location)
   Delete specific shipping zone with Id :shippingZoneId
-- `store.get-available-shipping-zones` — **Get available shipping rates** — `POST /store/shipping-zone/shipping-rates` (write, no auth)
+- `store.get-available-shipping-zones` — **Get available shipping rates** — `POST /store/shipping-zone/shipping-rates` (read, no auth)
   This return available shipping rates for country based on order amount
 - `store.get-shipping-carriers` — **Get Shipping Carrier** — `GET /store/shipping-carrier/{shippingCarrierId}` (read, location)
   The "List Shipping Carrier" API allows to retrieve a paginated list of shipping carrier.

@@ -39,7 +39,7 @@
   Update a Sub-Account (Formerly Location) based on the data provided
 - `locations.search-locations` — **Search** — `GET /locations/search` (read, agency/location)
   Search Sub-Account (Formerly Location)
-- `locations.task-search` — **Task Search Filter** — `POST /locations/{locationId}/tasks/search` (write, location)
+- `locations.task-search` — **Task Search Filter** — `POST /locations/{locationId}/tasks/search` (read, location)
   Task Search
 - `locations.update-custom-field` — **Update Custom Field** — `PUT /locations/{locationId}/customFields/{id}` (write, location)
 - `locations.update-custom-value` — **Update Custom Value** — `PUT /locations/{locationId}/customValues/{id}` (write, location)
