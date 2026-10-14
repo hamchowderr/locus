@@ -85,6 +85,27 @@
       "when": 1791910618836,
       "tag": "0011_site_host_project_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791966971278,
+      "tag": "0012_usage_metering",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1791968971806,
+      "tag": "0013_usage_month",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791969704046,
+      "tag": "0014_site_repo_unique",
+      "breakpoints": true
     }
   ]
 }

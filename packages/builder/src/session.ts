@@ -1,0 +1,36 @@
+import type { SiteRuntime } from "@locus/sandbox";
+import type { SiteFile, SiteWorkspace, VersionInfo } from "@locus/studio";
+import type { ImageGenerator } from "./images.ts";
+
+/** What the builder spends, in the units the usage meter prices. */
+export type BuilderUsage =
+  | { kind: "image"; count: number; size: "small" | "medium" | "large"; model: string }
+  | { kind: "sandbox"; seconds: number };
+
+/** Credit metering for one sub-account, implemented by the host with `@locus/auth`. */
+export interface UsageMeter {
+  check(): Promise<{ ok: true } | { ok: false; reason: string }>;
+  record(usage: BuilderUsage): Promise<void>;
+}
+
+/**
+ * Everything one site-building conversation acts on, resolved by the host from the signed-in
+ * session: the client from the session, the site checked against that client, and the client's
+ * own database. Nothing the model says can change any of it.
+ */
+export interface BuilderSession {
+  workspace: SiteWorkspace;
+  /** The site's sandbox, opened on first use. */
+  runtime: () => Promise<SiteRuntime>;
+  images?: ImageGenerator | null;
+  meter?: UsageMeter | null;
+  userId?: string | null;
+  /** Called after each saved version, e.g. to commit it to the agency's repository. */
+  onVersionSaved?: (
+    version: VersionInfo,
+    files: SiteFile[],
+  ) => Promise<{ commitSha?: string; url?: string } | undefined>;
+}
+
+/** Looks up the session for a tool call from the host-set request context. */
+export type ResolveBuilderSession = (requestContext: unknown) => Promise<BuilderSession>;

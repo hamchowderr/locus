@@ -136,9 +136,28 @@ and uninstalling from the agency suspends every client and drops the agency's to
    organisation.
 5. Generate a client secret. The client id and secret are `GITHUB_APP_CLIENT_ID` and
    `GITHUB_APP_CLIENT_SECRET`.
+6. Give the app these repository permissions, so Locus can publish clients' sites to the
+   agency's GitHub:
+   - **Contents: read and write**: each saved version of a site is committed to its repository.
+   - **Administration: read and write**: Locus creates a private repository for each site in
+     the agency's organization.
+   - **Metadata: read** (GitHub requires it): Locus lists the repositories the agency gave the
+     app, so one can be linked to a site.
+7. Generate a **private key** for the app. Locus signs a short-lived token with it to act as
+   the app on an agency's installation. Note the app's **App ID** too; GitHub accepts either the
+   client id (which it recommends) or the App ID as the token's issuer.
 
 Locus checks that the installation is one the installing user can access before linking it,
-and keeps no user token. The App's private key is never an environment variable.
+and keeps no user token.
+
+The App's private key is never an environment variable, in this table or anywhere else. Your
+deployment's secret loader supplies it to Locus when Locus needs to sign (Locus asks for it
+through `GithubAppCredentials.privateKey`), and Locus keeps it only for that moment. Keep it in
+your secret manager.
+
+GitHub Apps can't create repositories in a personal account. An agency that installed the app
+on a personal account creates an empty private repository itself, gives the app access to it,
+and picks it in Locus.
 
 ## 5. Vercel: the Integration
 
@@ -148,13 +167,19 @@ Agencies host their clients' sites on their own Vercel team through your Vercel 
    create an integration. Its URL slug is `VERCEL_INTEGRATION_SLUG`.
 2. Set the Redirect URL to `https://<your host>/api/connect/vercel/callback`. It must match
    exactly.
-3. Give it read and write access to **projects** and **domains**: the Sites page lists the
-   team's projects, adds a client's domain to one, and reads the domain's DNS configuration.
+3. Give it read and write access to **projects**, **deployments** and **domains**: the Sites
+   page lists the team's projects, creates one for each published site, shows its latest
+   deployment, adds a client's domain to it, and reads the domain's DNS configuration.
 4. The integration's client id and secret are `VERCEL_INTEGRATION_CLIENT_ID` and
    `VERCEL_INTEGRATION_CLIENT_SECRET`.
 
 The team's token is sealed in the control database. A client's domain stays at the client's own
 DNS provider: Locus shows the records to add there and checks them.
+
+A published site's Vercel project builds the site's repository in the agency's GitHub, so each
+agency's Vercel team must be linked to GitHub: Vercel's own GitHub app has to be installed on
+the agency's GitHub account with access to the site repositories (or to all repositories). If
+it can't see a repository, Locus says so and asks the agency to give it access.
 
 ## 6. Deploy
 

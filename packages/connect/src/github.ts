@@ -30,7 +30,7 @@ export interface GithubConnectDeps {
   now?: () => number;
 }
 
-const API_VERSION = "2026-03-10";
+export const GITHUB_API_VERSION = "2026-03-10";
 
 /** Where an owner or admin installs the app. GitHub hands `state` back to the callback. */
 export function githubInstallUrl(config: GithubAppConfig, state: string): string {
@@ -131,7 +131,7 @@ async function listUserInstallations(
       headers: {
         accept: "application/vnd.github+json",
         authorization: `Bearer ${userToken}`,
-        "x-github-api-version": API_VERSION,
+        "x-github-api-version": GITHUB_API_VERSION,
       },
     });
     if (!response.ok) throw new ConnectError("GitHub didn't list your installations. Try again.");
