@@ -460,3 +460,20 @@ describe("versions and brief", () => {
     expect(await call("update_brief", { palette: { primary: "red" } })).toHaveProperty("error");
   });
 });
+
+describe("releasing the session", () => {
+  it("releases once after every call, including ones that fail", async () => {
+    t = await testSession();
+    let released = 0;
+    const tools = createSiteBuilderTools({
+      resolve: async () => ({ ...t.session, release: () => void released++ }),
+    });
+    const call = (name: keyof typeof tools, input: unknown) =>
+      // biome-ignore lint/suspicious/noExplicitAny: each tool has its own input type
+      (tools[name].execute as any)(input, {});
+    await call("write_file", { path: "a.txt", content: "one" });
+    expect(released).toBe(1);
+    expect(await call("read_file", { path: "missing.txt" })).toHaveProperty("error");
+    expect(released).toBe(2);
+  });
+});

@@ -24,7 +24,8 @@ doesn't decide for itself (only a function overrides its global setting, a boole
 `resolve(requestContext)` is the host's: from the signed-in session it finds the client, checks
 the site belongs to that client, opens that client's database and the site's sandbox, and
 returns a `BuilderSession`. Every tool call goes through it, so nothing the model says can
-point a tool at another site or client.
+point a tool at another site or client. The session's optional `release()` runs once the call
+has finished (succeeded or failed), e.g. to return a pooled database connection.
 
 ## Tools
 

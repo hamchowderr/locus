@@ -85,14 +85,16 @@ export default async function Sites({
   const statuses = await Promise.all(
     sites.map((s) => softly(() => siteDomainStatus(siteDeps(), client, s.id))),
   );
-  // Names live in the brief, in the client's own database.
-  const drafts = sites.filter((s) => !s.hostProjectId).map((s) => s.id);
-  const briefNames = await (async () => siteNames(siteBuilderDeps(), client, drafts))().catch(
-    (e) => {
-      if (e instanceof NotConfigured) return new Map<string, string>();
-      throw e;
-    },
+  // Names live in the brief, in the client's own database. A site with a brief was started
+  // in Locus (so it has a version) and can be built; a linked project without one can't.
+  const briefs = await softly(() =>
+    siteNames(
+      siteBuilderDeps(),
+      client,
+      sites.map((s) => s.id),
+    ),
   );
+  const briefNames = isProblem(briefs) ? new Map<string, string>() : briefs;
 
   return (
     <Page title={`Sites · ${client.location.name}`}>
@@ -125,7 +127,7 @@ export default async function Sites({
                 briefNames.get(s.id) ??
                 "Untitled site"}
             </h2>
-            {activeSite === s.id ? (
+            {!briefNames.has(s.id) ? null : activeSite === s.id ? (
               <p className="text-sm text-neutral-600">The site builder works on this site.</p>
             ) : (
               <form action={chooseSite} className="text-sm">

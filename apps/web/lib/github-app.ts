@@ -1,6 +1,7 @@
-import { generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, generateKeyPairSync } from "node:crypto";
 import { ConnectError, type GithubAppCredentials, STUB_GITHUB_APP_ID } from "@locus/connect";
-import type { SecretStore } from "@locus/secrets";
+import { type ControlDb, DbSecretStore, openControlDb } from "@locus/db";
+import { LocalSecretStore, SecretCipher, type SecretStore } from "@locus/secrets";
 
 /**
  * Where the Locus GitHub App's private key lives: the deployment's secret store (sealed in the
@@ -42,4 +43,66 @@ export function stubGithubApp(): GithubAppCredentials {
       return stubKey;
     },
   };
+}
+
+/** The GitHub App key could not be stored; the message says why and holds no key material. */
+export class GithubAppKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GithubAppKeyError";
+  }
+}
+
+/**
+ * Checks and stores the GitHub App's private key (`github-app-key` script).
+ *
+ * With `LOCUS_CONTROL_DB_URL` set it is always sealed in that control database with
+ * `LOCUS_SECRETS_KEY` (`LOCUS_SECRETS=local` is refused then). Without it, outside production
+ * only, it goes to the local development file, unencrypted, and the result says so.
+ */
+export async function storeGithubAppKey(
+  pem: string,
+  env: Record<string, string | undefined>,
+  options: { localFile?: string; openDb?: (url: string, token?: string) => ControlDb } = {},
+): Promise<{ store: "encrypted"; url: string } | { store: "local"; file: string }> {
+  let type: string | undefined;
+  try {
+    type = createPrivateKey(pem).asymmetricKeyType;
+  } catch {
+    throw new GithubAppKeyError(
+      "That isn't a PEM private key. Pipe the GitHub App's .pem file in.",
+    );
+  }
+  if (type !== "rsa") {
+    throw new GithubAppKeyError(`GitHub App keys are RSA; that one is ${type ?? "unknown"}.`);
+  }
+  const value = `${pem.trim()}\n`;
+  const url = env.LOCUS_CONTROL_DB_URL;
+  if (!url) {
+    if (env.NODE_ENV === "production") {
+      throw new GithubAppKeyError("Set LOCUS_CONTROL_DB_URL (and LOCUS_CONTROL_DB_TOKEN).");
+    }
+    const file = options.localFile ?? ".data/secrets.json";
+    await new LocalSecretStore(file, env).set(GITHUB_APP_KEY_SECRET, value);
+    return { store: "local", file };
+  }
+  if (env.LOCUS_SECRETS && env.LOCUS_SECRETS !== "encrypted") {
+    throw new GithubAppKeyError(
+      `LOCUS_SECRETS=${env.LOCUS_SECRETS} with a control database: the key is only stored sealed there.`,
+    );
+  }
+  const cipher = (() => {
+    try {
+      return SecretCipher.fromEnv(env);
+    } catch (error) {
+      throw new GithubAppKeyError((error as Error).message);
+    }
+  })();
+  const db = (options.openDb ?? openControlDb)(url, env.LOCUS_CONTROL_DB_TOKEN);
+  try {
+    await new DbSecretStore(db, cipher).set(GITHUB_APP_KEY_SECRET, value);
+  } finally {
+    db.$client.close();
+  }
+  return { store: "encrypted", url };
 }

@@ -79,25 +79,34 @@ agency, and comping one) · `/`
 ## Site builder
 
 `lib/site-builder.ts` wires `@locus/builder` to a signed-in member's client; `lib/site-builder-host.ts`
-builds it from the environment. The chat API host calls
-`siteBuilderForClient({ client, userId })` with the client from `resolveActiveClient`, and gets
-`{ modes, tools, processors: { output }, resolve }` for the client's `AgentController`. In the
-chat API's `requestContext` hook it calls `resolveActiveSiteId(request, member)`, which reads the
-site the member chose on the Sites page ("Build this site" sets the httpOnly `locus_site` cookie)
-and returns it only if it is a site of `member.locationId`, else null; the result goes in the
-request context as `siteId` (`SITE_ID_KEY`). A host sharing one controller between members can
-also pass that request's `AuthorizedClient` (`CLIENT_KEY`).
+builds it from the environment. The chat API host calls `siteBuilderForClient({ client })` with
+the client from `resolveActiveClient`, and gets `{ modes, tools, processors: { output }, resolve,
+close }` for the client's `AgentController`. In the chat API's `requestContext` hook it calls
+`resolveActiveSiteId(request, member)`: the site the member chose on the Sites page ("Build this
+site" sets the httpOnly `locus_site` cookie), returned only if the request's own session may
+work on `member.locationId` and the site is that client's, else null. The hook's result becomes
+`siteId` (`SITE_ID_KEY`); a host sharing one controller between members also sets that
+request's `AuthorizedClient` (`CLIENT_KEY`). The host sets both on every run, overwriting
+anything the browser sent.
 
-On every tool call the site id is checked against the client's own `site` rows in the control
-database before anything opens; another client's site and a missing one are refused alike.
-Then the client's database is opened with a token for it alone, the site's sandbox
-(`<locationId>/<siteId>`, never given a credential), images, a credit meter over
-`checkAllowance`/`recordUsage`, and publishing.
+On every tool call the staff check runs again for the member (removed access stops the next
+call), the member's user id is read from the control database, and the site id is checked
+against the client's own `site` rows before anything opens; another client's site and a
+missing one are refused alike. Then the client's database is borrowed from a per-process pool
+(one connection per client, token for that database alone, replaced before the token expires
+and closed only once no call uses it), along with the site's sandbox (`<locationId>/<siteId>`,
+never given a credential; in production without `LOCUS_SANDBOX_*` the tools answer that previews
+aren't set up), images, a credit meter over `checkAllowance`/`recordUsage`, and publishing.
+
+Creating a site: any member who may work on the client; with billing on, the agency needs a plan
+and stays within its `sitesPerMonth` (counted from `site.create` audit entries this month, UTC;
+soft by concurrent creates).
 
 Publishing: each saved version is committed to the site's GitHub repository (`commitSiteVersion`)
 once the site has one, and Vercel deploys the push once it has a project. A site without a
 repository is saved in the client's database only; the agent never creates a repository or a
 Vercel project, which stay an owner's or admin's step (`ensureSiteRepo`, `ensureSiteDeployment`).
+Only Locus's own refusal messages reach the model; GitHub's raw text is logged instead.
 The GitHub App's private key comes from the secret store (`github-app-key` script), never the
 environment. With `GITHUB_MODE=stub` the stub GitHub and a throwaway key are used.
 

@@ -66,7 +66,16 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
   const withSession =
     <I, O>(run: (session: BuilderSession, input: I) => Promise<O>) =>
     async (input: I, context: { requestContext?: unknown }) =>
-      recoverable(async () => run(await deps.resolve(context?.requestContext), input));
+      recoverable(async () => {
+        const session = await deps.resolve(context?.requestContext);
+        try {
+          return await run(session, input);
+        } finally {
+          await Promise.resolve()
+            .then(() => session.release?.())
+            .catch(() => {});
+        }
+      });
 
   /** Brings the sandbox up to date with the draft, then hands it over. */
   const ready = async (session: BuilderSession): Promise<SiteRuntime> => {
