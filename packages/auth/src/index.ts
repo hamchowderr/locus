@@ -49,7 +49,6 @@ export {
   setUsageLimit,
   USD_PER_CREDIT,
   type UsageAlert,
-  type UsageIds,
   type UsageLimitChange,
   type UsageMeasurement,
   type UsageRecord,

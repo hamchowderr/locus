@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { ControlDb } from "@locus/db";
-import { auditLog, location, usageAlert, usageEvent, usageLimit } from "@locus/db/control";
-import { and, asc, eq, gt, gte, lt, sql } from "drizzle-orm";
+import {
+  auditLog,
+  location,
+  usageAlert,
+  usageEvent,
+  usageLimit,
+  usageMonth,
+} from "@locus/db/control";
+import { and, asc, eq, gt, lt, sql } from "drizzle-orm";
 import { agencyEntitlement, type Entitlement } from "./billing.ts";
 import {
   type AuthorizedClient,
@@ -23,8 +30,13 @@ import { CREDIT } from "./plans.ts";
  * not the Stripe billing period — comped agencies have no Stripe period, and a calendar month
  * needs no Stripe data in the request path. The burst limit is a rolling 5-hour window per client.
  *
- * Every function takes ids the caller resolved from the session (`AuthorizedClient`, the
- * session's active organisation) — never ids from a request.
+ * Tenancy: the per-client functions take an `AuthorizedClient` (checked with
+ * `assertAuthorizedClient`) and read the agency from its location, so a client and an agency
+ * that don't belong together can't be passed; agency-wide reads need an owner or admin session.
+ * Nothing takes an organisation or location id from a request.
+ *
+ * Monthly totals are read from `usage_month`, a rollup written in the same batch as each event;
+ * only the 5-hour window sums events.
  */
 
 /** Provider cost in USD that one credit stands for, before the markup. */
@@ -133,39 +145,28 @@ export function monthOf(now: Date): { key: string; start: Date; end: Date } {
 
 // Reads
 
-const total = sql<number>`coalesce(sum(${usageEvent.credits}), 0)`.mapWith(Number);
+const total = sql<number>`coalesce(sum(${usageMonth.credits}), 0)`.mapWith(Number);
 
+/** The agency's credits this month: one rollup row per client, not every event. */
 async function agencyMonthUsed(db: ControlDb, organizationId: string, now: Date) {
-  const { start, end } = monthOf(now);
   const [row] = await db
     .select({ total })
-    .from(usageEvent)
+    .from(usageMonth)
     .where(
-      and(
-        eq(usageEvent.organizationId, organizationId),
-        gte(usageEvent.createdAt, start),
-        lt(usageEvent.createdAt, end),
-      ),
+      and(eq(usageMonth.organizationId, organizationId), eq(usageMonth.month, monthOf(now).key)),
     );
   return row?.total ?? 0;
 }
 
 async function locationMonthUsed(db: ControlDb, locationId: string, now: Date) {
-  const { start, end } = monthOf(now);
   const [row] = await db
-    .select({ total })
-    .from(usageEvent)
-    .where(
-      and(
-        eq(usageEvent.locationId, locationId),
-        gte(usageEvent.createdAt, start),
-        lt(usageEvent.createdAt, end),
-      ),
-    );
-  return row?.total ?? 0;
+    .select({ credits: usageMonth.credits })
+    .from(usageMonth)
+    .where(and(eq(usageMonth.locationId, locationId), eq(usageMonth.month, monthOf(now).key)));
+  return row?.credits ?? 0;
 }
 
-/** The client's events still inside the 5-hour window, oldest first. */
+/** The client's events still inside the 5-hour window, oldest first. May span two months. */
 async function windowEvents(db: ControlDb, locationId: string, now: Date) {
   return db
     .select({ credits: usageEvent.credits, createdAt: usageEvent.createdAt })
@@ -185,15 +186,13 @@ async function limitRow(db: ControlDb, locationId: string) {
   return row;
 }
 
-// The allowance check
-
-export interface UsageIds {
-  /** The session's active organisation. */
-  organizationId: string;
-  /** From an `AuthorizedClient`. */
-  locationId: string;
-  now?: Date;
+/** The client's ids, once `client` is known to have come from `authorizeClient`. */
+function idsOf(client: AuthorizedClient) {
+  assertAuthorizedClient(client);
+  return { organizationId: client.location.organizationId, locationId: client.location.id };
 }
+
+// The allowance check
 
 export type Allowance =
   | {
@@ -226,19 +225,22 @@ const formatCredits = (units: number) =>
  * the client is paused, the agency's monthly credits or the client's monthly cap are used up,
  * or the client's 5-hour window is full. Comped agencies have no plan limits; a client's own
  * cap and pause still apply.
+ *
+ * Nothing is reserved: the check and `recordUsage` are separate, so generations started at the
+ * same time all pass, and each can take the total past a limit by up to one generation's cost.
+ * Limits are soft by that much; the first check after the records refuses.
  */
-export async function checkAllowance(db: ControlDb, ids: UsageIds): Promise<Allowance> {
-  const now = ids.now ?? new Date();
-  const entitlement = await agencyEntitlement(db, ids.organizationId);
+export async function checkAllowance(
+  db: ControlDb,
+  client: AuthorizedClient,
+  opts: { now?: Date } = {},
+): Promise<Allowance> {
+  const { organizationId, locationId } = idsOf(client);
+  const now = opts.now ?? new Date();
+  const entitlement = await agencyEntitlement(db, organizationId);
   if (!entitlement.entitled) return { ok: false, reason: entitlementRefusal(entitlement) };
 
-  const [loc] = await db
-    .select({ id: location.id })
-    .from(location)
-    .where(and(eq(location.id, ids.locationId), eq(location.organizationId, ids.organizationId)));
-  if (!loc) return { ok: false, reason: "This client isn't available." };
-
-  const limit = await limitRow(db, ids.locationId);
+  const limit = await limitRow(db, locationId);
   if (limit?.paused) {
     return {
       ok: false,
@@ -252,7 +254,7 @@ export async function checkAllowance(db: ControlDb, ids: UsageIds): Promise<Allo
 
   let agencyMonth: number | null = null;
   if (plan?.creditsPerMonth != null) {
-    agencyMonth = plan.creditsPerMonth - (await agencyMonthUsed(db, ids.organizationId, now));
+    agencyMonth = plan.creditsPerMonth - (await agencyMonthUsed(db, organizationId, now));
     if (agencyMonth <= 0) {
       return {
         ok: false,
@@ -264,7 +266,7 @@ export async function checkAllowance(db: ControlDb, ids: UsageIds): Promise<Allo
 
   let locationMonth: number | null = null;
   if (limit?.monthlyCreditCap != null) {
-    locationMonth = limit.monthlyCreditCap - (await locationMonthUsed(db, ids.locationId, now));
+    locationMonth = limit.monthlyCreditCap - (await locationMonthUsed(db, locationId, now));
     if (locationMonth <= 0) {
       return {
         ok: false,
@@ -276,7 +278,7 @@ export async function checkAllowance(db: ControlDb, ids: UsageIds): Promise<Allo
 
   let window: number | null = null;
   if (plan?.creditsPer5Hours != null) {
-    const events = await windowEvents(db, ids.locationId, now);
+    const events = await windowEvents(db, locationId, now);
     const used = events.reduce((sum, e) => sum + e.credits, 0);
     window = plan.creditsPer5Hours - used;
     if (window <= 0) {
@@ -312,11 +314,12 @@ function rollOff(events: { credits: number; createdAt: Date }[], used: number, l
 
 // Recording usage
 
-export interface UsageRecord extends UsageIds {
+export interface UsageRecord {
+  usage: UsageMeasurement;
   siteId?: string | null;
   /** The signed-in user who started the work, if any. */
   actorUserId?: string | null;
-  usage: UsageMeasurement;
+  now?: Date;
 }
 
 export interface UsageAlert {
@@ -335,42 +338,54 @@ export interface UsageAlert {
 const AGENCY_ALERTS = [80, 100] as const;
 
 /**
- * Records one measurement, priced by `creditsFor`, and returns the alerts it newly set off: a
- * client reaching its `alert_at_percent` or 100% of its monthly cap, the agency reaching 80% or
- * 100% of its monthly credits. Each alert fires once per period (`usage_alert`) and goes in the
- * audit log.
+ * Records one measurement for an authorized client, priced by `creditsFor`, and returns the
+ * alerts it newly set off: the client reaching its `alert_at_percent` or 100% of its monthly cap,
+ * the agency reaching 80% or 100% of its monthly credits. Each alert fires once per period
+ * (`usage_alert`) and is written to the audit log in the same batch. See `checkAllowance` on
+ * why there is no reservation.
  */
 export async function recordUsage(
   db: ControlDb,
+  client: AuthorizedClient,
   record: UsageRecord,
 ): Promise<{ id: string; credits: number; alerts: UsageAlert[] }> {
+  const { organizationId, locationId } = idsOf(client);
   const now = record.now ?? new Date();
+  const period = monthOf(now).key;
   const credits = creditsFor(record.usage);
   const { kind, ...detail } = record.usage;
   const id = randomUUID();
-  await db.insert(usageEvent).values({
-    id,
-    organizationId: record.organizationId,
-    locationId: record.locationId,
-    siteId: record.siteId ?? null,
-    actorUserId: record.actorUserId ?? null,
-    kind,
-    credits,
-    detail,
-    createdAt: now,
-  });
+  await db.batch([
+    db.insert(usageEvent).values({
+      id,
+      organizationId,
+      locationId,
+      siteId: record.siteId ?? null,
+      actorUserId: record.actorUserId ?? null,
+      kind,
+      credits,
+      detail,
+      createdAt: now,
+    }),
+    db
+      .insert(usageMonth)
+      .values({ organizationId, locationId, month: period, credits })
+      .onConflictDoUpdate({
+        target: [usageMonth.locationId, usageMonth.month],
+        set: { credits: sql`${usageMonth.credits} + excluded.credits` },
+      }),
+  ]);
 
-  const period = monthOf(now).key;
   const candidates: UsageAlert[] = [];
 
-  const limit = await limitRow(db, record.locationId);
+  const limit = await limitRow(db, locationId);
   if (limit?.monthlyCreditCap != null && limit.monthlyCreditCap > 0) {
-    const used = await locationMonthUsed(db, record.locationId, now);
+    const used = await locationMonthUsed(db, locationId, now);
     for (const t of new Set([limit.alertAtPercent, 100])) {
       if (used * 100 >= limit.monthlyCreditCap * t) {
         candidates.push({
           scope: "location",
-          locationId: record.locationId,
+          locationId,
           period,
           thresholdPercent: t,
           used,
@@ -380,9 +395,9 @@ export async function recordUsage(
     }
   }
 
-  const { limits } = await agencyEntitlement(db, record.organizationId);
+  const { limits } = await agencyEntitlement(db, organizationId);
   if (limits?.creditsPerMonth != null && limits.creditsPerMonth > 0) {
-    const used = await agencyMonthUsed(db, record.organizationId, now);
+    const used = await agencyMonthUsed(db, organizationId, now);
     for (const t of AGENCY_ALERTS) {
       if (used * 100 >= limits.creditsPerMonth * t) {
         candidates.push({
@@ -400,30 +415,36 @@ export async function recordUsage(
   const fired: UsageAlert[] = [];
   for (const alert of candidates) {
     const subject = alert.scope === "agency" ? "agency" : `location:${alert.locationId}`;
-    // The unique key makes this the once-per-period check, even with concurrent writers.
-    const inserted = await db
-      .insert(usageAlert)
-      .values({
-        id: randomUUID(),
-        organizationId: record.organizationId,
-        subject,
-        period,
-        threshold: alert.thresholdPercent,
-        createdAt: now,
-      })
-      .onConflictDoNothing()
-      .returning({ id: usageAlert.id });
-    if (inserted.length === 0) continue;
-    await db.insert(auditLog).values({
-      id: randomUUID(),
-      organizationId: record.organizationId,
-      actorUserId: record.actorUserId ?? null,
-      locationId: alert.locationId,
-      action: "usage.alert",
-      detail: alert,
-      createdAt: now,
-    });
-    fired.push(alert);
+    // One batch, so an alert is never marked fired without its audit row. The unique key is the
+    // once-per-period check, even with concurrent writers; the audit row's id is derived from the
+    // same key, so a writer that lost the race adds no second audit row either.
+    const [inserted] = await db.batch([
+      db
+        .insert(usageAlert)
+        .values({
+          id: randomUUID(),
+          organizationId,
+          subject,
+          period,
+          threshold: alert.thresholdPercent,
+          createdAt: now,
+        })
+        .onConflictDoNothing()
+        .returning({ id: usageAlert.id }),
+      db
+        .insert(auditLog)
+        .values({
+          id: `usage-alert:${organizationId}:${subject}:${period}:${alert.thresholdPercent}`,
+          organizationId,
+          actorUserId: record.actorUserId ?? null,
+          locationId: alert.locationId,
+          action: "usage.alert",
+          detail: alert,
+          createdAt: now,
+        })
+        .onConflictDoNothing(),
+    ]);
+    if (inserted.length > 0) fired.push(alert);
   }
   return { id, credits, alerts: fired };
 }
@@ -443,47 +464,75 @@ export interface ClientUsage {
 
 export interface UsageSummary {
   period: { key: string; start: Date; end: Date };
-  /** The agency's monthly credits; `limit` null means no plan limit (comped). */
-  agency: { used: number; limit: number | null };
+  /**
+   * The agency's monthly credits; `limit` null means no plan limit (comped). Null unless the
+   * caller is an owner or admin: the total covers clients a restricted member can't open.
+   */
+  agency: { used: number; limit: number | null } | null;
   /** The per-client burst limit over the last 5 hours; null means none. */
   windowLimit: number | null;
   clients: ClientUsage[];
 }
 
+async function isAgencyManager(db: ControlDb, ctx: SessionContext) {
+  try {
+    await requireAgencyManager(db, ctx);
+    return true;
+  } catch (e) {
+    if (e instanceof ClientAccessDenied) return false;
+    throw e;
+  }
+}
+
 /**
- * Used and limits for the month and the 5-hour window, per client. Pass `locationId` (from an
- * `AuthorizedClient`) to show one client only — for a member restricted to some clients, the
- * caller must, since the agency total covers clients they can't open.
+ * Used and limits for the month and the 5-hour window, for the usage page.
+ *
+ * - Without `client`: every client of the session's agency. Owners and admins only.
+ * - With `client` (from `authorizeClient` for this session's agency): that client only, and the
+ *   agency's total only for owners and admins.
  */
 export async function usageSummary(
   db: ControlDb,
-  ids: { organizationId: string; locationId?: string; now?: Date },
+  ctx: SessionContext,
+  opts: { client?: AuthorizedClient; now?: Date } = {},
 ): Promise<UsageSummary> {
-  const now = ids.now ?? new Date();
+  const now = opts.now ?? new Date();
   const period = monthOf(now);
-  const { limits } = await agencyEntitlement(db, ids.organizationId);
-  const inAgency = eq(usageEvent.organizationId, ids.organizationId);
-  const onlyOne = ids.locationId ? eq(usageEvent.locationId, ids.locationId) : undefined;
+
+  let organizationId: string;
+  let locationId: string | undefined;
+  let manager: boolean;
+  if (opts.client) {
+    ({ organizationId, locationId } = idsOf(opts.client));
+    if (ctx.activeOrganizationId !== organizationId) {
+      throw new ClientAccessDenied("client is not in the session's agency");
+    }
+    manager = await isAgencyManager(db, ctx);
+  } else {
+    ({ organizationId } = await requireAgencyManager(db, ctx));
+    manager = true;
+  }
+
+  const { limits } = await agencyEntitlement(db, organizationId);
 
   const monthRows = await db
-    .select({ locationId: usageEvent.locationId, total })
-    .from(usageEvent)
+    .select({ locationId: usageMonth.locationId, credits: usageMonth.credits })
+    .from(usageMonth)
     .where(
       and(
-        inAgency,
-        onlyOne,
-        gte(usageEvent.createdAt, period.start),
-        lt(usageEvent.createdAt, period.end),
+        eq(usageMonth.organizationId, organizationId),
+        eq(usageMonth.month, period.key),
+        locationId ? eq(usageMonth.locationId, locationId) : undefined,
       ),
-    )
-    .groupBy(usageEvent.locationId);
+    );
+  const windowTotal = sql<number>`coalesce(sum(${usageEvent.credits}), 0)`.mapWith(Number);
   const windowRows = await db
-    .select({ locationId: usageEvent.locationId, total })
+    .select({ locationId: usageEvent.locationId, total: windowTotal })
     .from(usageEvent)
     .where(
       and(
-        inAgency,
-        onlyOne,
+        eq(usageEvent.organizationId, organizationId),
+        locationId ? eq(usageEvent.locationId, locationId) : undefined,
         gt(usageEvent.createdAt, new Date(now.getTime() - BURST_WINDOW_MS)),
         lt(usageEvent.createdAt, new Date(now.getTime() + 1)),
       ),
@@ -495,12 +544,12 @@ export async function usageSummary(
     .leftJoin(usageLimit, eq(usageLimit.locationId, location.id))
     .where(
       and(
-        eq(location.organizationId, ids.organizationId),
-        ids.locationId ? eq(location.id, ids.locationId) : undefined,
+        eq(location.organizationId, organizationId),
+        locationId ? eq(location.id, locationId) : undefined,
       ),
     );
 
-  const month = new Map(monthRows.map((r) => [r.locationId, r.total]));
+  const month = new Map(monthRows.map((r) => [r.locationId, r.credits]));
   const window = new Map(windowRows.map((r) => [r.locationId, r.total]));
   const rows: ClientUsage[] = clients.map((c) => ({
     locationId: c.id,
@@ -513,27 +562,32 @@ export async function usageSummary(
   }));
   // Removed clients still count towards the month.
   const known = new Set(rows.map((r) => r.locationId));
-  for (const [locationId, used] of month) {
-    if (known.has(locationId)) continue;
+  for (const [id, used] of month) {
+    if (known.has(id)) continue;
     rows.push({
-      locationId,
+      locationId: id,
       name: null,
       monthUsed: used,
       monthlyCreditCap: null,
-      windowUsed: window.get(locationId) ?? 0,
+      windowUsed: window.get(id) ?? 0,
       alertAtPercent: 80,
       paused: false,
     });
   }
 
-  return {
-    period,
-    agency: {
-      used: ids.locationId
-        ? await agencyMonthUsed(db, ids.organizationId, now)
+  let agency: UsageSummary["agency"] = null;
+  if (manager) {
+    agency = {
+      used: locationId
+        ? await agencyMonthUsed(db, organizationId, now)
         : rows.reduce((sum, r) => sum + r.monthUsed, 0),
       limit: limits?.creditsPerMonth ?? null,
-    },
+    };
+  }
+
+  return {
+    period,
+    agency,
     windowLimit: limits?.creditsPer5Hours ?? null,
     clients: rows.sort((a, b) => b.monthUsed - a.monthUsed),
   };

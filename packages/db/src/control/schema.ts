@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import { member, organization } from "./auth-schema.ts";
 
 // The control database: shared by every agency, and holds nothing about any single client
@@ -222,6 +222,29 @@ export const usageEvent = sqliteTable(
   (t) => [
     index("usage_event_location_created_idx").on(t.locationId, t.createdAt),
     index("usage_event_org_created_idx").on(t.organizationId, t.createdAt),
+  ],
+);
+
+/**
+ * Each client's credits per calendar month (UTC), kept alongside `usage_event` in the same batch
+ * so a monthly total reads one row per client instead of every event (Turso bills rows read).
+ * Not a foreign key to `location`, for the same reason as `usage_event`.
+ */
+export const usageMonth = sqliteTable(
+  "usage_month",
+  {
+    locationId: text("location_id").notNull(),
+    /** "YYYY-MM", UTC. */
+    month: text("month").notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** Hundredths of a credit. */
+    credits: integer("credits").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.locationId, t.month] }),
+    index("usage_month_org_month_idx").on(t.organizationId, t.month),
   ],
 );
 
