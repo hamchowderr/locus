@@ -65,7 +65,10 @@ export function configFromEnv(env: Env = process.env) {
       clientSecret: required(env, "GHL_CLIENT_SECRET"),
       appId: required(env, "GHL_APP_ID"),
     },
-    /** A Mastra model id, e.g. `anthropic/claude-sonnet-5-5`; its key is the provider's usual variable. */
+    /**
+     * A Mastra model id, e.g. `anthropic/claude-sonnet-5-5`, whose key is the provider's usual
+     * variable; or `scripted` for a fixed reply that needs no key (see `scripted-model.ts`).
+     */
     model: required(env, "LOCUS_AGENT_MODEL"),
   };
 }
