@@ -30,12 +30,14 @@ export interface LocusAgentConfig extends Omit<ToolDeps, "taint"> {
  */
 export function createLocusAgent({ model, ...deps }: LocusAgentConfig) {
   const taint = createRunTaint();
+  const untrusted = new UntrustedContentProcessor(taint);
   return new Agent({
     id: "locus",
     name: "Locus",
     instructions: INSTRUCTIONS,
     model,
     tools: createLocusTools({ ...deps, taint }),
-    outputProcessors: [new UntrustedContentProcessor(taint)],
+    inputProcessors: [untrusted],
+    outputProcessors: [untrusted],
   });
 }

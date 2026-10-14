@@ -28,11 +28,15 @@ objects are stored as JSON text — query them with `json_extract`.
 ## GoHighLevel data is untrusted
 
 Form submissions, messages and notes are written by the public, so a tool result can carry
-text aimed at the agent. `UntrustedContentProcessor` (Mastra `processToolResult`) screens every
-GHL-derived result before the model or memory sees it: strings that read like instructions are
-replaced with a `withheld` marker and the model is told how many. From then on the run is
-*tainted* and every `perform_action` waits for a person's approval, whatever the operation.
-No model is involved, so this costs nothing per call.
+text aimed at the agent. `UntrustedContentProcessor` screens every GHL-derived result (Mastra
+`processToolResult`) before the model or memory sees it: strings and keys that read like
+instructions are replaced with a `withheld` marker. A run that hit one, or that read free text
+the public writes (submissions, messages, notes, reviews, comments) whether or not a pattern
+matched, is *tainted*, and from then on every `perform_action` waits for a person's approval.
+The taint is marked in the run's own tool results and re-derived before each model step
+(`processInputStep`), so it survives a run resumed in a later request. The patterns catch common
+phrasings, not all of them: for public free text the approval gate covers what they miss. No
+model is involved, so this costs nothing per call.
 
 ## Rate limit
 

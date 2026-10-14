@@ -33,20 +33,36 @@ export function createRateLimiter(options: RateLimitOptions = {}): GhlRateLimite
   const windowMs = options.windowMs ?? GHL_BURST_LIMIT.windowMs;
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
+  if (!Number.isInteger(limit) || limit < 1)
+    throw new RangeError("limit must be a whole number ≥ 1");
+  if (!(windowMs > 0)) throw new RangeError("windowMs must be positive");
   /** Start times of the requests in each key's current window, oldest first. */
   const windows = new Map<string, number[]>();
   /** When each paused key may send again. */
   const pausedUntil = new Map<string, number>();
 
+  // Drop keys whose window has emptied, so a long-lived process does not keep every client.
+  const sweep = (t: number) => {
+    for (const [key, starts] of windows) {
+      if ((starts.at(-1) ?? 0) <= t - windowMs) windows.delete(key);
+    }
+  };
+  let lastSweep = now();
+
   return {
     async acquire(key) {
       for (;;) {
         const t = now();
+        if (t - lastSweep > windowMs) {
+          sweep(t);
+          lastSweep = t;
+        }
         const resume = pausedUntil.get(key) ?? 0;
         if (resume > t) {
           await sleep(resume - t);
           continue;
         }
+        pausedUntil.delete(key);
         const starts = (windows.get(key) ?? []).filter((start) => start > t - windowMs);
         if (starts.length < limit) {
           starts.push(t);
@@ -54,7 +70,7 @@ export function createRateLimiter(options: RateLimitOptions = {}): GhlRateLimite
           return;
         }
         windows.set(key, starts);
-        // The oldest request leaves the window first; wait for exactly that.
+        // The window is full, so `starts` is not empty. The oldest request leaves the window first; wait for exactly that.
         await sleep((starts[0] as number) + windowMs - t);
       }
     },
