@@ -107,5 +107,5 @@ request is sent).
 - A rate-limit budget shared across serverless instances (today it is per process).
 - Cursor pagination (`after`, `cursor`, `startAfter`) — reported as incomplete for now.
 - Subagents per task or per client.
-- The agent API routes in `apps/web` that serve the controller to the chat kit.
+- Hosting the agent API (`@locus/agent-api`) as a long-running service.
 - Site Studio's workspace tools.
