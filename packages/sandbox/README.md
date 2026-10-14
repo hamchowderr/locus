@@ -47,9 +47,14 @@ output and the preview log are cut to a bounded tail (64k characters by default)
 
 ## Configuration
 
-`sandboxFromEnv()` reads `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and
-`LOCUS_SANDBOX_PROJECT_ID` (Otaku's own Vercel team, in Infisical `/locus`). The token needs
-access to that team; the project only scopes the sandboxes.
+`sandboxFromEnv()` picks credentials in this order:
+
+1. `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`, when all three
+   are set (an Otaku team-scoped token; needed when Locus runs off Vercel, e.g. on Coolify).
+2. On a Vercel deployment (`VERCEL=1`), the deployment's own OIDC token, which the SDK fetches
+   through `@vercel/oidc`. Sandboxes then run in the Locus project on Otaku's team, and no secret
+   is stored anywhere. This is how staging and production run.
+3. Otherwise none: the caller falls back to the fake. `LOCUS_SANDBOX=off` forces this.
 
 ## Not here yet
 

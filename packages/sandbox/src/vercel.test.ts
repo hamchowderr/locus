@@ -134,6 +134,30 @@ describe("sandboxFromEnv", () => {
     ).toBeInstanceOf(VercelRuntimeProvider);
   });
 
+  it("uses the deployment's OIDC token on Vercel when no token is set", async () => {
+    const provider = sandboxFromEnv({ VERCEL: "1" });
+    expect(provider).toBeInstanceOf(VercelRuntimeProvider);
+    sdk.getOrCreate.mockRejectedValueOnce(new Error("stop after the call"));
+    await expect(provider?.open("site-oidc")).rejects.toThrow();
+    const params = sdk.getOrCreate.mock.calls.at(-1)?.[0];
+    expect(params).not.toHaveProperty("token");
+    expect(params).not.toHaveProperty("teamId");
+    expect(params).not.toHaveProperty("projectId");
+  });
+
+  it("prefers an explicit token over OIDC, and LOCUS_SANDBOX=off turns both off", () => {
+    expect(
+      sandboxFromEnv({
+        VERCEL: "1",
+        LOCUS_SANDBOX: "off",
+        LOCUS_SANDBOX_TOKEN: "t",
+        LOCUS_SANDBOX_TEAM_ID: "team",
+        LOCUS_SANDBOX_PROJECT_ID: "prj",
+      }),
+    ).toBeNull();
+    expect(sandboxFromEnv({ VERCEL: "0" })).toBeNull();
+  });
+
   it("does not load the SDK until a runtime is opened", () => {
     sandboxFromEnv({
       LOCUS_SANDBOX_TOKEN: "t",

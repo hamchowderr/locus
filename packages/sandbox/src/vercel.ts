@@ -1,7 +1,11 @@
 /**
  * `RuntimeProvider` on Vercel Sandbox (Firecracker microVMs), through `@vercel/sandbox`.
  *
- * Trust boundary: the token, team and project ids are used only here, by the Locus backend, to
+ * Credentials: either an explicit team-scoped access token with its team and project ids, or,
+ * when Locus itself runs on Vercel, the deployment's own OIDC token (the SDK fetches it through
+ * `@vercel/oidc`), so sandboxes run in the Locus project on Otaku's team with no stored secret.
+ *
+ * Trust boundary: the credentials are used only here, by the Locus backend, to
  * create and drive the sandbox through Vercel's API. They are never put in the sandbox's or a
  * command's environment, never written to its filesystem and never passed as arguments.
  *
@@ -18,11 +22,14 @@ import type { CommandResult, RuntimeFile, RuntimeProvider, SiteRuntime } from ".
 
 export type VercelNodeRuntime = "node22" | "node24" | "node26";
 
-export interface VercelSandboxConfig {
-  /** A Vercel access token scoped to `teamId`. Used by the backend only. */
-  token: string;
-  teamId: string;
-  projectId: string;
+/** An explicit access token, or `oidc` for the Vercel deployment's own OIDC token. */
+export type VercelSandboxCredentials =
+  | { token: string; teamId: string; projectId: string }
+  | { oidc: true };
+
+export type VercelSandboxConfig = VercelSandboxCredentials & VercelSandboxOptions;
+
+export interface VercelSandboxOptions {
   /** Node.js version of the sandbox image (`vercel/sandbox/node:<n>`). Default `node22`. */
   runtime?: VercelNodeRuntime;
   /** Overrides `runtime` with any Vercel Container Registry image. */
@@ -76,18 +83,23 @@ const SEED_MARKER = ".locus/seeded";
 const TIMEOUT_TOLERANCE_MS = 250;
 
 /**
- * Reads `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`. Returns
- * null unless all three are set.
+ * Reads `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID` and uses
+ * them when all three are set. Otherwise, on a Vercel deployment (`VERCEL=1`), uses the
+ * deployment's OIDC token, unless `LOCUS_SANDBOX=off`. Returns null when neither applies.
  */
 export function sandboxFromEnv(
   env: Record<string, string | undefined> = process.env,
-  overrides: Omit<VercelSandboxConfig, "token" | "teamId" | "projectId"> = {},
+  overrides: VercelSandboxOptions = {},
 ): VercelRuntimeProvider | null {
+  if (env.LOCUS_SANDBOX === "off") return null;
   const token = env.LOCUS_SANDBOX_TOKEN;
   const teamId = env.LOCUS_SANDBOX_TEAM_ID;
   const projectId = env.LOCUS_SANDBOX_PROJECT_ID;
-  if (!token || !teamId || !projectId) return null;
-  return new VercelRuntimeProvider({ ...overrides, token, teamId, projectId });
+  if (token && teamId && projectId) {
+    return new VercelRuntimeProvider({ ...overrides, token, teamId, projectId });
+  }
+  if (env.VERCEL === "1") return new VercelRuntimeProvider({ ...overrides, oidc: true });
+  return null;
 }
 
 /** Deterministic sandbox name for a site key: safe characters, and the key itself not exposed. */
@@ -100,8 +112,8 @@ export class VercelRuntimeProvider implements RuntimeProvider {
   private readonly runtimes = new Map<string, VercelSiteRuntime>();
 
   constructor(config: VercelSandboxConfig) {
-    if (!config.token || !config.teamId || !config.projectId) {
-      throw new Error("VercelRuntimeProvider needs token, teamId and projectId");
+    if (!("oidc" in config) && (!config.token || !config.teamId || !config.projectId)) {
+      throw new Error("VercelRuntimeProvider needs token, teamId and projectId, or oidc");
     }
     const ports = config.ports ?? DEFAULTS.ports;
     if (ports.length === 0) throw new Error("VercelRuntimeProvider needs at least one port");
@@ -206,16 +218,22 @@ class VercelSiteRuntime implements SiteRuntime {
 
   private async connect(): Promise<Sandbox> {
     const { Sandbox } = await import("@vercel/sandbox");
-    const { token, teamId, projectId } = this.config;
+    // With OIDC no credentials are passed: the SDK reads the deployment's token itself.
+    const credentials =
+      "oidc" in this.config
+        ? {}
+        : {
+            token: this.config.token,
+            teamId: this.config.teamId,
+            projectId: this.config.projectId,
+          };
     let created = false;
     const image =
       this.config.image ??
       `vercel/sandbox/node:${(this.config.runtime ?? DEFAULTS.runtime).slice(4)}`;
     const sandbox = await Sandbox.getOrCreate({
       name: this.id,
-      token,
-      teamId,
-      projectId,
+      ...credentials,
       image,
       ports: this.config.ports ?? DEFAULTS.ports,
       timeout: this.timeoutMs,
