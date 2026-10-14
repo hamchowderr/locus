@@ -56,6 +56,11 @@ output and the preview log are cut to a bounded tail (64k characters by default)
    is stored anywhere. This is how staging and production run.
 3. Otherwise none: the caller falls back to the fake. `LOCUS_SANDBOX=off` forces this.
 
+`vercel env pull` writes `VERCEL=1` and a development OIDC token into `.env.local`, so a local
+run that loads it gets real sandboxes in the Locus project. Set `LOCUS_SANDBOX=off` to keep the
+fake locally. A host off Vercel (the Coolify agent server) has no OIDC token and needs the
+explicit token if the builder ever runs there.
+
 ## Not here yet
 
 - A network policy for the sandbox (today it has open egress, which `pnpm install` needs).
