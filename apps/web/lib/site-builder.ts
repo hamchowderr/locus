@@ -1,15 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
   type AuthorizedClient,
+  agencyEntitlement,
   assertAuthorizedClient,
+  authorizeClient,
   ClientAccessDenied,
   checkAllowance,
   mintClientDbToken,
+  monthOf,
   recordUsage,
   type SessionContext,
   type UsageMeasurement,
 } from "@locus/auth";
 import {
+  BuilderError,
   type BuilderSession,
   type BuilderUsage,
   createSiteBuilderTools,
@@ -23,8 +27,9 @@ import {
 } from "@locus/builder";
 import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
-import { auditLog, site } from "@locus/db/control";
-import type { RuntimeProvider } from "@locus/sandbox";
+import { auditLog, member, site } from "@locus/db/control";
+import { siteBrief, siteDraftFile, siteVersion, siteVersionFile } from "@locus/db/tenant";
+import { FakeRuntimeProvider, type RuntimeProvider, sandboxFromEnv } from "@locus/sandbox";
 import {
   readBrief,
   SITE_KINDS,
@@ -34,7 +39,7 @@ import {
   type VersionInfo,
   WorkspaceError,
 } from "@locus/studio";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq, gte, inArray } from "drizzle-orm";
 
 // Host wiring for the site-builder agent. Everything here starts from an `AuthorizedClient`
 // (the session's client, after the staff check) and never takes a client or agency id from a
@@ -42,22 +47,23 @@ import { and, eq } from "drizzle-orm";
 // provisioner, the sandbox provider, GitHub) come in as `SiteBuilderDeps`, so tests run on a
 // temp database, the local provisioner, the fake runtime and the stub GitHub.
 
-/** Request-context key the chat host sets to the site the conversation builds. */
+/**
+ * Request-context key for the site the conversation builds. The host sets it on every run
+ * from its own hook (`resolveActiveSiteId`), overwriting anything the browser sent.
+ */
 export const SITE_ID_KEY = "siteId";
 /**
  * Optional request-context key for the `AuthorizedClient` of the member making this request,
- * when one controller (and so one set of tools) serves several members of a client. It must be
- * for the same client the tools were made for.
+ * when one controller (and so one set of tools) serves several members of a client. Set by the
+ * host only, overwriting anything the browser sent; it must be for the same client.
  */
 export const CLIENT_KEY = "locusClient";
-/** Optional request-context key for the signed-in user, recorded as versions' author. */
-export const USER_ID_KEY = "userId";
 
 export interface SiteBuilderDeps {
   db: ControlDb;
-  /** Opens one client's own database. Only ever called with an authorized client. */
+  /** Opens one client's own database. Only ever called with a freshly authorized client. */
   openClientDb: (client: AuthorizedClient) => Promise<TenantDb>;
-  /** Sandboxes; the key is `siteRuntimeKey`. Throw from `open` when none is configured. */
+  /** Sandboxes; the key is `siteRuntimeKey`. */
   runtimes: () => RuntimeProvider;
   images?: ImageGenerator | null;
   /**
@@ -65,6 +71,8 @@ export interface SiteBuilderDeps {
    * reported to the person after the version is saved.
    */
   publish?: (() => PublishDeps) | null;
+  /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
+  billing?: boolean;
 }
 
 export interface SiteBuilderWiring {
@@ -79,6 +87,8 @@ export interface SiteBuilderWiring {
   processors: { output: [UntrustedOutputProcessor] };
   /** The resolver the tools use; exposed for hosts and tests. */
   resolve: ResolveBuilderSession;
+  /** Closes this client's pooled database connection once no call is using it. */
+  close: () => void;
 }
 
 const contextValue = (requestContext: unknown, key: string): unknown => {
@@ -107,11 +117,42 @@ export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId
   return row;
 }
 
-/** Builder usage in the units `@locus/auth` prices. */
+/**
+ * Runs the staff check again for the member behind `client`, now: membership, the member's
+ * client list and the client's status may all have changed since it was authorized. Returns a
+ * fresh `AuthorizedClient` and the member's user id. The agency and user come from the member
+ * row, never from a request.
+ */
+export async function reauthorize(
+  db: ControlDb,
+  client: AuthorizedClient,
+): Promise<{ client: AuthorizedClient; userId: string }> {
+  assertAuthorizedClient(client);
+  const [row] = await db
+    .select({ userId: member.userId, organizationId: member.organizationId })
+    .from(member)
+    .where(eq(member.id, client.memberId));
+  if (!row) throw new ClientAccessDenied("no longer a member of the agency");
+  const ctx: SessionContext = {
+    id: "site-builder",
+    userId: row.userId,
+    activeOrganizationId: row.organizationId,
+  };
+  return { client: await authorizeClient(db, ctx, client.location.id), userId: row.userId };
+}
+
+/** Builder usage in the units `@locus/auth` prices; an image keeps its model in the detail. */
 export function toMeasurement(usage: BuilderUsage): UsageMeasurement {
   switch (usage.kind) {
-    case "image":
-      return { kind: "image", count: usage.count, size: usage.size };
+    case "image": {
+      const measurement = {
+        kind: "image" as const,
+        count: usage.count,
+        size: usage.size,
+        model: usage.model,
+      };
+      return measurement;
+    }
     case "sandbox":
       return { kind: "sandbox", seconds: usage.seconds };
   }
@@ -139,14 +180,42 @@ export function usageMeter(
 }
 
 /**
+ * Publishing refusals Locus itself writes for the person, which may reach the model. Anything
+ * else (notably `GitHub: <GitHub's own text>`) is logged and replaced by a generic message.
+ */
+const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
+  /^Give the site a GitHub repository first\.$/,
+  /^Connect GitHub on the Connections page first\.$/,
+  /^The Locus GitHub app is no longer installed\. Connect GitHub again\.$/,
+  /^GitHub refused\. Check on GitHub that the Locus app is still installed and has access to the site's repository\.$/,
+  /^Locus can't reach [\w.-]+\/[\w.-]+ on GitHub\. Check that the Locus app has access to it\.$/,
+  /^The site's repository changed (since this version was started|while saving)\. Reload (it|the site) and save again\.$/,
+  /^GitHub didn't [\w ',.]+\.( Try again\.)?$/,
+  /^Publishing to GitHub isn't set up on this deployment yet\.$/,
+  /^There are no files to publish\.$/,
+];
+
+const GENERIC_PUBLISH_ERROR =
+  "The version is saved, but GitHub refused it. Check that the Locus app can still reach the " +
+  "site's repository, then save again.";
+
+/** The message the model may see for a publishing refusal. */
+export function publishMessage(error: ConnectError): string {
+  if (PERSON_FACING_PUBLISH_ERRORS.some((pattern) => pattern.test(error.message))) {
+    return error.message;
+  }
+  console.error(`Publishing a site version failed: ${error.message}`);
+  return GENERIC_PUBLISH_ERROR;
+}
+
+/**
  * Commits each saved version to the site's GitHub repository, once the site has one.
  *
  * A site without a repository is not published: the version is saved in the client's database
  * only, and nothing is created on GitHub or Vercel from the agent. Giving the site a repository
  * and a Vercel project (`ensureSiteRepo`, `ensureSiteDeployment`) is an owner's or admin's
  * decision taken outside the conversation; after that, each save commits and Vercel deploys
- * the push. Errors written for the person (`ConnectError`) reach the model as `PublishError`;
- * anything else stays generic.
+ * the push. Only Locus's own refusals reach the model, as `PublishError` (`publishMessage`).
  */
 export function publishHook(
   db: ControlDb,
@@ -165,54 +234,128 @@ export function publishHook(
       });
       return { commitSha, url };
     } catch (error) {
-      if (error instanceof ConnectError) throw new PublishError(error.message);
+      if (error instanceof ConnectError) throw new PublishError(publishMessage(error));
       throw error;
     }
   };
 }
 
-/** Keeps one client database open for a while, then reopens it with a fresh token. */
-function clientDbCache(deps: SiteBuilderDeps, client: AuthorizedClient) {
-  const LIFETIME_MS = 45 * 60_000;
-  let open: { db: Promise<TenantDb>; until: number } | undefined;
-  return () => {
-    const now = Date.now();
-    if (!open || open.until <= now) {
-      const previous = open;
-      const db = deps.openClientDb(client);
-      // A failed open is not kept.
-      db.catch(() => {
-        if (open?.db === db) open = undefined;
-      });
-      open = { db, until: now + LIFETIME_MS };
-      // Calls still using the old connection get a minute to finish.
-      if (previous) {
-        setTimeout(() => {
-          previous.db.then((d) => d.$client.close()).catch(() => {});
-        }, 60_000).unref?.();
-      }
-    }
-    return open.db;
+// One pooled connection per client database, shared by every builder in the process. It is
+// replaced (with a freshly minted token) before the token's hour is up, and a replaced or
+// closed connection is closed only once no call is still using it.
+
+interface PooledDb {
+  db: Promise<TenantDb>;
+  until: number;
+  users: number;
+  retired: boolean;
+}
+
+const POOL_LIFETIME_MS = 45 * 60_000;
+const pool = new Map<string, PooledDb>();
+
+function closeIfIdle(entry: PooledDb) {
+  if (!entry.retired || entry.users > 0) return;
+  entry.db.then((db) => db.$client.close()).catch(() => {});
+}
+
+function retire(locationId: string) {
+  const entry = pool.get(locationId);
+  if (!entry) return;
+  pool.delete(locationId);
+  entry.retired = true;
+  closeIfIdle(entry);
+}
+
+/** Closes pooled client connections (one client's, or all), each once it is idle. */
+export function closeClientDbs(locationId?: string): void {
+  for (const id of locationId ? [locationId] : [...pool.keys()]) retire(id);
+}
+
+/**
+ * Borrows the client's pooled database connection; call `release` when done. Opens one with
+ * `open(client)` when there is none or the current one is due for a fresh token, so pass a
+ * client authorized just now.
+ */
+export async function leaseClientDb(
+  open: (client: AuthorizedClient) => Promise<TenantDb>,
+  client: AuthorizedClient,
+  now = Date.now(),
+): Promise<{ db: TenantDb; release: () => void }> {
+  assertAuthorizedClient(client);
+  const id = client.location.id;
+  let entry = pool.get(id);
+  if (entry && entry.until <= now) {
+    retire(id);
+    entry = undefined;
+  }
+  if (!entry) {
+    entry = { db: open(client), until: now + POOL_LIFETIME_MS, users: 0, retired: false };
+    pool.set(id, entry);
+  }
+  const leased = entry;
+  leased.users++;
+  let db: TenantDb;
+  try {
+    db = await leased.db;
+  } catch (error) {
+    leased.users--;
+    if (pool.get(id) === leased) pool.delete(id);
+    throw error;
+  }
+  let released = false;
+  return {
+    db,
+    release: () => {
+      if (released) return;
+      released = true;
+      leased.users--;
+      closeIfIdle(leased);
+    },
+  };
+}
+
+/** How many calls are using the client's current pooled connection; for tests. */
+export const pooledUsers = (locationId: string) => pool.get(locationId)?.users ?? null;
+
+/**
+ * Site sandboxes from the environment: Vercel Sandbox with `LOCUS_SANDBOX_TOKEN`,
+ * `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`; otherwise the in-memory fake outside
+ * production (commands succeed and run nothing, like the other stubs). In production without
+ * them, sandbox tools answer that previews aren't set up; the setting names go to the log only.
+ */
+export function runtimesFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): RuntimeProvider {
+  const vercel = sandboxFromEnv(env);
+  if (vercel) return vercel;
+  if (env.NODE_ENV !== "production") return new FakeRuntimeProvider();
+  return {
+    async open() {
+      console.error(
+        "Locus is not configured: LOCUS_SANDBOX_TOKEN, LOCUS_SANDBOX_TEAM_ID or LOCUS_SANDBOX_PROJECT_ID is not set",
+      );
+      throw new BuilderError("Site previews aren't set up on this deployment.");
+    },
   };
 }
 
 /**
  * The site builder for one client: its controller mode, tools and output processor.
  *
- * `client` is the session's client from `resolveActiveClient` (the staff check has run). On
- * every tool call `resolve` reads the site id the host set in the request context
- * (`SITE_ID_KEY`), checks the site is this client's in the control database before opening
- * anything, then opens this client's database, its sandbox, images, the credit meter and
- * publishing. A host that shares the tools between members passes each request's own
- * `AuthorizedClient` under `CLIENT_KEY`; it must be for the same client.
+ * `client` is the session's client from `resolveActiveClient`. On every tool call `resolve`:
+ * reads the site id the host set (`SITE_ID_KEY`); takes the request's member from `CLIENT_KEY`
+ * (it must be for this same client) or else `client`'s; runs the staff check again for that
+ * member, so removed access stops the next call; checks the site is this client's in the
+ * control database; and only then borrows the client's database connection and builds the
+ * session. The member's user id comes from the control database, never from the request.
  */
 export function createSiteBuilder(
   deps: SiteBuilderDeps,
-  input: { client: AuthorizedClient; userId?: string | null },
+  input: { client: AuthorizedClient },
 ): SiteBuilderWiring {
   const bound = input.client;
   assertAuthorizedClient(bound);
-  const clientDb = clientDbCache(deps, bound);
 
   const resolve: ResolveBuilderSession = async (requestContext) => {
     const siteId = contextValue(requestContext, SITE_ID_KEY);
@@ -220,18 +363,17 @@ export function createSiteBuilder(
       throw new ClientAccessDenied("no site in the request context");
     }
     const given = contextValue(requestContext, CLIENT_KEY) as AuthorizedClient | undefined;
-    const client = given ?? bound;
-    assertAuthorizedClient(client);
-    if (client.location.id !== bound.location.id) {
+    const requester = given ?? bound;
+    assertAuthorizedClient(requester);
+    if (requester.location.id !== bound.location.id) {
       throw new ClientAccessDenied("request is for another client");
     }
-    const contextUser = contextValue(requestContext, USER_ID_KEY);
-    const userId = typeof contextUser === "string" ? contextUser : (input.userId ?? null);
-
+    const { client, userId } = await reauthorize(deps.db, requester);
     await clientSite(deps.db, client, siteId);
-    const workspace = new SiteWorkspace(await clientDb(), siteId);
+    const lease = await leaseClientDb(deps.openClientDb, client);
     return {
-      workspace,
+      workspace: new SiteWorkspace(lease.db, siteId),
+      release: lease.release,
       runtime: () => deps.runtimes().open(siteRuntimeKey(client, siteId)),
       images: deps.images ?? null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
@@ -247,6 +389,7 @@ export function createSiteBuilder(
     tools: createSiteBuilderTools({ resolve }),
     processors: { output: [new UntrustedOutputProcessor()] },
     resolve,
+    close: () => closeClientDbs(bound.location.id),
   };
 }
 
@@ -269,22 +412,23 @@ export function cookieValue(header: string | null | undefined, name: string): st
 
 /**
  * The site the request's member chose on the Sites page (`ACTIVE_SITE_COOKIE`), only if it is a
- * site of `locationId` — the client the host resolved from the session, never from the request.
- * Null otherwise. The cookie only names a site; this check is what makes it trustworthy, and
- * `resolve` checks again on every tool call.
+ * site of `client` (authorized from the session). Null otherwise. The cookie only names a site;
+ * this check is what makes it trustworthy, and `resolve` checks again on every tool call.
  */
 export async function activeSiteIdFor(
   db: ControlDb,
   request: Pick<Request, "headers">,
-  locationId: string,
+  client: AuthorizedClient,
 ): Promise<string | null> {
+  assertAuthorizedClient(client);
   const siteId = cookieValue(request.headers.get("cookie"), ACTIVE_SITE_COOKIE);
-  if (!siteId || !locationId) return null;
-  const [row] = await db
-    .select({ id: site.id })
-    .from(site)
-    .where(and(eq(site.id, siteId), eq(site.locationId, locationId)));
-  return row?.id ?? null;
+  if (!siteId) return null;
+  try {
+    return (await clientSite(db, client, siteId)).id;
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) return null;
+    throw error;
+  }
 }
 
 /** One client's database, with a token that names only it, minted after the staff check. */
@@ -313,15 +457,62 @@ export class SiteInputError extends Error {
   }
 }
 
+/** Why the agency may not create another site this month, or null. Soft by concurrent creates. */
+export async function newSiteRefusal(
+  db: ControlDb,
+  organizationId: string,
+  now = new Date(),
+): Promise<string | null> {
+  const entitlement = await agencyEntitlement(db, organizationId);
+  if (!entitlement.entitled) {
+    return entitlement.status === "past_due" || entitlement.status === "unpaid"
+      ? "Your Locus payment is overdue. Update it on the Billing page to create sites."
+      : "Choose a Locus plan on the Billing page to create sites.";
+  }
+  const cap = entitlement.limits?.sitesPerMonth;
+  if (cap == null) return null;
+  const [row] = await db
+    .select({ n: count() })
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.organizationId, organizationId),
+        eq(auditLog.action, "site.create"),
+        gte(auditLog.createdAt, monthOf(now).start),
+      ),
+    );
+  if ((row?.n ?? 0) < cap) return null;
+  return `Your ${entitlement.plan?.title ?? ""} plan covers ${cap} new sites a month. Upgrade on the Billing page, or wait for next month.`;
+}
+
+/** Best effort: removes whatever a failed start left of a site in the client's database. */
+async function forgetSiteFiles(tenant: TenantDb, siteId: string) {
+  try {
+    const versions = tenant
+      .select({ id: siteVersion.id })
+      .from(siteVersion)
+      .where(eq(siteVersion.siteId, siteId));
+    await tenant.batch([
+      tenant.delete(siteVersionFile).where(inArray(siteVersionFile.versionId, versions)),
+      tenant.delete(siteVersion).where(eq(siteVersion.siteId, siteId)),
+      tenant.delete(siteDraftFile).where(eq(siteDraftFile.siteId, siteId)),
+      tenant.delete(siteBrief).where(eq(siteBrief.siteId, siteId)),
+    ]);
+  } catch (error) {
+    console.error(`Couldn't clean up after a failed site start: ${(error as Error).message}`);
+  }
+}
+
 /**
  * Creates a site for the session's client and starts it from a template, so version 1 exists:
- * the control `site` row (the client from `client`, never from the form), then the brief and
- * the template's files in the client's own database. If starting fails the row is removed.
- * Anyone who may work on the client may create one; giving it a repository or Vercel project
- * stays with owners and admins.
+ * the control `site` row and its audit entry together (the client from `client`, never from
+ * the form), then the brief and the template's files in the client's own database. If starting
+ * fails, the row, the audit entry and what was written in the client's database are removed.
+ * Anyone who may work on the client may create one, within the agency's plan when billing is
+ * on; giving it a repository or Vercel project stays with owners and admins.
  */
 export async function createClientSite(
-  deps: Pick<SiteBuilderDeps, "db" | "openClientDb">,
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "billing">,
   ctx: SessionContext,
   client: AuthorizedClient,
   input: NewSite,
@@ -338,35 +529,45 @@ export async function createClientSite(
   if (templateId && !templateById(templateId)) {
     throw new SiteInputError("Pick one of the templates.");
   }
+  if (deps.billing) {
+    const refusal = await newSiteRefusal(deps.db, client.location.organizationId);
+    if (refusal) throw new SiteInputError(refusal);
+  }
 
   const siteId = randomUUID();
-  await deps.db.insert(site).values({ id: siteId, locationId: client.location.id });
-  let version: VersionInfo;
+  const auditId = randomUUID();
+  await deps.db.batch([
+    deps.db.insert(site).values({ id: siteId, locationId: client.location.id }),
+    deps.db.insert(auditLog).values({
+      id: auditId,
+      organizationId: client.location.organizationId,
+      actorUserId: ctx.userId,
+      locationId: client.location.id,
+      action: "site.create",
+      detail: { siteId, templateId: templateId ?? null },
+    }),
+  ]);
+  let tenant: TenantDb | undefined;
+  let release: (() => void) | undefined;
   try {
-    const tenant = await deps.openClientDb(client);
-    try {
-      ({ version } = await startSite(new SiteWorkspace(tenant, siteId), {
-        brief: { name, kind: input.kind as SiteKind },
-        ...(templateId ? { templateId } : {}),
-        userId: ctx.userId,
-      }));
-    } finally {
-      tenant.$client.close();
-    }
+    ({ db: tenant, release } = await leaseClientDb(deps.openClientDb, client));
+    const { version } = await startSite(new SiteWorkspace(tenant, siteId), {
+      brief: { name, kind: input.kind as SiteKind },
+      ...(templateId ? { templateId } : {}),
+      userId: ctx.userId,
+    });
+    return { siteId, version };
   } catch (error) {
-    await deps.db.delete(site).where(eq(site.id, siteId));
+    if (tenant) await forgetSiteFiles(tenant, siteId);
+    await deps.db.batch([
+      deps.db.delete(auditLog).where(eq(auditLog.id, auditId)),
+      deps.db.delete(site).where(eq(site.id, siteId)),
+    ]);
     if (error instanceof WorkspaceError) throw new SiteInputError(error.message);
     throw error;
+  } finally {
+    release?.();
   }
-  await deps.db.insert(auditLog).values({
-    id: randomUUID(),
-    organizationId: client.location.organizationId,
-    actorUserId: ctx.userId,
-    locationId: client.location.id,
-    action: "site.create",
-    detail: { siteId, templateId: templateId ?? null },
-  });
-  return { siteId, version };
 }
 
 /** The sites' names from their briefs in the client's database, by site id. */
@@ -377,14 +578,14 @@ export async function siteNames(
 ): Promise<Map<string, string>> {
   const names = new Map<string, string>();
   if (siteIds.length === 0) return names;
-  const tenant = await deps.openClientDb(client);
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
       const brief = await readBrief(tenant, id);
       if (brief) names.set(id, brief.name);
     }
   } finally {
-    tenant.$client.close();
+    release();
   }
   return names;
 }

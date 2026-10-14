@@ -422,6 +422,7 @@ export async function chooseSite(form: FormData) {
     siteId = (await clientSite(locus().db, client, text(form, "siteId"))).id;
   } catch (error) {
     if (error instanceof ClientAccessDenied) back("/sites", error);
+    if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
     throw error;
   }
   (await cookies()).set(ACTIVE_SITE_COOKIE, siteId, {

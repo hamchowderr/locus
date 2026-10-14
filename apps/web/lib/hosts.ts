@@ -2,6 +2,7 @@ import {
   createStubGithub,
   createStubVercel,
   type GithubConnectDeps,
+  InstallationTokenCache,
   type PublishDeps,
   type SiteDeps,
   STUB_GITHUB_CODE,
@@ -86,8 +87,10 @@ export function siteDeps(): SiteDeps {
  * For publishing a client's site to the agency's GitHub (as the Locus GitHub App) and its
  * Vercel team. The App's private key comes from the secret store, never the environment.
  */
+const installationTokens = new InstallationTokenCache();
+
 export function publishDeps(): PublishDeps {
-  const site = siteDeps();
+  const site = { ...siteDeps(), tokens: installationTokens };
   if (serviceMode("GITHUB_MODE") === "stub") {
     stubGithub ??= createStubGithub();
     return {
