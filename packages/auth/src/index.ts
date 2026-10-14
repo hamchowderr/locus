@@ -6,6 +6,7 @@ export {
   mayManageBilling,
   newClientRefusal,
 } from "./billing.ts";
+export { chatKitKey, chatKitSessionId } from "./chat-kit.ts";
 export {
   type AuthorizedClient,
   assertAuthorizedClient,

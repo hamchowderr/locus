@@ -39,6 +39,18 @@ export const CONTROLLER_ID = "locus";
 
 /** Which client each controller serves; sessions are opened through it, never named by caller. */
 const clientOf = new WeakMap<AgentController, string>();
+const storageOf = new WeakMap<AgentController, ConversationStore>();
+
+/**
+ * The client's own store a controller keeps its conversations in. A Mastra instance hosting the
+ * controller must be given it: the controller reads threads and messages through its parent
+ * Mastra's storage, and a Mastra without one falls back to an in-memory store.
+ */
+export function controllerStorage(controller: AgentController): ConversationStore {
+  const storage = storageOf.get(controller);
+  if (!storage) throw new Error("not a Locus controller");
+  return storage;
+}
 
 export const ASK_TOOLS = ["load_skill", "query_data", "ask_user"];
 
@@ -141,6 +153,7 @@ export async function createLocusController({
   });
   await controller.init();
   clientOf.set(controller, locationId);
+  storageOf.set(controller, storage);
   return controller;
 }
 
@@ -156,9 +169,17 @@ export async function openClientSession(
 ) {
   const locationId = clientOf.get(controller);
   if (!locationId) throw new Error("not a Locus controller");
+  const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
+  const scope = `member:${memberId}`;
   return controller.createSession({
-    resourceId: clientResource({ token: "", tokenKind: "location", locationId }),
-    scope: `member:${memberId}`,
+    resourceId,
+    // The id Mastra's own routes give a scoped session, so every route reaches one session
+    // with one identity, whichever opens it first.
+    id: `${resourceId}::${scope}`,
+    ownerId: controller.id,
+    scope,
+    // A thread is made when the first message needs one, so opening leaves no empty thread.
+    createInitialThread: false,
     ...(threadId ? { threadId } : {}),
   });
 }
