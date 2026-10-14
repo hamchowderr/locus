@@ -119,6 +119,7 @@ function deps(overrides: Partial<SiteBuilderDeps> = {}): SiteBuilderDeps {
     runtimes: () => runtimes,
     images: null,
     publish: publishDeps,
+    locusUrl: "https://locus.test",
     ...overrides,
   };
 }
@@ -403,7 +404,11 @@ describe("publishing saved versions", () => {
     const expected = Object.fromEntries(
       snapshot.map((f) => [f.path, typeof f.content === "string" ? f.content : ""]),
     );
-    expect(github.repoFiles(repoFullName as string)).toEqual(expected);
+    // The published copy points the site's forms at this site's Locus endpoint.
+    const pushed = github.repoFiles(repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain(`"https://locus.test/api/sites/${siteId}/leads"`);
+    expect(expected["lib/locus.ts"]).toContain("leadEndpoint: null");
+    expect({ ...pushed, "lib/locus.ts": "" }).toEqual({ ...expected, "lib/locus.ts": "" });
     expect(github.repoFiles(repoFullName as string)?.["app/about/page.tsx"]).toBe("about");
     const latest = await session.workspace.latestVersion();
     expect(latest?.commitSha).toMatch(/\w+/);

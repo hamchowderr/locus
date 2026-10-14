@@ -110,6 +110,13 @@ Only Locus's own refusal messages reach the model; GitHub's raw text is logged i
 The GitHub App's private key comes from the secret store (`github-app-key` script), never the
 environment. With `GITHUB_MODE=stub` the stub GitHub and a throwaway key are used.
 
+Each published copy gets `lib/locus.ts` pointing the site's form route at this deployment's
+`/api/sites/<siteId>/leads` (`withLocusSettings`, using `BETTER_AUTH_URL`, or the branch URL on
+a Vercel preview). That route (`app/api/sites/[siteId]/leads`) takes JSON only, sends no CORS
+headers (so only the site's server reaches it, never a browser on another origin) and hands the
+body to `submitSiteLead` in `@locus/connect`, which finds the client from the site's row and
+writes the lead to its GHL sub-account. See `packages/connect/README.md`.
+
 ## Billing
 
 Three monthly plans (`PLANS` in `@locus/auth`, names and limits are placeholders). Each agency
