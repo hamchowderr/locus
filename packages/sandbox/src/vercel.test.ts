@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InvalidPathError } from "./paths.ts";
+import type { SiteRuntime } from "./runtime.ts";
 import { sandboxFromEnv, sandboxName, VercelRuntimeProvider } from "./vercel.ts";
 
 const sdk = vi.hoisted(() => ({ getOrCreate: vi.fn() }));
@@ -7,6 +8,7 @@ vi.mock("@vercel/sandbox", () => ({ Sandbox: { getOrCreate: sdk.getOrCreate } })
 
 const TOKEN = "vercel-token-must-not-leak";
 const CONFIG = { token: TOKEN, teamId: "team_1", projectId: "prj_1", timeoutMs: 600_000 };
+const MARKER = "/vercel/sandbox/.locus/seeded";
 
 interface RunParams {
   cmd: string;
@@ -16,27 +18,51 @@ interface RunParams {
   detached?: boolean;
   timeoutMs?: number;
 }
-type Outcome = { exitCode?: number; stdout?: string; stderr?: string };
+interface Outcome {
+  exitCode?: number;
+  durationMs?: number;
+  stdout?: string;
+  stderr?: string;
+  /** Output as a sequence of log lines, instead of stdout/stderr. */
+  lines?: Iterable<{ stream: "stdout" | "stderr"; data: string }>;
+}
 
-function finished(outcome: Outcome = {}) {
+/** What the SDK's runCommand resolves to: a Command (detached) or a CommandFinished. */
+function command(outcome: Outcome) {
+  const exitCode = outcome.exitCode ?? 0;
   return {
-    exitCode: outcome.exitCode ?? 0,
-    stdout: async () => outcome.stdout ?? "",
-    stderr: async () => outcome.stderr ?? "",
+    exitCode,
+    async *logs() {
+      if (outcome.lines) {
+        yield* outcome.lines;
+        return;
+      }
+      if (outcome.stdout) yield { stream: "stdout" as const, data: outcome.stdout };
+      if (outcome.stderr) yield { stream: "stderr" as const, data: outcome.stderr };
+    },
+    wait: async () => ({ exitCode, durationMs: outcome.durationMs }),
   };
 }
 
-/** A stand-in for the SDK's `Sandbox`, with every call recorded. */
+const script = (params: RunParams | undefined) => params?.args?.[1] ?? "";
+const isPreviewLaunch = (params: RunParams) => script(params).includes("next dev");
+
+/** A stand-in for the SDK's `Sandbox`, with every call recorded and a tiny filesystem. */
 function fakeSdkSandbox(handler: (params: RunParams) => Outcome | Promise<Outcome> = () => ({})) {
   const sandbox = {
     expiresAt: new Date(Date.now() + 600_000) as Date | undefined,
     runs: [] as RunParams[],
+    written: new Set<string>(),
     runCommand: vi.fn(async (params: RunParams) => {
       sandbox.runs.push(params);
-      if (params.detached) return { cmdId: "cmd_1" };
-      return finished(await handler(params));
+      if (params.cmd === "test" && params.args?.[0] === "-f") {
+        return command({ exitCode: sandbox.written.has(params.args[1] ?? "") ? 0 : 1 });
+      }
+      return command(await handler(params));
     }),
-    writeFiles: vi.fn(async (_files: { path: string; content: string | Uint8Array }[]) => {}),
+    writeFiles: vi.fn(async (files: { path: string; content: string | Uint8Array }[]) => {
+      for (const file of files) sandbox.written.add(file.path);
+    }),
     mkDir: vi.fn(async () => {}),
     extendTimeout: vi.fn(async (_ms: number) => {}),
     stop: vi.fn(async () => ({})),
@@ -44,6 +70,10 @@ function fakeSdkSandbox(handler: (params: RunParams) => Outcome | Promise<Outcom
   };
   return sandbox;
 }
+type FakeSdkSandbox = ReturnType<typeof fakeSdkSandbox>;
+
+/** Commands the runtime ran for the agent, without the seed-marker checks. */
+const agentRuns = (sandbox: FakeSdkSandbox) => sandbox.runs.filter((r) => r.cmd !== "test");
 
 function gone(status = 404, code?: string) {
   return Object.assign(new Error("gone"), {
@@ -52,12 +82,25 @@ function gone(status = 404, code?: string) {
   });
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+const tick = () => new Promise((r) => setTimeout(r, 5));
+
 /** getOrCreate that hands out the given sandboxes in order, firing onCreate for `created` ones. */
-function serve(...sandboxes: { sandbox: ReturnType<typeof fakeSdkSandbox>; created: boolean }[]) {
+function serve(
+  ...sandboxes: { sandbox: FakeSdkSandbox; created: boolean; gate?: Promise<void> }[]
+) {
   sdk.getOrCreate.mockImplementation(
     async (params: { onCreate?: (s: unknown) => Promise<void> }) => {
       const next = sandboxes.shift();
       if (!next) throw new Error("no more sandboxes");
+      await next.gate;
       if (next.created) await params.onCreate?.(next.sandbox);
       return next.sandbox;
     },
@@ -129,19 +172,70 @@ describe("VercelRuntimeProvider", () => {
     expect(params).not.toHaveProperty("env");
   });
 
-  it("calls onCreate when the sandbox was created empty", async () => {
-    serve(
-      { sandbox: fakeSdkSandbox(), created: true },
-      { sandbox: fakeSdkSandbox(), created: false },
-    );
-    const onCreate = vi.fn(async () => {});
-    const provider = new VercelRuntimeProvider({ ...CONFIG, onCreate });
-    const runtime = await provider.open("new");
-    expect(onCreate).toHaveBeenCalledWith("new", runtime);
+  describe("seeding with onCreate", () => {
+    it("seeds a new sandbox once, through a view of that sandbox, and marks it", async () => {
+      const sandbox = fakeSdkSandbox();
+      serve({ sandbox, created: true }, { sandbox, created: false });
+      const onCreate = vi.fn(async (_key: string, view: SiteRuntime) => {
+        await view.writeFiles([{ path: "app/page.tsx", content: "seed" }]);
+      });
+      const provider = new VercelRuntimeProvider({ ...CONFIG, onCreate });
 
-    await runtime.stop();
-    await provider.open("new");
-    expect(onCreate).toHaveBeenCalledTimes(1);
+      const runtime = await provider.open("new");
+      expect(onCreate).toHaveBeenCalledTimes(1);
+      expect(onCreate.mock.calls[0]?.[0]).toBe("new");
+      expect([...sandbox.written]).toEqual(["/vercel/sandbox/app/page.tsx", MARKER]);
+
+      await runtime.stop();
+      await provider.open("new");
+      expect(onCreate).toHaveBeenCalledTimes(1);
+    });
+
+    it("seeds again on the next open when seeding failed", async () => {
+      const sandbox = fakeSdkSandbox();
+      serve({ sandbox, created: true }, { sandbox, created: false }, { sandbox, created: false });
+      const onCreate = vi.fn(async () => {}).mockRejectedValueOnce(new Error("repo unreachable"));
+      const provider = new VercelRuntimeProvider({ ...CONFIG, onCreate });
+
+      await expect(provider.open("s")).rejects.toThrow("repo unreachable");
+      expect(sandbox.written.has(MARKER)).toBe(false);
+
+      const runtime = await provider.open("s");
+      expect(onCreate).toHaveBeenCalledTimes(2);
+      expect(sandbox.written.has(MARKER)).toBe(true);
+
+      await runtime.stop();
+      await provider.open("s");
+      expect(onCreate).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not hand out the runtime to a concurrent open before seeding is done", async () => {
+      const sandbox = fakeSdkSandbox();
+      serve({ sandbox, created: true });
+      const release = deferred();
+      const seeding = deferred();
+      const onCreate = vi.fn(async () => {
+        seeding.resolve();
+        await release.promise;
+      });
+      const provider = new VercelRuntimeProvider({ ...CONFIG, onCreate });
+
+      const first = provider.open("s");
+      await seeding.promise;
+      let secondDone = false;
+      const second = provider.open("s").then((r) => {
+        secondDone = true;
+        return r;
+      });
+      await tick();
+      expect(secondDone).toBe(false);
+
+      release.resolve();
+      const [a, b] = await Promise.all([first, second]);
+      expect(a).toBe(b);
+      expect(sandbox.written.has(MARKER)).toBe(true);
+      expect(sdk.getOrCreate).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("writes files under the project root and validates every path first", async () => {
@@ -171,15 +265,18 @@ describe("VercelRuntimeProvider", () => {
     expect(sandbox.runs).toEqual([]);
   });
 
-  it("deletes files with rm in the project root", async () => {
+  it("deletes files with rm in the project root, within the command timeout", async () => {
     const sandbox = fakeSdkSandbox();
     serve({ sandbox, created: false });
-    const runtime = await new VercelRuntimeProvider(CONFIG).open("s");
+    const runtime = await new VercelRuntimeProvider({ ...CONFIG, commandTimeoutMs: 7_000 }).open(
+      "s",
+    );
     await runtime.deleteFiles(["app/old", "./x.ts"]);
     expect(sandbox.runs[0]).toMatchObject({
       cmd: "rm",
       args: ["-rf", "--", "app/old", "x.ts"],
       cwd: "/vercel/sandbox",
+      timeoutMs: 7_000,
     });
   });
 
@@ -205,32 +302,58 @@ describe("VercelRuntimeProvider", () => {
       cwd: "/vercel/sandbox",
       env: { NEXT_TELEMETRY_DISABLED: "1" },
       timeoutMs: 1234,
+      detached: true,
     });
   });
 
-  it("reports a command killed at its timeout", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const sandbox = fakeSdkSandbox(() => {
-      vi.setSystemTime(Date.now() + 5_001);
-      return { exitCode: 137 };
-    });
+  it("keeps only the tail of huge output while streaming it", async () => {
+    const chunk = "y".repeat(1_000);
+    function* flood() {
+      for (let i = 0; i < 20_000; i++) yield { stream: "stdout" as const, data: chunk };
+      yield { stream: "stdout" as const, data: "LAST LINE" };
+      yield { stream: "stderr" as const, data: "err" };
+    }
+    const sandbox = fakeSdkSandbox(() => ({ exitCode: 2, lines: flood() }));
+    serve({ sandbox, created: false });
+    const runtime = await new VercelRuntimeProvider({ ...CONFIG, maxOutputChars: 1_000 }).open("s");
+
+    const result = await runtime.run("pnpm", ["build"]);
+    expect(result.stdout.endsWith("LAST LINE")).toBe(true);
+    expect(result.stdout).toContain("[... 19999009 characters truncated ...]");
+    expect(result.stdout.length).toBeLessThan(1_100);
+    expect(result.stderr).toBe("err");
+  });
+
+  it("reports a command killed at its timeout, and only that", async () => {
+    const outcomes: Outcome[] = [
+      { exitCode: 137, durationMs: 5_000 },
+      { exitCode: 137, durationMs: 100 },
+      { exitCode: 1, durationMs: 6_000 },
+    ];
+    const sandbox = fakeSdkSandbox(() => outcomes.shift() ?? {});
     serve({ sandbox, created: false });
     const runtime = await new VercelRuntimeProvider(CONFIG).open("s");
-    const result = await runtime.run("sleep", ["60"], { timeoutMs: 5_000 });
-    expect(result).toMatchObject({ exitCode: 137, timedOut: true });
+
+    const opts = { timeoutMs: 5_000 };
+    expect(await runtime.run("sleep", ["60"], opts)).toMatchObject({
+      exitCode: 137,
+      timedOut: true,
+    });
+    expect((await runtime.run("oom", [], opts)).timedOut).toBe(false);
+    expect((await runtime.run("fails", [], opts)).timedOut).toBe(false);
   });
 
   it("never gives a command the token, in env, args or anywhere else", async () => {
     let previewUp = false;
     const sandbox = fakeSdkSandbox((params) => {
-      const script = params.args?.[1] ?? "";
-      if (script.includes("kill -0") && !script.includes("while")) {
-        return { exitCode: previewUp ? 0 : 1 };
-      }
+      if (script(params).includes("/proc/")) return { exitCode: previewUp ? 0 : 1 };
       return {};
     });
     serve({ sandbox, created: true });
-    const runtime = await new VercelRuntimeProvider(CONFIG).open("s");
+    const runtime = await new VercelRuntimeProvider({
+      ...CONFIG,
+      onCreate: async (_key, view) => view.writeFiles([{ path: "a", content: "b" }]),
+    }).open("s");
 
     await runtime.writeFiles([{ path: "package.json", content: "{}" }]);
     await runtime.install();
@@ -266,35 +389,53 @@ describe("VercelRuntimeProvider", () => {
       env: { NEXT_TELEMETRY_DISABLED: "1", CI: "1" },
       timeoutMs: 600_000,
     });
-    const script = run?.args?.[1] ?? "";
     expect(run?.args?.[0]).toBe("-c");
-    expect(script).toContain("sha256sum");
-    expect(script).toContain("node_modules/.locus-install-stamp");
-    expect(script).toContain("pnpm install");
-    expect(script).toContain("npm install");
+    expect(script(run)).toContain("sha256sum");
+    expect(script(run)).toContain("node_modules/.locus-install-stamp");
+    expect(script(run)).toContain("pnpm install");
+    expect(script(run)).toContain("npm install");
   });
 
-  it("starts next dev once, detached, and returns the public URL", async () => {
+  it("starts next dev once and returns the public URL", async () => {
     let running = false;
     const sandbox = fakeSdkSandbox((params) => {
-      const script = params.args?.[1] ?? "";
-      if (script.includes("/proc/")) return { exitCode: running ? 0 : 1 };
+      if (script(params).includes("/proc/")) return { exitCode: running ? 0 : 1 };
       return {};
     });
     serve({ sandbox, created: false });
     const runtime = await new VercelRuntimeProvider({ ...CONFIG, ports: [3001, 4000] }).open("s");
 
     expect(await runtime.startPreview()).toEqual({ url: "https://sb-3001.vercel.run" });
-    const detached = sandbox.runs.filter((r) => r.detached);
-    expect(detached).toHaveLength(1);
-    expect(detached[0]).toMatchObject({ cmd: "sh", cwd: "/vercel/sandbox" });
-    expect(detached[0]?.args?.[1]).toContain("next dev --port 3001 --hostname 0.0.0.0");
+    const launches = sandbox.runs.filter(isPreviewLaunch);
+    expect(launches).toHaveLength(1);
+    expect(launches[0]).toMatchObject({ cmd: "sh", cwd: "/vercel/sandbox", detached: true });
+    expect(launches[0]).not.toHaveProperty("timeoutMs");
+    expect(script(launches[0])).toContain("next dev --port 3001 --hostname 0.0.0.0");
     // It waited for the server to answer.
-    expect(sandbox.runs.some((r) => r.args?.[1]?.includes("http://127.0.0.1:3001/"))).toBe(true);
+    expect(sandbox.runs.some((r) => script(r).includes("http://127.0.0.1:3001/"))).toBe(true);
 
     running = true;
     expect(await runtime.startPreview()).toEqual({ url: "https://sb-3001.vercel.run" });
-    expect(sandbox.runs.filter((r) => r.detached)).toHaveLength(1);
+    expect(sandbox.runs.filter(isPreviewLaunch)).toHaveLength(1);
+  });
+
+  it("shares one start between concurrent startPreview calls", async () => {
+    let running = false;
+    const sandbox = fakeSdkSandbox((params) => {
+      if (script(params).includes("/proc/")) return { exitCode: running ? 0 : 1 };
+      if (isPreviewLaunch(params)) running = true;
+      return {};
+    });
+    serve({ sandbox, created: false });
+    const runtime = await new VercelRuntimeProvider(CONFIG).open("s");
+
+    const urls = await Promise.all([
+      runtime.startPreview(),
+      runtime.startPreview(),
+      runtime.startPreview(),
+    ]);
+    expect(urls.map((u) => u.url)).toEqual(Array(3).fill("https://sb-3000.vercel.run"));
+    expect(sandbox.runs.filter(isPreviewLaunch)).toHaveLength(1);
   });
 
   it("returns the tail of the dev server log", async () => {
@@ -302,7 +443,7 @@ describe("VercelRuntimeProvider", () => {
     serve({ sandbox, created: false });
     const runtime = await new VercelRuntimeProvider(CONFIG).open("s");
     expect(await runtime.previewLogs()).toBe("Failed to compile ./app/page.tsx");
-    expect(sandbox.runs[0]?.args?.[1]).toContain("tail -c 64000 /tmp/locus-preview.log");
+    expect(script(sandbox.runs[0])).toContain("tail -c 64000 /tmp/locus-preview.log");
   });
 
   it("extends the session timeout when it is running low", async () => {
@@ -328,18 +469,24 @@ describe("VercelRuntimeProvider", () => {
   it.each([
     ["deleted", gone(404)],
     ["snapshot expired", gone(410, "snapshot_not_found")],
-  ])("recreates a sandbox that was %s and retries", async (_label, error) => {
+  ])("recreates a sandbox that was %s, reseeds it and retries the call", async (_label, error) => {
     const old = fakeSdkSandbox();
-    old.runCommand.mockRejectedValueOnce(error);
     const fresh = fakeSdkSandbox(() => ({ stdout: "ok" }));
-    serve({ sandbox: old, created: false }, { sandbox: fresh, created: true });
+    serve({ sandbox: old, created: true }, { sandbox: fresh, created: true });
     const onCreate = vi.fn(async () => {});
     const runtime = await new VercelRuntimeProvider({ ...CONFIG, onCreate }).open("s");
+    old.runCommand.mockRejectedValueOnce(error);
 
-    expect((await runtime.run("ls")).stdout).toBe("ok");
+    expect(await runtime.run("ls")).toMatchObject({ exitCode: 0, stdout: "ok" });
     expect(sdk.getOrCreate).toHaveBeenCalledTimes(2);
-    expect(onCreate).toHaveBeenCalledTimes(1);
-    expect(fresh.runs).toHaveLength(1);
+    expect(onCreate).toHaveBeenCalledTimes(2);
+    expect(fresh.written.has(MARKER)).toBe(true);
+    expect(agentRuns(fresh)).toHaveLength(1);
+    expect(agentRuns(fresh)[0]?.cmd).toBe("ls");
+
+    // Later calls use the new sandbox.
+    await runtime.run("pwd");
+    expect(agentRuns(fresh)).toHaveLength(2);
   });
 
   it("does not retry other errors", async () => {
@@ -365,6 +512,25 @@ describe("VercelRuntimeProvider", () => {
     expect(reopened).not.toBe(runtime);
     expect(reopened.id).toBe(runtime.id);
     expect(sdk.getOrCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("stop() waits for an open in flight and stops what it opened", async () => {
+    const old = fakeSdkSandbox();
+    const fresh = fakeSdkSandbox();
+    const gate = deferred();
+    serve({ sandbox: old, created: false }, { sandbox: fresh, created: false, gate: gate.promise });
+    const runtime = await new VercelRuntimeProvider(CONFIG).open("s");
+
+    // The sandbox is gone, so this call is now reopening it.
+    old.runCommand.mockRejectedValueOnce(gone(404));
+    const running = runtime.run("ls");
+    await tick();
+    const stopping = runtime.stop();
+    gate.resolve();
+
+    await stopping;
+    await running;
+    expect(fresh.stop).toHaveBeenCalledTimes(1);
   });
 
   it("forgets a key whose open failed", async () => {

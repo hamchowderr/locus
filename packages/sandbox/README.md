@@ -33,7 +33,11 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   (`locus-site-<hash of key>`) from the `vercel/sandbox/node:<n>` image. Reused in-process per
   key, and found again by name after a restart. A stopped sandbox resumes with its files on the
   next call; its session is extended while in use; one that was deleted or lost its snapshot is
-  recreated empty, and `onCreate` lets the caller seed it again.
+  recreated empty, and `onCreate` lets the caller seed it again. Seeding is complete when
+  `.locus/seeded` exists in the project root: until then (a failed or interrupted seeding) every
+  open runs `onCreate` again, and no caller gets the runtime before it has finished.
+  Command output is streamed into a bounded tail, never held whole in memory; concurrent
+  `startPreview` calls share one start.
   `install` runs `pnpm install` (or `npm install` with only a `package-lock.json`) when the hash
   of `package.json` and lockfiles differs from the last successful install.
 - **`FakeRuntimeProvider`** (`@locus/sandbox/fake`, also exported from the index): in-memory

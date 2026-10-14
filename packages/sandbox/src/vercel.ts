@@ -12,7 +12,7 @@
 import { createHash } from "node:crypto";
 import { posix } from "node:path";
 import type { Sandbox } from "@vercel/sandbox";
-import { DEFAULT_MAX_OUTPUT_CHARS, truncateTail } from "./output.ts";
+import { DEFAULT_MAX_OUTPUT_CHARS, TailBuffer, truncateTail } from "./output.ts";
 import { validatePath } from "./paths.ts";
 import type { CommandResult, RuntimeFile, RuntimeProvider, SiteRuntime } from "./runtime.ts";
 
@@ -71,6 +71,9 @@ const COMMAND_ENV: Record<string, string> = { NEXT_TELEMETRY_DISABLED: "1" };
 const PREVIEW_PID = "/tmp/locus-preview.pid";
 const PREVIEW_LOG = "/tmp/locus-preview.log";
 const INSTALL_STAMP = "node_modules/.locus-install-stamp";
+/** Written under the project root once `onCreate` has completed for a sandbox. */
+const SEED_MARKER = ".locus/seeded";
+const TIMEOUT_TOLERANCE_MS = 250;
 
 /**
  * Reads `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`. Returns
@@ -150,13 +153,23 @@ class VercelSiteRuntime implements SiteRuntime {
   readonly key: string;
   private readonly config: VercelSandboxConfig;
   private readonly onStop: () => void;
+  /** Set for the view handed to `onCreate`: it always uses this sandbox and never reopens. */
+  private readonly pinned: Sandbox | null;
+  /** Only set once the sandbox is open and seeded. */
   private sandbox: Sandbox | null = null;
   private opening: Promise<Sandbox> | null = null;
+  private previewStart: Promise<{ url: string }> | null = null;
 
-  constructor(key: string, config: VercelSandboxConfig, onStop: () => void) {
+  constructor(
+    key: string,
+    config: VercelSandboxConfig,
+    onStop: () => void,
+    pinned: Sandbox | null = null,
+  ) {
     this.key = key;
     this.config = config;
     this.onStop = onStop;
+    this.pinned = pinned;
     this.id = sandboxName(key, config.namePrefix);
   }
 
@@ -172,12 +185,16 @@ class VercelSiteRuntime implements SiteRuntime {
   private get maxOutput(): number {
     return this.config.maxOutputChars ?? DEFAULT_MAX_OUTPUT_CHARS;
   }
+  private get seedMarker(): string {
+    return posix.join(this.root, SEED_MARKER);
+  }
 
   async ready(): Promise<void> {
     await this.ensure();
   }
 
   private ensure(): Promise<Sandbox> {
+    if (this.pinned) return Promise.resolve(this.pinned);
     if (this.sandbox) return Promise.resolve(this.sandbox);
     if (!this.opening) {
       this.opening = this.connect().finally(() => {
@@ -209,14 +226,34 @@ class VercelSiteRuntime implements SiteRuntime {
         created = true;
       },
     });
-    this.sandbox = sandbox;
     if (created) {
       await sandbox.mkDir(this.root).catch(() => {
         // The default root already exists; a custom one may not.
       });
-      await this.config.onCreate?.(this.key, this);
     }
+    await this.seed(sandbox, created);
+    // Published only now, so nobody gets an unseeded sandbox through ensure().
+    this.sandbox = sandbox;
     return sandbox;
+  }
+
+  /**
+   * Runs `onCreate` until it has once completed for this sandbox: a marker file is written when
+   * it succeeds, so a seeding that failed or was interrupted runs again on the next open.
+   */
+  private async seed(sandbox: Sandbox, created: boolean): Promise<void> {
+    const onCreate = this.config.onCreate;
+    if (!onCreate) return;
+    if (!created) {
+      const check = await sandbox.runCommand({
+        cmd: "test",
+        args: ["-f", this.seedMarker],
+        env: COMMAND_ENV,
+      });
+      if (check.exitCode === 0) return;
+    }
+    await onCreate(this.key, new VercelSiteRuntime(this.key, this.config, () => {}, sandbox));
+    await sandbox.writeFiles([{ path: this.seedMarker, content: new Date().toISOString() }]);
   }
 
   /** Keeps a running session alive while it is used. Best effort: never fails the call. */
@@ -240,12 +277,16 @@ class VercelSiteRuntime implements SiteRuntime {
     try {
       return await fn(sandbox);
     } catch (error) {
-      if (!isGone(error)) throw error;
+      if (this.pinned || !isGone(error)) throw error;
       if (this.sandbox === sandbox) this.sandbox = null;
       return fn(await this.ensure());
     }
   }
 
+  /**
+   * Runs a command and streams its output into bounded tails (the SDK's own `stdout()` would
+   * hold all of it in memory).
+   */
   private async exec(
     command: string,
     args: string[],
@@ -254,21 +295,30 @@ class VercelSiteRuntime implements SiteRuntime {
   ): Promise<CommandResult> {
     return this.use(async (sandbox) => {
       const started = Date.now();
-      const finished = await sandbox.runCommand({
+      const running = await sandbox.runCommand({
         cmd: command,
         args,
         cwd: this.root,
         env,
         timeoutMs,
+        detached: true,
       });
-      const [stdout, stderr] = await Promise.all([finished.stdout(), finished.stderr()]);
-      const elapsed = Date.now() - started;
-      const timedOut = elapsed >= timeoutMs && finished.exitCode !== 0;
+      const stdout = new TailBuffer(this.maxOutput);
+      const stderr = new TailBuffer(this.maxOutput);
+      const drain = async () => {
+        for await (const line of running.logs()) {
+          (line.stream === "stdout" ? stdout : stderr).push(line.data);
+        }
+      };
+      const [, finished] = await Promise.all([drain(), running.wait()]);
+      const duration = finished.durationMs ?? Date.now() - started;
+      // The sandbox SIGKILLs a command at its timeout: 137 = 128 + 9.
+      const killed = finished.exitCode === 137 || finished.exitCode < 0;
       return {
         exitCode: finished.exitCode,
-        stdout: truncateTail(stdout, this.maxOutput),
-        stderr: truncateTail(stderr, this.maxOutput),
-        timedOut,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+        timedOut: killed && duration >= timeoutMs - TIMEOUT_TOLERANCE_MS,
       };
     });
   }
@@ -285,7 +335,11 @@ class VercelSiteRuntime implements SiteRuntime {
   async deleteFiles(paths: string[]): Promise<void> {
     if (paths.length === 0) return;
     const checked = paths.map(validatePath);
-    const result = await this.exec("rm", ["-rf", "--", ...checked], DEFAULTS.commandTimeoutMs);
+    const result = await this.exec(
+      "rm",
+      ["-rf", "--", ...checked],
+      this.config.commandTimeoutMs ?? DEFAULTS.commandTimeoutMs,
+    );
     if (result.exitCode !== 0) {
       throw new Error(`Deleting files failed (exit ${result.exitCode}): ${result.stderr}`);
     }
@@ -330,7 +384,17 @@ class VercelSiteRuntime implements SiteRuntime {
     return result.exitCode === 0;
   }
 
-  async startPreview(): Promise<{ url: string }> {
+  /** Concurrent calls share one start, so two `next dev` never race for the port. */
+  startPreview(): Promise<{ url: string }> {
+    if (!this.previewStart) {
+      this.previewStart = this.doStartPreview().finally(() => {
+        this.previewStart = null;
+      });
+    }
+    return this.previewStart;
+  }
+
+  private async doStartPreview(): Promise<{ url: string }> {
     const port = this.previewPort;
     if (!(await this.previewRunning())) {
       const script = `echo $$ > ${PREVIEW_PID}; exec ./node_modules/.bin/next dev --port ${port} --hostname 0.0.0.0 > ${PREVIEW_LOG} 2>&1`;
@@ -378,7 +442,8 @@ class VercelSiteRuntime implements SiteRuntime {
 
   async stop(): Promise<void> {
     this.onStop();
-    const sandbox = this.sandbox;
+    // An open in flight would otherwise publish a sandbox nobody stops.
+    const sandbox = this.sandbox ?? (await this.opening?.catch(() => null)) ?? null;
     this.sandbox = null;
     if (!sandbox) return;
     try {

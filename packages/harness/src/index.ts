@@ -25,3 +25,11 @@ export {
   type WriteGuard,
 } from "./test-mode.ts";
 export { createLocusTools, type ToolDeps } from "./tools.ts";
+export {
+  createRunTaint,
+  looksLikeInstructions,
+  type RunTaint,
+  UntrustedContentProcessor,
+  WITHHELD,
+  withholdInstructions,
+} from "./untrusted.ts";

@@ -14,7 +14,14 @@
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { GhlError, type GhlRequestInput, type GhlSession, ghlRequest } from "@locus/ghl";
+import {
+  GhlError,
+  type GhlRateLimiter,
+  type GhlRequestInput,
+  type GhlSession,
+  ghlRequest,
+  sharedRateLimiter,
+} from "@locus/ghl";
 import { operationById, type SkillOperation } from "@locus/skills";
 import { ActionError } from "./actions.ts";
 
@@ -229,7 +236,7 @@ export interface CleanupReport {
 /** Deletes every live record of a run, newest first. Safe to run again after a failure. */
 export async function cleanupRun(
   { run, ledger }: { run: string; ledger: Ledger },
-  deps: { session: GhlSession; fetch?: typeof fetch },
+  deps: { session: GhlSession; fetch?: typeof fetch; rateLimiter?: GhlRateLimiter },
 ): Promise<CleanupReport> {
   const report: CleanupReport = { deleted: [], alreadyGone: [], failed: [] };
   const entries = [...live(ledger, run).values()].reverse();
@@ -247,7 +254,16 @@ export async function cleanupRun(
             : { contactId: entry.id };
     const done = () => ledger.append({ ...entry, at: new Date().toISOString(), deleted: true });
     try {
-      await ghlRequest(op, deps.session, { path }, deps.fetch ? { fetch: deps.fetch } : {});
+      await ghlRequest(
+        op,
+        deps.session,
+        { path },
+        {
+          ...(deps.fetch ? { fetch: deps.fetch } : {}),
+          // Cleanup shares the client's budget with any agent working on it.
+          rateLimiter: deps.rateLimiter ?? sharedRateLimiter,
+        },
+      );
       report.deleted.push({ kind: entry.kind, id: entry.id });
       done();
     } catch (error) {
