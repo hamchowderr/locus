@@ -64,6 +64,7 @@ export {
   type SiteDeps,
   type SiteRow,
   siteDomainStatus,
+  unlinkHostProject,
 } from "./sites.ts";
 export {
   type GhlStaffUser,
