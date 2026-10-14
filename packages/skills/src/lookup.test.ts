@@ -33,6 +33,7 @@ const NOT_READS: Record<string, string> = {
 };
 
 test("every POST titled as a read is reviewed", () => {
+  for (const id of Object.keys(NOT_READS)) expect(operationById(id)?.method, id).toBe("POST");
   const unreviewed = catalog
     .flatMap((skill) => skill.operations)
     .filter((op) => op.method === "POST" && READ_TITLE.test(op.title))

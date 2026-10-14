@@ -8,7 +8,7 @@ const session = { token: "tok", tokenKind: "location", locationId: "loc-A" } as 
 
 // Every operation in the catalog lands on exactly one of the agent's two paths: reads only
 // through query_data, writes only through perform_action, and every deletion waits for a
-// person. Nothing is sent to GHL on the refused path.
+// person. A refused write sends nothing to GHL.
 describe.each(catalog.map((skill) => [skill.category, skill.operations] as const))(
   "%s",
   (_, operations) => {
@@ -16,16 +16,20 @@ describe.each(catalog.map((skill) => [skill.category, skill.operations] as const
       const ghl = createFakeGhl({});
       const deps = { session, fetch: ghl.fetch };
 
+      const query = runQuery({ sources: [{ as: "t", operation: id }], sql: "SELECT 1" }, deps)
+        // Missing path parameters and the like are fine here; only the routing refusal counts.
+        .then(() => "accepted")
+        .catch((error: Error) => error.message);
+
       if (isRead(op)) {
         await expect(performAction({ operation: id }, deps)).rejects.toThrow(/only reads/);
+        expect(await query).not.toMatch(/changes data/);
         expect(needsApproval(id)).toBe(false);
       } else {
-        await expect(
-          runQuery({ sources: [{ as: "t", operation: id }], sql: "SELECT 1" }, deps),
-        ).rejects.toThrow(/changes data/);
+        expect(await query).toMatch(/changes data/);
         expect(needsApproval(id)).toBe(op.method === "DELETE");
+        expect(ghl.requests).toEqual([]);
       }
-      expect(ghl.requests).toEqual([]);
     });
   },
 );
