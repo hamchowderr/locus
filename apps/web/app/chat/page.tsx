@@ -2,6 +2,7 @@ import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MinimalChat } from "@/components/chat-minimal/minimal-chat";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { Notice } from "../ui";
 
@@ -26,7 +27,9 @@ export default async function ChatPage() {
       {process.env.LOCUS_AGENT_URL ? (
         // The chat kit's conversation. Its requests go through this site's
         // /api/agent-controller routes, which the agent server checks against the sign-in.
-        <MinimalChat className="mt-4 min-h-0 flex-1" />
+        <TooltipProvider>
+          <MinimalChat className="mt-4 min-h-0 flex-1" />
+        </TooltipProvider>
       ) : (
         <div className="mt-6">
           <Notice tone="info">The chat isn't set up here yet.</Notice>

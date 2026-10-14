@@ -13,7 +13,11 @@
     "paths": {
       "@/*": ["./*"]
     },
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    // The chat kit's components (installed from its registry, not edited here) are written
+    // without these two checks. Restore them once the kit compiles with them (locus-8c0.18).
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
