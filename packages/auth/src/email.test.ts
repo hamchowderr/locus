@@ -14,6 +14,24 @@ describe("emailFromEnv", () => {
     expect(() => emailFromEnv({ EMAIL_MODE: "smtp" })).toThrow(/EMAIL_MODE/);
   });
 
+  it("refuses console mode in production, keeps it elsewhere", () => {
+    expect(() => emailFromEnv({ NODE_ENV: "production", EMAIL_MODE: "console" })).toThrow(
+      /EMAIL_MODE=console is refused in production/,
+    );
+    expect(emailFromEnv({ NODE_ENV: "development", EMAIL_MODE: "console" })).toBe(consoleEmail);
+    expect(emailFromEnv({ NODE_ENV: "test", EMAIL_MODE: "console" })).toBe(consoleEmail);
+  });
+
+  it("uses Resend in production when configured", () => {
+    const env = {
+      NODE_ENV: "production",
+      EMAIL_MODE: "resend",
+      RESEND_API_KEY: "k",
+      EMAIL_FROM: "x@y.test",
+    };
+    expect(emailFromEnv(env)).not.toBe(consoleEmail);
+  });
+
   it("needs a key and a sender for Resend", () => {
     expect(() => emailFromEnv({ EMAIL_MODE: "resend", RESEND_API_KEY: "k" })).toThrow(/EMAIL_FROM/);
   });
