@@ -454,12 +454,17 @@ describe("VercelRuntimeProvider", () => {
     await runtime.run("true");
     expect(sandbox.extendTimeout).not.toHaveBeenCalled();
 
-    sandbox.expiresAt = new Date(Date.now() + 100_000);
-    await runtime.run("true");
+    // Freeze the clock so the remaining time the provider reads is exactly 100 s.
+    const now = Date.now();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      sandbox.expiresAt = new Date(now + 100_000);
+      await runtime.run("true");
+    } finally {
+      clock.mockRestore();
+    }
     expect(sandbox.extendTimeout).toHaveBeenCalledTimes(1);
-    const extendBy = sandbox.extendTimeout.mock.calls[0]?.[0] ?? 0;
-    expect(extendBy).toBeGreaterThan(490_000);
-    expect(extendBy).toBeLessThanOrEqual(500_000);
+    expect(sandbox.extendTimeout.mock.calls[0]?.[0]).toBe(500_000);
 
     // An extension failure (e.g. the plan's maximum) does not fail the command.
     sandbox.extendTimeout.mockRejectedValueOnce(new Error("max duration"));
