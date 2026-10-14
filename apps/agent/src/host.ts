@@ -10,6 +10,7 @@ import { createAgentApi } from "@locus/agent-api";
 import {
   type AuthorizedClient,
   authorizeClient,
+  ClientAccessDenied,
   createAuth,
   mintClientDbToken,
   resolveActiveClient,
@@ -18,10 +19,12 @@ import {
 import { type ConnectDeps, clientGhlSession } from "@locus/connect";
 import { type ControlDb, DbSecretStore, openControlDb, provisionerFromEnv } from "@locus/db";
 import * as schema from "@locus/db/control";
+import { session as authSession } from "@locus/db/control";
 import { createLocusController } from "@locus/harness";
 import { secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { LibSQLStore } from "@mastra/libsql";
+import { eq } from "drizzle-orm";
 import { refreshingClient } from "./refreshing-client.ts";
 
 export const PREFIX = "/api/agent";
@@ -118,16 +121,45 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
 /** The largest request body the agent reads; a chat message is far smaller. */
 const MAX_BODY_BYTES = 1_000_000;
 
+/** The run request-context key naming the Better Auth session a run acts for. Set here, never by the browser. */
+export const RUN_SESSION_KEY = "locus.sessionId";
+
 export function createHost({ db, session, connect, model, fetch, origin }: HostDeps) {
-  // The member who last opened each client (keyed by Locus's client id, never the GHL location
-  // id, which more than one agency can hold). Before any GHL or database token is minted for
-  // the client, their staff check runs again, so a removed member or a suspended client stops
-  // getting tokens even for a run already under way.
-  const openedBy = new Map<string, SessionContext>();
-  const authorized = async (clientId: string): Promise<AuthorizedClient> => {
-    const ctx = openedBy.get(clientId);
-    if (!ctx) throw new Error("this client has not been opened");
+  // Sessions seen on requests, by id, so a run's context can name the one it acts for.
+  const sessions = new Map<string, SessionContext>();
+  // Per client, the sessions that opened it, newest last: its database token is the client's,
+  // not one run's, so any of them still allowed in will do.
+  const openers = new Map<string, Set<string>>();
+  const signedIn = new WeakMap<Request, SessionContext>();
+
+  /** The staff check again, for one session: still signed in, still a member allowed this client. */
+  const authorizedFor = async (sessionId: string, clientId: string) => {
+    const ctx = sessions.get(sessionId);
+    const [row] = ctx
+      ? await db
+          .select({ expiresAt: authSession.expiresAt })
+          .from(authSession)
+          .where(eq(authSession.id, sessionId))
+      : [];
+    if (!ctx || !row || row.expiresAt.getTime() <= Date.now()) {
+      sessions.delete(sessionId);
+      throw new ClientAccessDenied("signed out");
+    }
     return authorizeClient(db, ctx, clientId);
+  };
+
+  /** For the client's own database: any session that opened it and may still. */
+  const anyAuthorized = async (clientId: string) => {
+    const ids = openers.get(clientId) ?? new Set<string>();
+    for (const id of [...ids].reverse()) {
+      try {
+        return await authorizedFor(id, clientId);
+      } catch (error) {
+        if (!(error instanceof ClientAccessDenied)) throw error;
+        ids.delete(id);
+      }
+    }
+    throw new ClientAccessDenied("nobody may open this client now");
   };
 
   const api = createAgentApi({
@@ -141,26 +173,45 @@ export function createHost({ db, session, connect, model, fetch, origin }: HostD
       } catch {
         return null;
       }
-      openedBy.set(client.location.id, ctx);
+      sessions.set(ctx.id, ctx);
+      const ids = openers.get(client.location.id) ?? new Set<string>();
+      ids.delete(ctx.id);
+      ids.add(ctx.id);
+      openers.set(client.location.id, ids);
+      signedIn.set(request, ctx);
       return {
         memberId: client.memberId,
         locationId: client.location.ghlLocationId,
         clientId: client.location.id,
       };
     },
+    // Each run carries the session it acts for, so its GHL calls are checked against that
+    // member, not whoever used the client last.
+    requestContext: async (request) => {
+      const ctx = signedIn.get(request);
+      return ctx ? { [RUN_SESSION_KEY]: ctx.id } : {};
+    },
     controllerFor: async ({ clientId, locationId }) => {
-      const { location } = await authorized(clientId);
+      const { location } = await anyAuthorized(clientId);
       const storage = new LibSQLStore({
         id: `client-${location.id}`,
         client: refreshingClient(
           async () =>
             createClient({
               url: connect.provisioner.url(location.tursoDbHostname),
-              authToken: await mintClientDbToken(connect.provisioner, await authorized(clientId), {
-                ttl: DB_TOKEN_TTL,
-              }),
+              authToken: await mintClientDbToken(
+                connect.provisioner,
+                await anyAuthorized(clientId),
+                {
+                  ttl: DB_TOKEN_TTL,
+                },
+              ),
             }),
-          { renewMs: DB_TOKEN_RENEW_MS },
+          {
+            renewMs: DB_TOKEN_RENEW_MS,
+            // Nobody may open the client any more: stop using the token it still holds.
+            revoked: (error) => error instanceof ClientAccessDenied,
+          },
           // Mastra types its client as its own SQLite interface, which libSQL's matches at
           // runtime but not under exactOptionalPropertyTypes.
         ) as unknown as StoreClient,
@@ -168,7 +219,11 @@ export function createHost({ db, session, connect, model, fetch, origin }: HostD
       return createLocusController({
         model,
         locationId,
-        session: async () => clientGhlSession(connect, await authorized(clientId)),
+        session: async (requestContext) => {
+          const sessionId = requestContext?.get(RUN_SESSION_KEY);
+          if (typeof sessionId !== "string") throw new ClientAccessDenied("run has no session");
+          return clientGhlSession(connect, await authorizedFor(sessionId, clientId));
+        },
         storage,
         ...(fetch ? { fetch } : {}),
       });
@@ -179,17 +234,24 @@ export function createHost({ db, session, connect, model, fetch, origin }: HostD
     async fetch(request: Request): Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/health") return new Response("ok");
-      if (!request.body) return api.fetch(request);
+      if (request.method === "GET" || request.method === "HEAD") return api.fetch(request);
       // The session cookie authenticates these, so only the web app's pages may send them, and
-      // only as JSON: a cross-site form or text/plain post can't.
+      // a body only as JSON: a cross-site form or text/plain post can't.
       const from = request.headers.get("origin");
       if (from && from !== origin) return Response.json({ error: "wrong origin" }, { status: 403 });
-      if (!request.headers.get("content-type")?.startsWith("application/json")) {
+      const body = request.body ? await readCapped(request.body, MAX_BODY_BYTES) : Buffer.alloc(0);
+      if (!body) return Response.json({ error: "too large" }, { status: 413 });
+      if (body.length > 0 && !request.headers.get("content-type")?.startsWith("application/json")) {
         return Response.json({ error: "send JSON" }, { status: 415 });
       }
-      const body = await readCapped(request.body, MAX_BODY_BYTES);
-      if (!body) return Response.json({ error: "too large" }, { status: 413 });
-      return api.fetch(new Request(request, { body }));
+      return api.fetch(
+        new Request(request.url, {
+          method: request.method,
+          headers: request.headers,
+          signal: request.signal,
+          ...(body.length > 0 ? { body } : {}),
+        }),
+      );
     },
   };
 }

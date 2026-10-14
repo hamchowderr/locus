@@ -96,4 +96,24 @@ describe("refreshingClient", () => {
     await expect(client.execute("select 1")).rejects.toThrow(/closed/);
     expect(attempts).toBe(1);
   });
+
+  test("a renewal refused because access is gone closes the current client", async () => {
+    let time = 0;
+    const opened: ReturnType<typeof fakeClient>[] = [];
+    const client = refreshingClient(
+      async () => {
+        if (opened.length === 1) throw new Error("revoked");
+        const c = fakeClient(1);
+        opened.push(c);
+        return c;
+      },
+      { renewMs: 1_000, now: () => time, revoked: (e) => (e as Error).message === "revoked" },
+    );
+    await client.execute("select 1");
+    time = 1_000;
+    await client.execute("select 1");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(opened[0]?.close).toHaveBeenCalled();
+    await expect(client.execute("select 1")).rejects.toThrow(/revoked/);
+  });
 });
