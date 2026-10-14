@@ -1,6 +1,14 @@
 export { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
 export { createLocusAgent, INSTRUCTIONS, type LocusAgentConfig } from "./agent.ts";
 export {
+  ASK_TOOLS,
+  CONTROLLER_ID,
+  createLocusController,
+  LOCUS_MODES,
+  type LocusControllerConfig,
+  openClientSession,
+} from "./controller.ts";
+export {
   ApprovalError,
   type ConversationStore,
   clientResource,
@@ -39,9 +47,11 @@ export {
 } from "./test-mode.ts";
 export { createLocusTools, type ToolDeps } from "./tools.ts";
 export {
-  createRunTaint,
+  isTainted,
   looksLikeInstructions,
-  type RunTaint,
+  readsPublicText,
+  TAINT_KEY,
+  TAINT_MARK,
   UntrustedContentProcessor,
   WITHHELD,
   withholdInstructions,
