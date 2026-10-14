@@ -26,6 +26,7 @@ import {
   removeSiteDomain,
   type SiteDeps,
   siteDomainStatus,
+  unlinkHostProject,
 } from "./sites.ts";
 import { createStubVercel, STUB_VERCEL_PROJECT, STUB_VERCEL_TEAM } from "./stub-hosts.ts";
 import { vercelSecretRef } from "./vercel.ts";
@@ -226,6 +227,64 @@ describe("linking a Vercel project to a client", () => {
       linkHostProject(deps(), ctx("owner"), client, { projectId: "prj_someone_else" }),
     ).rejects.toThrow(/isn't on your Vercel team/);
     expect(await db.select().from(site)).toHaveLength(0);
+  });
+
+  it("unlinks a project, once its domain is gone, without asking Vercel", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    const row = await linkHostProject(deps(), ctx("owner"), client, {
+      projectId: STUB_VERCEL_PROJECT.id,
+    });
+    await db.update(site).set({ customDomain: "acme.example" }).where(eq(site.id, row.id));
+    const fake = fakeVercel({});
+    await expect(unlinkHostProject(deps(fake.fetch), ctx("owner"), client, row.id)).rejects.toThrow(
+      /Remove acme.example/,
+    );
+
+    await db.update(site).set({ customDomain: null }).where(eq(site.id, row.id));
+    await unlinkHostProject(deps(fake.fetch), ctx("owner"), client, row.id);
+    expect(await listSites(db, client)).toEqual([]);
+    expect(fake.calls).toEqual([]);
+    const [entry] = await db.select().from(auditLog).where(eq(auditLog.action, "site.unlink"));
+    expect(entry).toMatchObject({ actorUserId: "owner", locationId: "client-1" });
+    // The project can be linked again.
+    await linkHostProject(deps(), ctx("owner"), client, { projectId: STUB_VERCEL_PROJECT.id });
+  });
+
+  it("keeps a site with a repository when its project is unlinked", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    const row = await linkHostProject(deps(), ctx("owner"), client, {
+      projectId: STUB_VERCEL_PROJECT.id,
+    });
+    await db.update(site).set({ repoFullName: "acme/site" }).where(eq(site.id, row.id));
+    await unlinkHostProject(deps(), ctx("owner"), client, row.id);
+    expect(await listSites(db, client)).toEqual([
+      expect.objectContaining({ id: row.id, repoFullName: "acme/site", hostProjectId: null }),
+    ]);
+  });
+
+  it("never removes a site that has no linked project", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await db.insert(site).values({ id: "draft", locationId: "client-1" });
+    await expect(unlinkHostProject(deps(), ctx("owner"), client, "draft")).rejects.toThrow(
+      /no linked project/,
+    );
+    expect(await listSites(db, client)).toHaveLength(1);
+  });
+
+  it("unlinks only for owners and admins, and only this client's sites", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    const row = await linkHostProject(deps(), ctx("owner"), owner, {
+      projectId: STUB_VERCEL_PROJECT.id,
+    });
+    const staff = await authorizeClient(db, ctx("staff"), "client-1");
+    await expect(unlinkHostProject(deps(), ctx("staff"), staff, row.id)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    const other = await authorizeClient(db, ctx("owner"), "client-2");
+    await expect(unlinkHostProject(deps(), ctx("owner"), other, row.id)).rejects.toThrow(
+      /isn't one of this client's/,
+    );
+    expect(await listSites(db, owner)).toHaveLength(1);
   });
 
   it("needs Vercel connected, and an owner or admin", async () => {
