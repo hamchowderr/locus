@@ -11,7 +11,17 @@ import {
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ImageError, type ImageShape } from "./images.ts";
+import {
+  MAX_REGISTRY_ITEMS,
+  packageOf,
+  REGISTRY_FETCH_SCRIPT,
+  RegistryItem,
+  registryUrl,
+  rewriteImports,
+  siteTarget,
+} from "./registry.ts";
 import type { BuilderSession, ResolveBuilderSession } from "./session.ts";
+import { createSkillTools } from "./skills/index.ts";
 import { hashOf, sandboxHashes, syncRuntime } from "./sync.ts";
 
 /** A request the model can fix; it comes back as `{ error }` instead of failing the run. */
@@ -57,6 +67,15 @@ const tail = (text: string, max = MAX_OUTPUT_CHARS) =>
 const BriefChanges = DesignBrief.partial();
 
 const IMAGE_EXT = /\.(png)$/i;
+
+const FILE_ACTIONS = ["list", "read", "write", "edit", "delete"] as const;
+const VERSION_ACTIONS = ["save", "list", "restore"] as const;
+
+/** A field an action needs, or a fixable error naming it. */
+function need<T>(value: T | undefined, what: string): T {
+  if (value === undefined) throw new BuilderError(`${what}.`);
+  return value;
+}
 
 /**
  * The site-building tools. Each resolves the conversation's site from the host-set request
@@ -112,114 +131,259 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     return result;
   };
 
-  const get_brief = createTool({
-    id: "get_brief",
+  /** The draft's package.json, parsed. */
+  const readPackageJson = async (session: BuilderSession) => {
+    const raw = await session.workspace.readFile("package.json");
+    if (typeof raw !== "string") throw new BuilderError("package.json is missing.");
+    try {
+      return JSON.parse(raw) as Record<string, Record<string, string> | undefined>;
+    } catch (error) {
+      throw new BuilderError(
+        `package.json isn't valid JSON (${(error as Error).message}); fix it with files write.`,
+      );
+    }
+  };
+
+  /**
+   * Pins each package at its current exact version in the draft's package.json (packages it
+   * already has are left alone), then installs once. Names must already have passed
+   * PACKAGE_NAME.
+   */
+  const addPackages = async (session: BuilderSession, wanted: { name: string; dev: boolean }[]) => {
+    const runtime = await ready(session);
+    const pkg = await readPackageJson(session);
+    const has = (name: string) =>
+      pkg.dependencies?.[name] !== undefined || pkg.devDependencies?.[name] !== undefined;
+    const added: string[] = [];
+    for (const { name, dev } of wanted) {
+      if (has(name)) continue;
+      // `--` so a name can never be read as an option, whatever the schema let through.
+      const view = await runtime.run("npm", ["view", "--", name, "version"], {
+        timeoutMs: 60_000,
+      });
+      const version = view.stdout.trim().split("\n").at(-1)?.trim() ?? "";
+      if (view.exitCode !== 0 || !/^\d+\.\d+\.\d+/.test(version)) {
+        throw new BuilderError(`npm has no package called ${name}.`);
+      }
+      const field = dev ? "devDependencies" : "dependencies";
+      pkg[field] = Object.fromEntries(
+        Object.entries({ ...(pkg[field] ?? {}), [name]: version }).sort(([a], [b]) =>
+          a.localeCompare(b),
+        ),
+      );
+      added.push(`${name}@${version}`);
+    }
+    if (added.length === 0) return { added, installed: true as boolean, output: undefined };
+    await session.workspace.writeFile("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
+    const installed = await (await ready(session)).install();
+    return {
+      added,
+      installed: installed.exitCode === 0,
+      output: installed.exitCode === 0 ? undefined : tail(installed.stderr || installed.stdout),
+    };
+  };
+
+  /** Reads one registry item from inside the sandbox. */
+  const fetchRegistryItem = async (runtime: SiteRuntime, url: string) => {
+    const result = await runtime.run(
+      "node",
+      ["--input-type=module", "-e", REGISTRY_FETCH_SCRIPT, url],
+      { timeoutMs: 30_000 },
+    );
+    if (result.exitCode !== 0) {
+      throw new BuilderError(
+        `The registry item at ${url} couldn't be read: ${tail(result.stderr, 300)}`,
+      );
+    }
+    let json: unknown;
+    try {
+      json = JSON.parse(result.stdout);
+    } catch {
+      throw new BuilderError(`${url} isn't a registry item (not JSON).`);
+    }
+    const item = RegistryItem.safeParse(json);
+    if (!item.success) throw new BuilderError(`${url} isn't a registry item it can add.`);
+    return item.data;
+  };
+
+  /** A shadcn/ui component and the components it depends on, written into the draft. */
+  const addComponent = async (session: BuilderSession, ref: string, overwrite: boolean) => {
+    const first = registryUrl(ref);
+    if (typeof first !== "string") throw new BuilderError(first.error);
+    const runtime = await ready(session);
+    const existing = new Set((await session.workspace.listFiles()).map((f) => f.path));
+    const queue: { url: string; root: boolean }[] = [{ url: first, root: true }];
+    const seen = new Set<string>();
+    const written: string[] = [];
+    const kept: string[] = [];
+    const items: string[] = [];
+    const packages: { name: string; dev: boolean }[] = [];
+    const theme: Record<string, unknown> = {};
+    const docs: string[] = [];
+    while (queue.length > 0) {
+      const next = queue.shift();
+      if (!next || seen.has(next.url)) continue;
+      seen.add(next.url);
+      if (items.length >= MAX_REGISTRY_ITEMS) {
+        throw new BuilderError(`That needs more than ${MAX_REGISTRY_ITEMS} components at once.`);
+      }
+      const item = await fetchRegistryItem(runtime, next.url);
+      items.push(item.name);
+      for (const file of item.files ?? []) {
+        if (file.content === undefined) continue;
+        const target = siteTarget(file, item.type);
+        if (!target) continue;
+        const path = normalizeSitePath(target);
+        // A component the site already has stays as it is (it may have been changed on
+        // purpose); only the component asked for is replaced, and only when asked.
+        if (existing.has(path) && !(next.root && overwrite)) {
+          kept.push(path);
+          continue;
+        }
+        await session.workspace.writeFile(path, rewriteImports(file.content));
+        existing.add(path);
+        written.push(path);
+      }
+      for (const spec of item.dependencies ?? [])
+        packages.push({ name: packageOf(spec), dev: false });
+      for (const spec of item.devDependencies ?? [])
+        packages.push({ name: packageOf(spec), dev: true });
+      if (item.cssVars) theme[`${item.name}.cssVars`] = item.cssVars;
+      if (item.css) theme[`${item.name}.css`] = item.css;
+      if (item.docs) docs.push(item.docs);
+      for (const dep of item.registryDependencies ?? []) {
+        const url = registryUrl(dep);
+        if (typeof url !== "string") throw new BuilderError(url.error);
+        // Official names resolve against the official registry; a URL stays as given.
+        if (!seen.has(url)) queue.push({ url, root: false });
+      }
+    }
+    for (const { name } of packages) {
+      if (!PACKAGE_NAME.test(name) || name.length > 214) {
+        throw new BuilderError(`The component needs "${name}", which isn't an npm package name.`);
+      }
+    }
+    const installed = await addPackages(session, packages);
+    return {
+      added: items,
+      files: written,
+      ...(kept.length > 0 ? { kept } : {}),
+      packages: installed.added,
+      installed: installed.installed,
+      ...(installed.output ? { output: installed.output } : {}),
+      ...(Object.keys(theme).length > 0
+        ? {
+            theme: `Merge into app/globals.css if the site lacks them: ${JSON.stringify(theme).slice(0, 4_000)}`,
+          }
+        : {}),
+      ...(docs.length > 0 ? { docs: docs.join("\n\n").slice(0, 4_000) } : {}),
+    };
+  };
+
+  const brief = createTool({
+    id: "brief",
     description:
-      "Read the site's design brief (name, goal, audience, palette, fonts, layout, pages, " +
-      "references) and the design questions not answered yet. Read it before building.",
+      "The site's design brief (name, goal, audience, palette, fonts, layout, pages, " +
+      "references) and the design questions not answered yet. Read it before building. Pass " +
+      "`changes` to record decisions the person made (palette as hex colours); only fields " +
+      "you pass change.",
     requireApproval: noApproval,
-    inputSchema: z.object({}),
-    execute: withSession(async (session) => {
-      const brief = await readBrief(session.workspace.db, session.workspace.siteId);
-      if (!brief) return { brief: null, note: "No brief yet: ask what the site is for." };
-      return {
-        brief: briefForAgent(brief),
-        openQuestions: openQuestions(brief).map((q) => ({
-          question: q.question,
-          options: q.options,
-        })),
-      };
-    }),
+    inputSchema: z.object({ changes: BriefChanges.optional() }),
+    execute: withSession(
+      async (session, input: { changes?: z.infer<typeof BriefChanges> | undefined }) => {
+        const { db, siteId } = session.workspace;
+        let current = await readBrief(db, siteId);
+        if (input.changes) {
+          // Only fields the model actually passed change; an explicit undefined changes nothing.
+          const given = Object.fromEntries(
+            Object.entries(input.changes).filter(([, v]) => v !== undefined),
+          );
+          current = await writeBrief(db, siteId, {
+            ...current,
+            name: current?.name ?? "Untitled site",
+            ...given,
+          });
+        }
+        if (!current) return { brief: null, note: "No brief yet: ask what the site is for." };
+        return {
+          brief: briefForAgent(current),
+          openQuestions: openQuestions(current).map((q) => ({
+            question: q.question,
+            options: q.options,
+          })),
+        };
+      },
+    ),
   });
 
-  const update_brief = createTool({
-    id: "update_brief",
+  const files = createTool({
+    id: "files",
     description:
-      "Record design decisions the person made (goal, audience, tone, layout, pages, palette " +
-      "as hex colours, fonts, references). Only fields you pass change.",
-    requireApproval: noApproval,
-    inputSchema: BriefChanges,
-    execute: withSession(async (session, changes: z.infer<typeof BriefChanges>) => {
-      const current = await readBrief(session.workspace.db, session.workspace.siteId);
-      // Only fields the model actually passed change; an explicit undefined changes nothing.
-      const given = Object.fromEntries(Object.entries(changes).filter(([, v]) => v !== undefined));
-      const merged = { ...current, name: current?.name ?? "Untitled site", ...given };
-      const brief = await writeBrief(session.workspace.db, session.workspace.siteId, merged);
-      return { brief: briefForAgent(brief) };
-    }),
-  });
-
-  const list_files = createTool({
-    id: "list_files",
-    description: "List the site's files with their sizes in bytes.",
-    requireApproval: noApproval,
-    inputSchema: z.object({}),
-    execute: withSession(async (session) => ({
-      files: (await session.workspace.listFiles()).map(({ path, size }) => ({ path, size })),
-    })),
-  });
-
-  const read_file = createTool({
-    id: "read_file",
-    description: "Read one of the site's files.",
-    requireApproval: noApproval,
-    inputSchema: z.object({ path: z.string() }),
-    execute: withSession(async (session, { path }: { path: string }) => {
-      const content = await session.workspace.readFile(path);
-      if (content === null) throw new BuilderError(`${path} doesn't exist.`);
-      if (typeof content !== "string") return { path, binary: true, size: content.byteLength };
-      return content.length > MAX_READ_CHARS
-        ? { path, content: content.slice(0, MAX_READ_CHARS), truncated: true }
-        : { path, content };
-    }),
-  });
-
-  const write_file = createTool({
-    id: "write_file",
-    description:
-      "Create or replace a text file with its complete content. Prefer edit_file for small " +
-      "changes to an existing file.",
-    requireApproval: noApproval,
-    inputSchema: z.object({ path: z.string(), content: z.string() }),
-    execute: withSession(async (session, { path, content }: { path: string; content: string }) => {
-      await session.workspace.writeFile(path, content);
-      return { written: normalizeSitePath(path) };
-    }),
-  });
-
-  const edit_file = createTool({
-    id: "edit_file",
-    description:
-      "Replace exact text in a file. `find` must match exactly once (include enough " +
-      "surrounding lines), unless `all` is true.",
+      "The site's files. action list: every path with its size. read: one file (`path`). " +
+      "write: create or replace a text file with its complete `content`. edit: replace exact " +
+      "text in `path`; `find` must match exactly once (include enough surrounding lines) " +
+      "unless `all` is true. delete: remove `paths`. Prefer edit for small changes.",
     requireApproval: noApproval,
     inputSchema: z.object({
-      path: z.string(),
-      find: z.string(),
-      replace: z.string(),
+      action: z.enum(FILE_ACTIONS),
+      path: z.string().optional(),
+      content: z.string().optional(),
+      find: z.string().optional(),
+      replace: z.string().optional(),
       all: z.boolean().optional(),
+      paths: z.array(z.string()).min(1).optional(),
     }),
     execute: withSession(
       async (
         session,
-        input: { path: string; find: string; replace: string; all?: boolean | undefined },
-      ) => ({
-        replacements: await session.workspace.editFile(input.path, input.find, input.replace, {
-          all: input.all ?? false,
-        }),
-      }),
+        input: {
+          action: (typeof FILE_ACTIONS)[number];
+          path?: string | undefined;
+          content?: string | undefined;
+          find?: string | undefined;
+          replace?: string | undefined;
+          all?: boolean | undefined;
+          paths?: string[] | undefined;
+        },
+      ) => {
+        const ws = session.workspace;
+        switch (input.action) {
+          case "list":
+            return { files: (await ws.listFiles()).map(({ path, size }) => ({ path, size })) };
+          case "read": {
+            const path = need(input.path, "read needs a path");
+            const content = await ws.readFile(path);
+            if (content === null) throw new BuilderError(`${path} doesn't exist.`);
+            if (typeof content !== "string")
+              return { path, binary: true, size: content.byteLength };
+            return content.length > MAX_READ_CHARS
+              ? { path, content: content.slice(0, MAX_READ_CHARS), truncated: true }
+              : { path, content };
+          }
+          case "write": {
+            const path = need(input.path, "write needs a path");
+            await ws.writeFile(path, need(input.content, "write needs the file's content"));
+            return { written: normalizeSitePath(path) };
+          }
+          case "edit": {
+            const path = need(input.path, "edit needs a path");
+            return {
+              replacements: await ws.editFile(
+                path,
+                need(input.find, "edit needs the text to find"),
+                need(input.replace, "edit needs the replacement text"),
+                { all: input.all ?? false },
+              ),
+            };
+          }
+          case "delete": {
+            const paths = need(input.paths, "delete needs paths");
+            await ws.deleteFiles(paths);
+            return { deleted: paths.map(normalizeSitePath) };
+          }
+        }
+      },
     ),
-  });
-
-  const delete_files = createTool({
-    id: "delete_files",
-    description: "Delete files from the site.",
-    requireApproval: noApproval,
-    inputSchema: z.object({ paths: z.array(z.string()).min(1) }),
-    execute: withSession(async (session, { paths }: { paths: string[] }) => {
-      await session.workspace.deleteFiles(paths);
-      return { deleted: paths.map(normalizeSitePath) };
-    }),
   });
 
   const run_command = createTool({
@@ -228,8 +392,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "Run one command in the site's isolated sandbox, in the project root, after syncing the " +
       "latest files (e.g. npx tsc --noEmit, ls public). The site's files in Locus are the " +
       "source of truth: files a command creates or changes stay in the sandbox only and are " +
-      "put back to match on the next sync, so write source changes with write_file or " +
-      "edit_file. Never install or remove packages here: use add_dependency.",
+      "put back to match on the next sync, so change source with the files tool. Never " +
+      "install or remove packages or components here: use add_dependency.",
     requireApproval: noApproval,
     inputSchema: z.object({
       command: z.string().min(1).describe("The program, e.g. npm"),
@@ -274,53 +438,55 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
   const add_dependency = createTool({
     id: "add_dependency",
     description:
-      "Add an npm package to package.json at an exact version, then install. Use this rather " +
-      "than editing package.json by hand.",
+      "Add to the site either an npm `package` (pinned at its exact current version, then " +
+      "installed) or a shadcn/ui `component`: an official component's name (e.g. dialog, " +
+      "tabs, select) or another shadcn registry item's https URL. A component's files are " +
+      "written under components/ui (with the components it needs) and its packages added. " +
+      "Use this rather than editing package.json or running a CLI.",
     requireApproval: noApproval,
     inputSchema: z.object({
-      name: z
+      package: z
         .string()
         .max(214)
-        .regex(PACKAGE_NAME, "Use an npm package name, e.g. zod or @radix-ui/react-dialog."),
-      dev: z.boolean().optional(),
+        .regex(PACKAGE_NAME, "Use an npm package name, e.g. zod or @radix-ui/react-dialog.")
+        .optional(),
+      dev: z.boolean().optional().describe("With package: add it as a dev dependency"),
+      component: z.string().min(1).max(500).optional(),
+      overwrite: z
+        .boolean()
+        .optional()
+        .describe("With component: replace the site's copy if it already has that component"),
     }),
-    execute: withSession(async (session, input: { name: string; dev?: boolean | undefined }) =>
-      metered(session, async () => {
-        const runtime = await ready(session);
-        // `--` so a name can never be read as an option, whatever the schema let through.
-        const view = await runtime.run("npm", ["view", "--", input.name, "version"], {
-          timeoutMs: 60_000,
+    execute: withSession(
+      async (
+        session,
+        input: {
+          package?: string | undefined;
+          dev?: boolean | undefined;
+          component?: string | undefined;
+          overwrite?: boolean | undefined;
+        },
+      ) => {
+        if ((input.package === undefined) === (input.component === undefined)) {
+          throw new BuilderError("Pass either package or component.");
+        }
+        return metered(session, async () => {
+          if (input.component !== undefined) {
+            return addComponent(session, input.component, input.overwrite ?? false);
+          }
+          const name = need(input.package, "Pass a package");
+          const pkg = await readPackageJson(session);
+          if (pkg.dependencies?.[name] ?? pkg.devDependencies?.[name]) {
+            return { added: null, note: `${name} is already in package.json.` };
+          }
+          const result = await addPackages(session, [{ name, dev: input.dev ?? false }]);
+          return {
+            added: result.added[0] ?? null,
+            installed: result.installed,
+            ...(result.output ? { output: result.output } : {}),
+          };
         });
-        const version = view.stdout.trim().split("\n").at(-1)?.trim() ?? "";
-        if (view.exitCode !== 0 || !/^\d+\.\d+\.\d+/.test(version)) {
-          throw new BuilderError(`npm has no package called ${input.name}.`);
-        }
-        const raw = await session.workspace.readFile("package.json");
-        if (typeof raw !== "string") throw new BuilderError("package.json is missing.");
-        let pkg: Record<string, Record<string, string> | undefined>;
-        try {
-          pkg = JSON.parse(raw);
-        } catch (error) {
-          throw new BuilderError(
-            `package.json isn't valid JSON (${(error as Error).message}); fix it with write_file.`,
-          );
-        }
-        const field = input.dev ? "devDependencies" : "dependencies";
-        pkg[field] = Object.fromEntries(
-          Object.entries({ ...(pkg[field] ?? {}), [input.name]: version }).sort(([a], [b]) =>
-            a.localeCompare(b),
-          ),
-        );
-        await session.workspace.writeFile("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
-        const installed = await (await ready(session)).install();
-        return {
-          added: `${input.name}@${version}`,
-          installed: installed.exitCode === 0,
-          ...(installed.exitCode === 0
-            ? {}
-            : { output: tail(installed.stderr || installed.stdout) }),
-        };
-      }),
+      },
     ),
   });
 
@@ -328,7 +494,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     id: "check_site",
     description:
       "Install dependencies and run a production build (next build) of the current files. " +
-      "Returns ok, or the errors to fix. Run it after changes and before save_version.",
+      "Returns ok, or the errors to fix. Run it after changes and before saving a version.",
     requireApproval: noApproval,
     inputSchema: z.object({}),
     execute: withSession(async (session) =>
@@ -355,34 +521,35 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     id: "preview",
     description:
       "Start (or refresh) the live preview of the current files and return its URL with any " +
-      "recent errors from the dev server.",
+      "recent errors from the dev server. With `logs: true`, only read the running preview's " +
+      "recent dev-server output, to find runtime errors.",
     requireApproval: noApproval,
     inputSchema: z.object({
       path: z.string().optional().describe("A page path to open, e.g. /services"),
+      logs: z.boolean().optional(),
     }),
-    execute: withSession(async (session, input: { path?: string | undefined }) =>
-      metered(session, async () => {
-        const runtime = await ready(session);
-        const installed = await runtime.install();
-        if (installed.exitCode !== 0) {
-          return { ok: false, step: "install", output: tail(installed.stderr || installed.stdout) };
+    execute: withSession(
+      async (session, input: { path?: string | undefined; logs?: boolean | undefined }) => {
+        if (input.logs) {
+          const runtime = await session.runtime();
+          return { logs: tail(await runtime.previewLogs()) };
         }
-        const { url } = await runtime.startPreview();
-        const page = input.path ? previewPage(url, input.path) : url;
-        return { ok: true, url: page, recentLogs: tail(await runtime.previewLogs(), 4_000) };
-      }),
+        return metered(session, async () => {
+          const runtime = await ready(session);
+          const installed = await runtime.install();
+          if (installed.exitCode !== 0) {
+            return {
+              ok: false,
+              step: "install",
+              output: tail(installed.stderr || installed.stdout),
+            };
+          }
+          const { url } = await runtime.startPreview();
+          const page = input.path ? previewPage(url, input.path) : url;
+          return { ok: true, url: page, recentLogs: tail(await runtime.previewLogs(), 4_000) };
+        });
+      },
     ),
-  });
-
-  const read_preview_logs = createTool({
-    id: "read_preview_logs",
-    description: "Read the live preview's recent dev-server output, to find runtime errors.",
-    requireApproval: noApproval,
-    inputSchema: z.object({}),
-    execute: withSession(async (session) => {
-      const runtime = await session.runtime();
-      return { logs: tail(await runtime.previewLogs()) };
-    }),
   });
 
   const fetch_reference = createTool({
@@ -458,105 +625,108 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     ),
   });
 
-  const save_version = createTool({
-    id: "save_version",
-    description:
-      "Save the current files as a new version the person can preview and restore. Use a " +
-      "short message saying what changed. Run check_site first.",
-    requireApproval: noApproval,
-    inputSchema: z.object({ message: z.string().min(3).max(200) }),
-    execute: withSession(async (session, { message }: { message: string }) => {
-      const version = await session.workspace.saveVersion({
-        message,
-        source: "agent",
-        userId: session.userId ?? null,
-      });
-      if (!version) return { saved: false, note: "Nothing changed since the last version." };
-      let published: { commitSha?: string; url?: string } | undefined;
-      let publishError: string | undefined;
-      let note: string | undefined;
-      if (session.onVersionSaved) {
+  const saveVersion = async (session: BuilderSession, message: string) => {
+    const version = await session.workspace.saveVersion({
+      message,
+      source: "agent",
+      userId: session.userId ?? null,
+    });
+    if (!version) return { saved: false, note: "Nothing changed since the last version." };
+    let published: { commitSha?: string; url?: string } | undefined;
+    let publishError: string | undefined;
+    let note: string | undefined;
+    if (session.onVersionSaved) {
+      try {
+        published = await session.onVersionSaved(version, await session.workspace.snapshot());
+      } catch (error) {
+        // The version is saved either way. Only a message written for the person is passed
+        // on; a git host's own error text is not for the model.
+        publishError =
+          error instanceof PublishError
+            ? error.message
+            : "The version is saved, but it couldn't be published to the repository. " +
+              "Tell the person; they can try again later.";
+      }
+      if (published?.commitSha) {
         try {
-          published = await session.onVersionSaved(version, await session.workspace.snapshot());
-        } catch (error) {
-          // The version is saved either way. Only a message written for the person is passed
-          // on; a git host's own error text is not for the model.
-          publishError =
-            error instanceof PublishError
-              ? error.message
-              : "The version is saved, but it couldn't be published to the repository. " +
-                "Tell the person; they can try again later.";
-        }
-        if (published?.commitSha) {
-          try {
-            await session.workspace.setCommitSha(version.id, published.commitSha);
-          } catch {
-            // Published fine; only the link from the version to its commit is missing.
-            note = "Published, but the commit couldn't be linked to the version.";
-          }
+          await session.workspace.setCommitSha(version.id, published.commitSha);
+        } catch {
+          // Published fine; only the link from the version to its commit is missing.
+          note = "Published, but the commit couldn't be linked to the version.";
         }
       }
-      return {
-        saved: true,
-        version: version.number,
-        ...(published?.url ? { commitUrl: published.url } : {}),
-        ...(publishError ? { publishError } : {}),
-        ...(note ? { note } : {}),
-      };
-    }),
-  });
+    }
+    return {
+      saved: true,
+      version: version.number,
+      ...(published?.url ? { commitUrl: published.url } : {}),
+      ...(publishError ? { publishError } : {}),
+      ...(note ? { note } : {}),
+    };
+  };
 
-  const list_versions = createTool({
-    id: "list_versions",
-    description: "List the site's recent saved versions, newest first.",
-    requireApproval: noApproval,
-    inputSchema: z.object({}),
-    execute: withSession(async (session) => ({
-      versions: (await session.workspace.listVersions()).slice(0, 20).map((v) => ({
-        number: v.number,
-        message: v.message,
-        source: v.source,
-        bookmarked: v.bookmarked,
-        createdAt: v.createdAt.toISOString(),
-      })),
-    })),
-  });
-
-  const restore_version = createTool({
-    id: "restore_version",
+  const versions = createTool({
+    id: "versions",
     description:
-      "Go back to an earlier version by number. This saves the old files as a new version, " +
-      "so it can be undone.",
+      "The site's saved versions. action save: save the current files as a new version with " +
+      "a short `message` saying what changed (run check_site first). list: recent versions, " +
+      "newest first. restore: go back to version `number`; this saves the old files as a new " +
+      "version, so it can be undone.",
     requireApproval: noApproval,
-    inputSchema: z.object({ number: z.number().int().min(1) }),
-    execute: withSession(async (session, { number }: { number: number }) => {
-      const target = (await session.workspace.listVersions()).find((v) => v.number === number);
-      if (!target) throw new BuilderError(`There's no version ${number}.`);
-      const restored = await session.workspace.restoreVersion(target.id, {
-        userId: session.userId ?? null,
-      });
-      return { restored: number, nowVersion: restored.number };
+    inputSchema: z.object({
+      action: z.enum(VERSION_ACTIONS),
+      message: z.string().min(3).max(200).optional(),
+      number: z.number().int().min(1).optional(),
     }),
+    execute: withSession(
+      async (
+        session,
+        input: {
+          action: (typeof VERSION_ACTIONS)[number];
+          message?: string | undefined;
+          number?: number | undefined;
+        },
+      ) => {
+        switch (input.action) {
+          case "save":
+            return saveVersion(session, need(input.message, "save needs a message"));
+          case "list":
+            return {
+              versions: (await session.workspace.listVersions()).slice(0, 20).map((v) => ({
+                number: v.number,
+                message: v.message,
+                source: v.source,
+                bookmarked: v.bookmarked,
+                createdAt: v.createdAt.toISOString(),
+              })),
+            };
+          case "restore": {
+            const number = need(input.number, "restore needs a version number");
+            const target = (await session.workspace.listVersions()).find(
+              (v) => v.number === number,
+            );
+            if (!target) throw new BuilderError(`There's no version ${number}.`);
+            const restored = await session.workspace.restoreVersion(target.id, {
+              userId: session.userId ?? null,
+            });
+            return { restored: number, nowVersion: restored.number };
+          }
+        }
+      },
+    ),
   });
 
   return {
-    get_brief,
-    update_brief,
-    list_files,
-    read_file,
-    write_file,
-    edit_file,
-    delete_files,
+    ...createSkillTools(),
+    brief,
+    files,
     run_command,
     add_dependency,
     check_site,
     preview,
-    read_preview_logs,
     fetch_reference,
     generate_image,
-    save_version,
-    list_versions,
-    restore_version,
+    versions,
   };
 }
 
@@ -596,7 +766,7 @@ export function packageCommandRefusal(command: string, args: string[]): string |
   if ((ADDS.has(verb) && rest.length > 0) || CHANGES.has(verb)) {
     return (
       `run_command doesn't change packages (${program} ${verb}). Use add_dependency to add ` +
-      "one; to remove one, edit package.json with edit_file."
+      "one; to remove one, edit package.json with the files tool."
     );
   }
   return null;

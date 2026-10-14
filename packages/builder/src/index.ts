@@ -2,6 +2,8 @@ export {
   createSiteBuilderAgent,
   SITE_BUILDER_INSTRUCTIONS,
   SITE_BUILDER_MODE,
+  SITE_BUILDER_MODE_ID,
+  SITE_BUILDER_OWN_TEXT_TOOLS,
   SITE_BUILDER_TOOL_NAMES,
   type SiteBuilderAgentConfig,
 } from "./agent.ts";
@@ -14,12 +16,18 @@ export {
   OpenAiImageGenerator,
   type OpenAiImagesConfig,
 } from "./images.ts";
+export { OFFICIAL_REGISTRY } from "./registry.ts";
 export type {
   BuilderSession,
   BuilderUsage,
   ResolveBuilderSession,
   UsageMeter,
 } from "./session.ts";
+export {
+  createSkillTools,
+  SITE_BUILDER_SKILL_NAMES,
+  siteBuilderSkills,
+} from "./skills/index.ts";
 export { isSandboxMade, type SyncReport, sandboxHashes, syncRuntime } from "./sync.ts";
 export {
   BuilderError,

@@ -29,19 +29,17 @@ const FENCE_CLOSE = "<<<end untrusted>>>";
 export const UNTRUSTED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   fetch_reference: ["page", "error"],
   run_command: ["stdout", "stderr", "error"],
-  add_dependency: ["output", "error"],
+  add_dependency: ["output", "error", "docs", "theme"],
   check_site: ["output"],
-  preview: ["recentLogs", "output"],
-  read_preview_logs: ["logs"],
+  preview: ["recentLogs", "output", "logs"],
 };
 
 const SOURCE: Record<string, string> = {
   fetch_reference: "web page",
   run_command: "sandbox command output",
-  add_dependency: "sandbox command output",
+  add_dependency: "sandbox command output or registry text",
   check_site: "sandbox build output",
   preview: "dev-server logs",
-  read_preview_logs: "dev-server logs",
 };
 
 const PATTERNS: RegExp[] = [
