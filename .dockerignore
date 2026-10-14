@@ -1,0 +1,10 @@
+**/node_modules
+**/.next
+**/.turbo
+**/.data
+**/dist
+**/.env*
+.git
+.beads
+.locus-test-runs
+**/.dolt
