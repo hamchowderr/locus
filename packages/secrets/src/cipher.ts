@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 
 const VERSION = "v1";
 const KEY_BYTES = 32;
@@ -100,3 +100,18 @@ const aad = (path: string) => Buffer.from(`locus-secret:${VERSION}:${path}`, "ut
 
 /** A fresh `LOCUS_SECRETS_KEY` value. */
 export const generateSecretsKey = () => randomBytes(KEY_BYTES).toString("base64");
+
+/**
+ * A 32-byte key for one other purpose, derived from `LOCUS_SECRETS_KEY` with HKDF-SHA256 under
+ * `label` (e.g. "locus/site-lead-ip"), so that purpose needs no secret of its own and never sees
+ * the sealing key. Different labels give unrelated keys. Never log the result.
+ */
+export function deriveSecretsSubkey(
+  label: string,
+  env: Record<string, string | undefined> = process.env,
+): Buffer {
+  const current = env.LOCUS_SECRETS_KEY;
+  if (!current) throw new Error("LOCUS_SECRETS_KEY is not set");
+  const key = decodeKey("LOCUS_SECRETS_KEY", current);
+  return Buffer.from(hkdfSync("sha256", key, Buffer.alloc(0), label, KEY_BYTES));
+}

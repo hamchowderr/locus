@@ -60,7 +60,10 @@ forward from `lib/locus.ts`, which is null in a draft or preview (the route then
 sending anything) and is rewritten by `withLocusSettings` on every publish. It holds the site's
 public id and Locus's address — no key or token, so nothing secret is ever in a site. The lead
 form sends a hidden `fax` honeypot and `elapsedMs` for Locus's spam checks; the `site-forms`
-skill in `@locus/builder` tells the agent the contract.
+skill in `@locus/builder` tells the agent the contract. An upsert that matches an existing
+contact by email or phone updates its name, phone and company (only filling blanks is bead
+locus-ptq.18), and a visitor's resend after a lost response can add the note twice. The route
+reads at most 16 KB of the body, counted as it arrives.
 
 ## Design brief
 

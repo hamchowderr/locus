@@ -1,5 +1,5 @@
-import { MAX_LEAD_BODY_BYTES, submitSiteLead } from "@locus/connect";
-import { connectDeps } from "@/lib/connect";
+import { readLeadBody, submitSiteLead } from "@locus/connect";
+import { connectDeps, siteLeadIpKey } from "@/lib/connect";
 import { NotConfigured } from "@/lib/locus";
 
 /**
@@ -14,19 +14,22 @@ export async function POST(request: Request, { params }: { params: Promise<{ sit
   if (!/^application\/json\b/i.test(type)) {
     return Response.json({ error: "Send the form as JSON." }, { status: 415 });
   }
-  const declared = Number(request.headers.get("content-length") ?? 0);
-  if (declared > MAX_LEAD_BODY_BYTES) {
+  // Counted as it arrives, whatever Content-Length says; a body past the cap is never read.
+  const raw = await readLeadBody(request.body);
+  if (raw === null) {
     return Response.json({ error: "That's too much to send." }, { status: 413 });
   }
-  const raw = await request.text();
   try {
-    const result = await submitSiteLead(connectDeps(), {
-      siteId,
-      raw,
-      // Set by the site's route from its host's own forwarding header. A hint for the per-IP
-      // limit only; the per-site limit holds whatever it says.
-      visitorIp: request.headers.get("x-locus-visitor-ip"),
-    });
+    const result = await submitSiteLead(
+      { ...connectDeps(), ipHashKey: siteLeadIpKey() },
+      {
+        siteId,
+        raw,
+        // `x-locus-visitor-ip` is set by the site's route from its host's forwarding header, but
+        // any caller can send it: a hint trusted only for the per-IP limit, nothing else.
+        visitorIp: request.headers.get("x-locus-visitor-ip"),
+      },
+    );
     return Response.json(result.body, {
       status: result.status,
       headers: {

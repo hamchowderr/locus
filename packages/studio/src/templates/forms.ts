@@ -49,13 +49,38 @@ import { locus } from "@/lib/locus";
 
 const MAX_BYTES = 16 * 1024;
 
+/** The body as text, counted as it arrives; null past MAX_BYTES, whatever Content-Length says. */
+async function readBody(request: Request): Promise<string | null> {
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > MAX_BYTES) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 /**
  * Receives the site's form submissions and forwards them to Locus, which puts them in the
  * client's CRM. Same origin for the browser; no key or token here or anywhere in the site.
  */
 export async function POST(request: Request) {
-  const raw = await request.text();
-  if (raw.length > MAX_BYTES) {
+  const raw = await readBody(request);
+  if (raw === null) {
     return NextResponse.json({ error: "That's too much to send." }, { status: 413 });
   }
   let body: Record<string, unknown> | null = null;

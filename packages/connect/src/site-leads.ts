@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { isIP } from "node:net";
 import { consumeAttempt } from "@locus/auth";
 import { location, site } from "@locus/db/control";
@@ -28,19 +28,30 @@ import { mintLocationToken } from "./ghl-oauth.ts";
 // contact fields and one note, and never reaches an agent from this path (an agent that later
 // reads the contact through GHL gets it through the harness's prompt-injection screen).
 //
-// Spam: a honeypot field, a minimum time between the form appearing and being sent, and fixed-
-// window limits per site and per visitor IP (counted in the control database, like sign-ins).
-// A captcha (Turnstile) is not wired yet; it would be checked here, before the limits.
+// Spam: a honeypot field and a minimum time between the form appearing and being sent, checked
+// first so junk costs nothing; then fixed-window limits, counted in the control database like
+// sign-ins: a tight one per visitor IP, and a short burst guard plus a high hourly ceiling per
+// site. The visitor IP is only a hint (the site's route passes it on, and a caller can say
+// anything), so the per-site limits are kept high enough that spoofed IPs can't easily switch a
+// site's forms off. A captcha (Turnstile, bead locus-ptq.15) is the real fix for that; it would
+// be checked here, before the limits.
 
 export type SiteLeadDeps = Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now"> & {
   /** GHL's per-client burst budget; defaults to the process-wide one. */
   rateLimiter?: GhlRateLimiter;
   limits?: Partial<SiteLeadLimits>;
+  /**
+   * The server-side key visitor IPs are hashed with (HMAC-SHA256), so a stored counter key can't
+   * be turned back into an address by hashing every IP. Never logged or sent anywhere.
+   */
+  ipHashKey: Uint8Array;
 };
 
 export interface SiteLeadLimits {
-  /** Submissions one site accepts per window, from anyone. */
+  /** Submissions one site accepts per window, from anyone: a high ceiling, logged when hit. */
   perSite: { max: number; windowMs: number };
+  /** A short burst guard per site, from anyone. */
+  perSiteBurst: { max: number; windowMs: number };
   /** Submissions one visitor IP may send to one site per window. */
   perIp: { max: number; windowMs: number };
   /** Below this many milliseconds from the form appearing to it being sent, it's a bot. */
@@ -51,7 +62,8 @@ const MINUTE = 60_000;
 
 // Windows stay within an hour: `consumeAttempt` sweeps keys older than its longest window.
 export const SITE_LEAD_LIMITS: SiteLeadLimits = {
-  perSite: { max: 60, windowMs: 60 * MINUTE },
+  perSite: { max: 300, windowMs: 60 * MINUTE },
+  perSiteBurst: { max: 20, windowMs: MINUTE },
   perIp: { max: 5, windowMs: 10 * MINUTE },
   minFillMs: 3_000,
 };
@@ -120,9 +132,12 @@ const NOT_SENT = "We couldn't send that just now. Please try again.";
 export interface SiteLeadInput {
   /** From the URL; a public identifier, not a credential. */
   siteId: string;
-  /** The request body as text, at most `MAX_LEAD_BODY_BYTES`. */
+  /** The request body as text (see `readLeadBody`), at most `MAX_LEAD_BODY_BYTES`. */
   raw: string;
-  /** The visitor's address as the site's route saw it, if any. Only used for the per-IP limit. */
+  /**
+   * The visitor's address as the site's route says it saw it, if any. Caller-controlled: trusted
+   * only for the per-IP limit, never for anything else.
+   */
   visitorIp: string | null;
 }
 
@@ -165,29 +180,46 @@ export async function submitSiteLead(
     return refuse(404, NOT_CONNECTED);
   }
 
-  // Every attempt at a real site counts, bots included.
+  // A bot: say it went, send nothing, so it learns nothing. Before any limit, so junk never uses
+  // up a real visitor's or the site's allowance.
+  if (honeypot || elapsedMs === null || elapsedMs < limits.minFillMs) return ACCEPTED;
+
   const now = deps.now?.() ?? Date.now();
-  const checks = [consumeAttempt(deps.db, `site-lead|site|${row.site.id}`, limits.perSite, now)];
+  const tooMany = (retryAfterSeconds: number): SiteLeadResult => ({
+    status: 429,
+    body: { error: "Too many messages from here. Please try again later." },
+    retryAfterSeconds,
+  });
   const ip = input.visitorIp?.trim();
   if (ip && isIP(ip)) {
-    // Kept hashed: the counter only needs to tell visitors apart.
-    const who = createHash("sha256").update(ip).digest("hex").slice(0, 32);
-    checks.push(consumeAttempt(deps.db, `site-lead|ip|${row.site.id}|${who}`, limits.perIp, now));
+    // The IP header is a hint, trusted only for this limit. Kept as a keyed hash: the counter
+    // only needs to tell visitors apart.
+    const who = hashVisitorIp(deps.ipHashKey, ip);
+    const perIp = await consumeAttempt(
+      deps.db,
+      `site-lead|ip|${row.site.id}|${who}`,
+      limits.perIp,
+      now,
+    );
+    if (!perIp.allowed) return tooMany(perIp.retryAfterSeconds);
   }
-  let wait = 0;
-  for (const result of await Promise.all(checks)) {
-    if (!result.allowed) wait = Math.max(wait, result.retryAfterSeconds);
+  const burst = await consumeAttempt(
+    deps.db,
+    `site-lead|burst|${row.site.id}`,
+    limits.perSiteBurst,
+    now,
+  );
+  if (!burst.allowed) return tooMany(burst.retryAfterSeconds);
+  const perSite = await consumeAttempt(
+    deps.db,
+    `site-lead|site|${row.site.id}`,
+    limits.perSite,
+    now,
+  );
+  if (!perSite.allowed) {
+    console.warn(`Site ${row.site.id} reached its hourly lead ceiling (${limits.perSite.max})`);
+    return tooMany(perSite.retryAfterSeconds);
   }
-  if (wait > 0) {
-    return {
-      status: 429,
-      body: { error: "Too many messages from here. Please try again later." },
-      retryAfterSeconds: wait,
-    };
-  }
-
-  // A bot: say it went, send nothing, so it learns nothing.
-  if (honeypot || elapsedMs === null || elapsedMs < limits.minFillMs) return ACCEPTED;
 
   try {
     await sendToGhl(deps, row.location, lead);
@@ -204,6 +236,37 @@ export async function submitSiteLead(
     return refuse(502, NOT_SENT);
   }
   return ACCEPTED;
+}
+
+/** A visitor IP as kept in a counter key: HMAC-SHA256 under the server's key, shortened. */
+export function hashVisitorIp(key: Uint8Array, ip: string): string {
+  return createHmac("sha256", key).update(ip).digest("hex").slice(0, 32);
+}
+
+/**
+ * Reads a request body as text, counting bytes as they arrive, and stops at `max` whatever the
+ * Content-Length said (a chunked body has none). Null when the body is larger than `max`; the
+ * rest of it is never read.
+ */
+export async function readLeadBody(
+  body: ReadableStream<Uint8Array> | null,
+  max = MAX_LEAD_BODY_BYTES,
+): Promise<string | null> {
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
 }
 
 type Parsed = { lead: Lead; honeypot: boolean; elapsedMs: number | null } | { error: string };
@@ -307,6 +370,11 @@ async function sendToGhl(
   for (const key of ["name", "firstName", "lastName", "email", "phone", "companyName"] as const) {
     if (fields[key]) contact[key] = fields[key];
   }
+  // An upsert matches an existing contact by email or phone and updates the name, phone and
+  // company it is sent: kept on purpose (the visitor's latest details), documented in the
+  // site-forms skill. Bead locus-ptq.18 tracks only filling blanks instead.
+  // No step is retried within a request, so each request adds at most one note. A visitor who
+  // resends after a 502 whose note did land (a lost response) gets a second, identical note.
   // `tags` on upsert would replace the contact's tags, so they're added separately.
   const upserted = await ghlRequest<{ contact?: { id?: string } }>(
     operation("contacts.upsert-contact"),

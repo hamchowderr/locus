@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,14 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
 import type { GhlAppConfig } from "./ghl-oauth.ts";
-import { type SiteLeadDeps, type SiteLeadInput, submitSiteLead } from "./site-leads.ts";
+import {
+  hashVisitorIp,
+  MAX_LEAD_BODY_BYTES,
+  readLeadBody,
+  type SiteLeadDeps,
+  type SiteLeadInput,
+  submitSiteLead,
+} from "./site-leads.ts";
 import { createStubGhl, STUB_AGENCY } from "./stub.ts";
 
 // Level-1 plumbing: the fake GHL plays GoHighLevel; no model is involved on this path (a lead
@@ -29,6 +37,7 @@ const ghl: GhlAppConfig = {
   scopes: ["contacts.write", "oauth.write"],
 };
 
+const IP_KEY = Buffer.alloc(32, 7);
 const CLOCK = Date.parse("2026-10-14T12:00:00Z");
 const GHL_LOCATION = "ghl-loc-sunrise";
 const OTHER_GHL_LOCATION = "ghl-loc-harbor";
@@ -59,6 +68,7 @@ function deps(routes: FakeRoutes = okRoutes, extra: Partial<SiteLeadDeps> = {}):
     ghl,
     http: { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" },
     now: () => clock,
+    ipHashKey: IP_KEY,
     ...extra,
   };
 }
@@ -256,27 +266,79 @@ describe("a published site's lead form", () => {
         perSite: { max: 3, windowMs: 60 * 60_000 },
       },
     });
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect((await submit(d, lead)).status).toBe(200);
     expect((await submit(d, lead)).status).toBe(200);
     const limited = await submit(d, lead);
     expect(limited).toMatchObject({ status: 429, retryAfterSeconds: 600 });
     expect(fake.requests.filter((r) => r.url.pathname === "/contacts/upsert")).toHaveLength(2);
 
-    // Another visitor still gets through, until the site's own ceiling.
-    expect((await submit(d, lead, { visitorIp: "198.51.100.4" })).status).toBe(429);
-    expect(fake.requests.filter((r) => r.url.pathname === "/contacts/upsert")).toHaveLength(2);
+    // Another visitor still gets through, until the site's own ceiling, which is logged.
+    expect((await submit(d, lead, { visitorIp: "198.51.100.4" })).status).toBe(200);
+    expect(warnings).not.toHaveBeenCalled();
+    expect((await submit(d, lead, { visitorIp: "198.51.100.5" })).status).toBe(429);
+    expect(fake.requests.filter((r) => r.url.pathname === "/contacts/upsert")).toHaveLength(3);
+    expect(warnings.mock.calls.flat().join("\n")).toMatch(/site-live.*hourly lead ceiling/);
+    expect(warnings.mock.calls.flat().join("\n")).not.toContain("198.51.100");
 
     // A new window lets them back in.
     clock += 60 * 60_000;
     expect((await submit(d, lead, { visitorIp: "198.51.100.4" })).status).toBe(200);
   });
 
-  it("counts bots against the limits too, and keeps no visitor IP in clear", async () => {
-    const d = deps(okRoutes, { limits: { perIp: { max: 1, windowMs: 10 * 60_000 } } });
-    expect((await submit(d, { ...lead, fax: "bot" })).status).toBe(200);
-    expect((await submit(d, lead)).status).toBe(429);
+  it("has a high hourly ceiling per site, not a low hard cap, and a short burst guard", async () => {
+    // GHL's own burst budget runs on real time; this test moves the clock, so it stands aside.
+    const d = deps(okRoutes, { rateLimiter: { acquire: async () => {}, pause: () => {} } });
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // 300 visitors within the hour, ten a minute, all get through.
+    for (let i = 0; i < 300; i++) {
+      if (i % 10 === 0) clock += 60_000;
+      const ip = `198.51.${Math.floor(i / 250)}.${i % 250}`;
+      expect((await submit(d, lead, { visitorIp: ip })).status, `lead ${i}`).toBe(200);
+    }
+    expect(warnings).not.toHaveBeenCalled();
+    // The 301st within the hour is refused and logged.
+    expect((await submit(d, lead, { visitorIp: "192.0.2.1" })).status).toBe(429);
+    expect(warnings).toHaveBeenCalledTimes(1);
+
+    // A burst from many addresses at once stops at the burst guard.
+    clock += 2 * 60 * 60_000;
+    const statuses: number[] = [];
+    for (let i = 0; i < 25; i++) {
+      statuses.push((await submit(d, lead, { visitorIp: `192.0.2.${i + 10}` })).status);
+    }
+    expect(statuses.filter((s) => s === 200)).toHaveLength(20);
+    expect(statuses.slice(20)).toEqual([429, 429, 429, 429, 429]);
+  }, 30_000);
+
+  it("charges no limit for junk: honeypot, too fast or an unreadable body", async () => {
+    const d = deps(okRoutes, {
+      limits: {
+        perIp: { max: 1, windowMs: 10 * 60_000 },
+        perSite: { max: 1, windowMs: 60 * 60_000 },
+        perSiteBurst: { max: 1, windowMs: 60_000 },
+      },
+    });
+    for (let i = 0; i < 50; i++) {
+      // Spoofed addresses too: none of it may use up the site's allowance.
+      const visitorIp = `203.0.113.${i}`;
+      expect((await submit(d, { ...lead, fax: "bot" }, { visitorIp })).status).toBe(200);
+      expect((await submit(d, { ...lead, elapsedMs: 100 }, { visitorIp })).status).toBe(200);
+      expect((await submit(d, "not json", { visitorIp })).status).toBe(400);
+      expect((await submit(d, { ...lead, locationId: "x" }, { visitorIp })).status).toBe(400);
+    }
+    expect(await db.select().from(authRateLimit)).toEqual([]);
+    expect(fake.requests).toEqual([]);
+    // The one real visitor still gets through.
+    expect((await submit(d, lead)).status).toBe(200);
+    expect(paths()).toContain("POST /contacts/upsert");
+  });
+
+  it("keeps no visitor IP in clear, only a keyed hash", async () => {
+    const d = deps();
+    await submit(d, lead);
     const keys = (await db.select().from(authRateLimit)).map((r) => r.key);
-    expect(keys.some((k) => k.startsWith("site-lead|ip|site-live|"))).toBe(true);
+    expect(keys).toContain(`site-lead|ip|site-live|${hashVisitorIp(IP_KEY, "203.0.113.7")}`);
     expect(JSON.stringify(keys)).not.toContain("203.0.113.7");
   });
 
@@ -379,5 +441,73 @@ describe("a published site's lead form", () => {
       expect(text).not.toContain("location-token");
       expect(text).not.toContain("dana@example.test");
     }
+  });
+});
+
+describe("the visitor IP hash", () => {
+  it("is an HMAC: stable under one key, different under another, not a plain SHA-256", () => {
+    const ip = "203.0.113.7";
+    const a = hashVisitorIp(IP_KEY, ip);
+    expect(a).toMatch(/^[0-9a-f]{32}$/);
+    expect(hashVisitorIp(Buffer.alloc(32, 7), ip)).toBe(a);
+    expect(hashVisitorIp(Buffer.alloc(32, 8), ip)).not.toBe(a);
+    expect(hashVisitorIp(IP_KEY, "203.0.113.8")).not.toBe(a);
+    const plain = createHash("sha256").update(ip).digest("hex");
+    expect(plain.startsWith(a)).toBe(false);
+    expect(a).not.toBe(plain.slice(0, 32));
+  });
+});
+
+describe("reading a lead body", () => {
+  /** A chunked body with no length that fails if read beyond `limit + chunk` bytes. */
+  function endless(chunk: number) {
+    let sent = 0;
+    let cancelled = false;
+    const stream = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          if (sent > MAX_LEAD_BODY_BYTES) throw new Error("read past the limit");
+          controller.enqueue(new Uint8Array(chunk).fill(120));
+          sent += chunk;
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { stream, sent: () => sent, cancelled: () => cancelled };
+  }
+
+  it("stops past the cap without reading the rest, whatever the length said", async () => {
+    const body = endless(1_000);
+    expect(await readLeadBody(body.stream)).toBeNull();
+    expect(body.sent()).toBeLessThanOrEqual(MAX_LEAD_BODY_BYTES + 1_000);
+    expect(body.cancelled()).toBe(true);
+  });
+
+  it("refuses a chunked oversized Request whose Content-Length lies (the route answers 413)", async () => {
+    const body = endless(4_096);
+    const request = new Request("https://locus.test/api/sites/site-live/leads", {
+      method: "POST",
+      headers: { "content-type": "application/json", "content-length": "10" },
+      body: body.stream,
+      duplex: "half",
+    } as RequestInit);
+    expect(await readLeadBody(request.body)).toBeNull();
+    expect(body.sent()).toBeLessThanOrEqual(MAX_LEAD_BODY_BYTES + 4_096);
+  });
+
+  it("reads a body within the cap, split across chunks, as UTF-8", async () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ name: "Zoë" }));
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes.slice(0, 11));
+        controller.enqueue(bytes.slice(11));
+        controller.close();
+      },
+    });
+    expect(await readLeadBody(stream)).toBe('{"name":"Zoë"}');
+    expect(await readLeadBody(null)).toBe("");
   });
 });
