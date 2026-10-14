@@ -122,7 +122,13 @@ export async function ghlRequest<T = unknown>(
   if (res.status === 429) options.rateLimiter?.pause(budget, retryAfterMs(res));
 
   const text = await res.text();
-  const payload: unknown = text ? JSON.parse(text) : undefined;
+  let payload: unknown;
+  try {
+    payload = text ? JSON.parse(text) : undefined;
+  } catch {
+    // Never echo the body: it may be anything, including text aimed at the agent.
+    throw new GhlError(operation.id, res.status, `response was not JSON (${text.length} bytes)`);
+  }
   if (!res.ok) throw toGhlError(operation.id, res.status, payload);
   return payload as T;
 }
