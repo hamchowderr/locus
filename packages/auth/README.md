@@ -42,5 +42,27 @@ in production.
   Off unless the deployment sets `STRIPE_SECRET_KEY`.
 - `operator.ts`: the deployment's operators (`LOCUS_OPERATORS`) list every agency and can comp
   one.
+- `usage.ts`: credit metering for AI site generation, per client and per agency (below).
 - `rate-limit.ts`: attempt limits on sign-in, sign-up and verification emails, counted in the
   control database.
+
+## Usage metering
+
+AI generation (LLM tokens, AI images, sandbox time) is metered in credits. Every amount is an
+integer in hundredths of a credit (`CREDIT = 100`); one credit is $0.01 of provider cost × `MARKUP`.
+Rates, markup and the plans' credit limits are placeholders until pricing is validated.
+
+- `creditsFor(measurement)`: pure pricing — tokens by model-id prefix (an unknown model is priced
+  like the most expensive one), images by size, sandbox by the second. Rounds up.
+- `checkAllowance(db, { organizationId, locationId, now })` before generating: refuses when the
+  agency isn't entitled, the client is paused, the agency's `creditsPerMonth` or the client's own
+  monthly cap is used up, or the client's rolling 5-hour window (`creditsPer5Hours`) is full —
+  with a sentence for the user and, when waiting helps, `retryAt`. Months are calendar months in
+  UTC, not the Stripe period. Comped agencies have no plan limits; a client's own cap still applies.
+- `recordUsage(db, …)` after each measurement: stores a `usage_event` and returns alerts newly
+  crossed (the client's `alert_at_percent` and 100% of its cap, 80% and 100% of the agency's
+  month), each fired once per month (`usage_alert`) and written to `audit_log`.
+- `usageSummary(db, …)` for the usage page; `setUsageLimit(db, ctx, client, …)` sets a client's
+  cap, alert threshold or pause — owners and admins only, audited.
+
+The ids come from the session (`AuthorizedClient`, the active organisation), never a request.

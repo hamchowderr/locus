@@ -34,4 +34,25 @@ export {
   requireOperator,
   setComped,
 } from "./operator.ts";
-export { PLANS, type Plan, type PlanLimits, planNamed } from "./plans.ts";
+export { CREDIT, PLANS, type Plan, type PlanLimits, planNamed } from "./plans.ts";
+export {
+  type Allowance,
+  BURST_WINDOW_MS,
+  type ClientUsage,
+  checkAllowance,
+  creditsFor,
+  type ImageSize,
+  MARKUP,
+  monthOf,
+  providerCostUsd,
+  recordUsage,
+  setUsageLimit,
+  USD_PER_CREDIT,
+  type UsageAlert,
+  type UsageIds,
+  type UsageLimitChange,
+  type UsageMeasurement,
+  type UsageRecord,
+  type UsageSummary,
+  usageSummary,
+} from "./usage.ts";
