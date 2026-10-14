@@ -2,7 +2,7 @@ import { Mastra } from "@mastra/core";
 import { Agent } from "@mastra/core/agent";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { type ConversationStore, createLocusMemory, ForgetGhlData } from "./conversation.ts";
-import { createLocusTools, type ToolDeps } from "./tools.ts";
+import { createLocusTools, type ToolDeps, waitsForApproval } from "./tools.ts";
 import { UntrustedContentProcessor } from "./untrusted.ts";
 
 /**
@@ -38,15 +38,18 @@ export interface LocusAgentConfig extends ToolDeps {
  */
 export function createLocusAgent({ model, storage, ...deps }: LocusAgentConfig): Agent {
   const untrusted = new UntrustedContentProcessor();
+  const tools = createLocusTools(deps);
   const agent = new Agent({
     id: "locus",
     name: "Locus",
     instructions: INSTRUCTIONS,
     model,
-    tools: createLocusTools(deps),
+    tools,
     inputProcessors: [untrusted],
     // ForgetGhlData runs after the screen and before memory's own processors save the run.
-    outputProcessors: storage ? [untrusted, new ForgetGhlData()] : [untrusted],
+    outputProcessors: storage
+      ? [untrusted, new ForgetGhlData(waitsForApproval(tools))]
+      : [untrusted],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
   });
   if (!storage) return agent;

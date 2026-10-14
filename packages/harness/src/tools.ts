@@ -149,3 +149,19 @@ async function recoverable<T>(run: () => T | Promise<T>): Promise<T | { error: s
     throw error;
   }
 }
+
+/**
+ * Asks a call's own tool whether it will wait for a person, using the same rule the agent
+ * applies before running it. An unknown tool counts as waiting.
+ */
+export function waitsForApproval(tools: Record<string, unknown>) {
+  return async (call: { toolName: string; args: unknown }, requestContext: unknown) => {
+    const tool = tools[call.toolName] as
+      | { requireApproval?: boolean | ((input: unknown, ctx: unknown) => unknown) }
+      | undefined;
+    if (!tool) return true;
+    const rule = tool.requireApproval;
+    if (typeof rule === "function") return Boolean(await rule(call.args, { requestContext }));
+    return rule === true;
+  };
+}

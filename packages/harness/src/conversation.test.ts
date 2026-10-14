@@ -14,6 +14,7 @@ import {
   NOT_KEPT,
   pendingApprovals,
 } from "./conversation.ts";
+import { TAINT_MARK } from "./untrusted.ts";
 
 const mock = useAimock();
 const clientA: GhlSession = { token: "tok", tokenKind: "location", locationId: "loc-A" };
@@ -210,6 +211,49 @@ describe("approvals across requests", () => {
     expect(ghl.requests).toEqual([]);
   });
 
+  test("a run waiting for approval keeps no GHL data while it waits", async () => {
+    mock().llm.on(
+      { userMessage: /delete the old promo/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "a6-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [{ as: "forms", operation: "forms.get-forms" }],
+              sql: "SELECT id, name FROM forms",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "a6-read" },
+      perform("a6-del", "contacts.delete-contact", { path: { contactId: "c1" } }),
+    );
+    mock().llm.on({ userMessage: /anything else/i }, { content: "No." });
+    const openStore = clientDatabase();
+    const ghl = createFakeGhl({
+      "GET /forms/": { body: { forms: [{ id: "f1", name: "Secret Promo Form" }] } },
+    });
+
+    const first = await request(openStore, ghl).generate("Delete the old promo", {
+      maxSteps: 4,
+      memory: memory("t-a6"),
+    });
+    expect(first.finishReason).toBe("suspended");
+
+    const stored = await openStore()
+      .getStore("memory")
+      .then((store) => store?.listMessages({ threadId: "t-a6" }));
+    expect(JSON.stringify(stored)).toContain(NOT_KEPT);
+    expect(JSON.stringify(stored)).not.toContain("Secret Promo Form");
+    // Nor does the next turn on the thread, while the deletion is still undecided.
+    mock().llm.clearRequests();
+    await request(openStore, ghl).generate("Anything else?", { memory: memory("t-a6") });
+    expect(sentToModel()).not.toContain("Secret Promo Form");
+  });
+
   test("only the client whose thread it is can see or decide a pending change", async () => {
     scriptDeletion("a3");
     const openStore = clientDatabase();
@@ -310,12 +354,13 @@ describe("approvals across requests", () => {
 });
 
 describe("forgetResult", () => {
-  test("keeps our own text and errors, drops GHL data", () => {
+  test("keeps our own text, drops GHL data and what GHL errors said", () => {
     const skill = { skill: "# Forms", operations: "…" };
     expect(forgetResult("load_skill", skill)).toBe(skill);
-    expect(forgetResult("perform_action", { error: "contacts.x: 422 bad" })).toEqual({
-      error: "contacts.x: 422 bad",
-    });
+    // A GHL error can quote data back ("a contact with ann@example.com already exists").
+    expect(
+      forgetResult("perform_action", { error: "contacts.x: 400 ann@example.com exists" }),
+    ).toEqual({ notKept: NOT_KEPT, failed: true });
     expect(forgetResult("perform_action", { contact: { id: "c1", email: "a@b.c" } })).toEqual({
       notKept: NOT_KEPT,
     });
@@ -327,5 +372,13 @@ describe("forgetResult", () => {
     expect(
       forgetResult("query_data", { warning: "1 withheld", result: { rows: [], rowCount: 0 } }),
     ).toEqual({ notKept: NOT_KEPT, rowCount: 0 });
+    // A paused run keeps the taint mark so it is still tainted when it resumes.
+    const tainted = { warning: "w", taint: TAINT_MARK, result: { rows: [], rowCount: 0 } };
+    expect(forgetResult("query_data", tainted, { keepTaint: true })).toEqual({
+      notKept: NOT_KEPT,
+      rowCount: 0,
+      taint: TAINT_MARK,
+    });
+    expect(forgetResult("query_data", tainted)).toEqual({ notKept: NOT_KEPT, rowCount: 0 });
   });
 });

@@ -43,11 +43,13 @@ await decideApproval(later, session, { threadId, toolCallId, approve: true });
 
 The resource is always `clientResource(session)`, so a thread, and anything pending in it, can
 only be read or decided for the client that owns it. GHL data is not cached between requests:
-`ForgetGhlData` replaces each tool result with a stub (keeping errors and `rowCount`) before
-memory saves the run, and the next turn reads GHL again. History is budgeted by tokens
-(`HISTORY_TOKENS`); titles and semantic recall are off because each would cost a model call.
-A paused run resumes from its snapshot, which keeps the taint marks, so a tainted run stays
-tainted after an approval; the stubs in memory drop them, so a later turn starts clean.
+`ForgetGhlData` replaces each tool result with a stub (keeping only `rowCount`, and that a call
+failed) before memory saves the run, and the next turn reads GHL again. That happens when a run
+finishes and also when a step is about to stop for an approval, since a paused run is saved as it
+stands and may never be decided. History is budgeted by tokens (`HISTORY_TOKENS`); titles and
+semantic recall are off because each would cost a model call. A paused run's stubs keep the taint
+mark, so a tainted run stays tainted when it resumes; a finished run's stubs drop it, so a later
+turn starts clean.
 
 ## GoHighLevel data is untrusted
 
