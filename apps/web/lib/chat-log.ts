@@ -42,3 +42,53 @@ export function lineOf(message: MastraDBMessage): ChatLine | null {
 export function linesOf(messages: MastraDBMessage[]): ChatLine[] {
   return messages.flatMap((message) => lineOf(message) ?? []);
 }
+
+/** A change the assistant is waiting for the member to allow or decline. */
+export type Approval = { toolCallId: string; toolName: string; args: unknown };
+
+/** A question the assistant asked (its `ask_user` tool), waiting for the member's answer. */
+export type Question = {
+  toolCallId: string;
+  question: string;
+  options: string[];
+  multiple: boolean;
+};
+
+/** The question a suspended tool is waiting on, from what it suspended with. */
+export function questionOf(toolCallId: string, toolName: string, payload: unknown): Question {
+  const p = (payload && typeof payload === "object" ? payload : {}) as Record<string, unknown>;
+  const options = Array.isArray(p.options)
+    ? p.options.flatMap((o) =>
+        o && typeof o === "object" && typeof (o as { label?: unknown }).label === "string"
+          ? [(o as { label: string }).label]
+          : [],
+      )
+    : [];
+  return {
+    toolCallId,
+    question:
+      typeof p.question === "string" ? p.question : `The assistant (${toolName}) needs an answer.`,
+    options,
+    multiple: options.length > 0 && p.selectionMode === "multi_select",
+  };
+}
+
+type Pending = {
+  pendingApprovals: Record<string, { toolCallId: string; toolName: string; args: unknown }>;
+  pendingSuspensions: Record<
+    string,
+    { toolCallId: string; toolName: string; suspendPayload: unknown }
+  >;
+};
+
+/** What the session is waiting on the member for, from a `display_state_changed` snapshot. */
+export function pendingOf(display: Pending): { approvals: Approval[]; questions: Question[] } {
+  return {
+    approvals: Object.values(display.pendingApprovals ?? {}).map(
+      ({ toolCallId, toolName, args }) => ({ toolCallId, toolName, args }),
+    ),
+    questions: Object.values(display.pendingSuspensions ?? {}).map((s) =>
+      questionOf(s.toolCallId, s.toolName, s.suspendPayload),
+    ),
+  };
+}
