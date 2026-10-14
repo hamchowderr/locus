@@ -8,5 +8,28 @@ export const EMBEDDED_TENANT_MIGRATIONS: { hash: string; sql: string[] }[] = [
       "CREATE UNIQUE INDEX `site_file_path_version` ON `site_file` (`path`,`version`);",
       "CREATE TABLE `site_version` (\n\t`version` integer PRIMARY KEY NOT NULL,\n\t`commit_sha` text,\n\t`message` text,\n\t`created_at` integer NOT NULL\n);"
     ]
+  },
+  {
+    "hash": "d12050502e20b8080b4d7cc6ee481268cf6b73cdaaade99fec5a2e1867552f8b",
+    "sql": [
+      "DROP TABLE `generation_run`;",
+      "DROP TABLE `site_file`;",
+      "DROP TABLE `site_version`;"
+    ]
+  },
+  {
+    "hash": "067fb1dbe355893604be6d7f180717e486365733c5adb241100e4fc1efea2b9b",
+    "sql": [
+      "CREATE TABLE `generation_run` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`site_id` text NOT NULL,\n\t`thread_id` text,\n\t`prompt` text NOT NULL,\n\t`status` text NOT NULL,\n\t`version_id` text,\n\t`error` text,\n\t`started_at` integer NOT NULL,\n\t`finished_at` integer\n);",
+      "CREATE INDEX `generation_run_site_idx` ON `generation_run` (`site_id`,`started_at`);",
+      "CREATE TABLE `site_blob` (\n\t`hash` text PRIMARY KEY NOT NULL,\n\t`encoding` text NOT NULL,\n\t`content` text NOT NULL,\n\t`size` integer NOT NULL\n);",
+      "CREATE TABLE `site_brief` (\n\t`site_id` text PRIMARY KEY NOT NULL,\n\t`brief` text NOT NULL,\n\t`updated_at` integer NOT NULL\n);",
+      "CREATE TABLE `site_draft_file` (\n\t`site_id` text NOT NULL,\n\t`path` text NOT NULL,\n\t`blob_hash` text NOT NULL,\n\tPRIMARY KEY(`site_id`, `path`),\n\tFOREIGN KEY (`blob_hash`) REFERENCES `site_blob`(`hash`) ON UPDATE no action ON DELETE no action\n);",
+      "CREATE INDEX `site_draft_file_blob_idx` ON `site_draft_file` (`blob_hash`);",
+      "CREATE TABLE `site_version` (\n\t`id` text PRIMARY KEY NOT NULL,\n\t`site_id` text NOT NULL,\n\t`number` integer NOT NULL,\n\t`message` text NOT NULL,\n\t`source` text NOT NULL,\n\t`parent_id` text,\n\t`bookmarked` integer DEFAULT false NOT NULL,\n\t`commit_sha` text,\n\t`created_by_user_id` text,\n\t`created_at` integer NOT NULL\n);",
+      "CREATE UNIQUE INDEX `site_version_site_number` ON `site_version` (`site_id`,`number`);",
+      "CREATE TABLE `site_version_file` (\n\t`version_id` text NOT NULL,\n\t`path` text NOT NULL,\n\t`blob_hash` text NOT NULL,\n\tPRIMARY KEY(`version_id`, `path`),\n\tFOREIGN KEY (`version_id`) REFERENCES `site_version`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`blob_hash`) REFERENCES `site_blob`(`hash`) ON UPDATE no action ON DELETE no action\n);",
+      "CREATE INDEX `site_version_file_blob_idx` ON `site_version_file` (`blob_hash`);"
+    ]
   }
 ];

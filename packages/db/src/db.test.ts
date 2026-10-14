@@ -99,7 +99,14 @@ describe("provisioning", () => {
       { control, provisioner },
       { organizationId: "org-1", ghlLocationId: "ghl-a", name: "Client A" },
     );
-    expect(await tables(hostname)).toEqual(["generation_run", "site_file", "site_version"]);
+    expect(await tables(hostname)).toEqual([
+      "generation_run",
+      "site_blob",
+      "site_brief",
+      "site_draft_file",
+      "site_version",
+      "site_version_file",
+    ]);
 
     const [row] = await control.select().from(location).where(eq(location.id, id));
     expect(row?.status).toBe("active");
