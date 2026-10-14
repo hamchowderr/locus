@@ -33,14 +33,16 @@ export function normalizeSitePath(input: string): string {
       throw new WorkspaceError(`"${segment}" in "${input}" isn't a usable file or folder name.`);
     }
   }
-  const [first] = segments;
-  if (first === ".git" || first === "node_modules" || first === ".next") {
-    throw new WorkspaceError(`Files under ${first}/ aren't part of the site's source.`);
+  for (const segment of segments.map((s) => s.toLowerCase())) {
+    if (segment === ".git" || segment === "node_modules" || segment === ".next") {
+      throw new WorkspaceError(`Files under ${segment}/ aren't part of the site's source.`);
+    }
   }
-  const name = segments.at(-1) ?? "";
-  if (name === ".env" || name.startsWith(".env.")) {
+  const name = (segments.at(-1) ?? "").toLowerCase();
+  if (name === ".env" || name.startsWith(".env.") || name === ".envrc" || name === ".npmrc") {
     throw new WorkspaceError(
-      "Sites never contain .env files. Read settings from process.env and list them in README.md.",
+      `Sites never contain ${name} files: they hold secrets. Read settings from process.env ` +
+        "and list them in README.md.",
     );
   }
   return segments.join("/");
@@ -66,7 +68,6 @@ const TEXT_EXTENSIONS = new Set([
   "yaml",
   "toml",
   "gitignore",
-  "npmrc",
   "nvmrc",
 ]);
 

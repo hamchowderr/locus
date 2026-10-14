@@ -37,6 +37,16 @@ describe("startSite", () => {
     expect(template.id).toBe("lead-funnel");
   });
 
+  it("lets only one of two simultaneous starts win", async () => {
+    const ws = new SiteWorkspace(db, "site-4");
+    const results = await Promise.allSettled([
+      startSite(ws, { brief: { name: "A" }, templateId: "blank" }),
+      startSite(ws, { brief: { name: "A" }, templateId: "blank" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect((await ws.listVersions()).map((v) => v.number)).toEqual([1]);
+  });
+
   it("refuses an unknown template", async () => {
     const ws = new SiteWorkspace(db, "site-3");
     await expect(startSite(ws, { brief: { name: "X" }, templateId: "nope" })).rejects.toThrow(
