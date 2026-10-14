@@ -1,6 +1,19 @@
 export { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
 export { createLocusAgent, INSTRUCTIONS, type LocusAgentConfig } from "./agent.ts";
 export {
+  ApprovalError,
+  type ConversationStore,
+  clientResource,
+  createLocusMemory,
+  decideApproval,
+  ForgetGhlData,
+  forgetResult,
+  HISTORY_TOKENS,
+  NOT_KEPT,
+  type PendingApproval,
+  pendingApprovals,
+} from "./conversation.ts";
+export {
   DEFAULT_LIMITS,
   extractRows,
   type QueryDeps,
@@ -25,3 +38,11 @@ export {
   type WriteGuard,
 } from "./test-mode.ts";
 export { createLocusTools, type ToolDeps } from "./tools.ts";
+export {
+  createRunTaint,
+  looksLikeInstructions,
+  type RunTaint,
+  UntrustedContentProcessor,
+  WITHHELD,
+  withholdInstructions,
+} from "./untrusted.ts";
