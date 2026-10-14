@@ -3,23 +3,30 @@ import {
   ConnectError,
   type DomainStatus,
   type HostProject,
+  type InstallationRepo,
+  latestDeployment,
   listHostProjects,
+  listInstallationRepos,
   listSites,
+  type SiteDeployment,
   siteDomainStatus,
 } from "@locus/connect";
 import { SITE_KINDS, TEMPLATES } from "@locus/studio";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { siteDeps } from "@/lib/hosts";
+import { publishDeps, siteDeps } from "@/lib/hosts";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { ACTIVE_SITE_COOKIE, siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
+import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-publish";
 import {
   addSiteDomain,
   chooseSite,
   createSite,
   deleteSiteDomain,
+  giveSiteRepository,
+  giveSiteVercelProject,
   linkSiteProject,
   unlinkSiteProject,
 } from "../actions";
@@ -31,13 +38,16 @@ const STATE: Record<DomainStatus["state"], string> = {
   live: "Live. The site is served on this domain.",
 };
 
-/** A Vercel or configuration problem as text for the page, instead of failing it. */
-async function softly<T>(run: () => Promise<T>): Promise<T | { problem: string }> {
+/** A Vercel, GitHub or configuration problem as text for the page, instead of failing it. */
+async function softly<T>(
+  run: () => Promise<T>,
+  notConfigured = "Vercel isn't set up here yet.",
+): Promise<T | { problem: string }> {
   try {
     return await run();
   } catch (error) {
     if (error instanceof ConnectError) return { problem: error.message };
-    if (error instanceof NotConfigured) return { problem: "Vercel isn't set up here yet." };
+    if (error instanceof NotConfigured) return { problem: notConfigured };
     throw error;
   }
 }
@@ -99,6 +109,23 @@ export default async function Sites({
     ),
   );
   const briefNames = isProblem(briefs) ? new Map<string, string>() : briefs;
+  // Publishing: a site started in Locus gets a repository, then a Vercel project that builds it.
+  const needsRepo = (s: (typeof sites)[number]) => !s.repoFullName && !s.hostProjectId;
+  const repos: InstallationRepo[] | { problem: string } =
+    manager && sites.some(needsRepo)
+      ? await softly(
+          () => listInstallationRepos(publishDeps(), ctx),
+          "Publishing to GitHub isn't set up here yet.",
+        )
+      : [];
+  const repoChoices = isProblem(repos) ? [] : linkableRepos(repos, sites);
+  const deployments = await Promise.all(
+    sites.map((s) =>
+      s.host === "vercel" && s.hostProjectId
+        ? softly(() => latestDeployment(publishDeps(), client, s.id))
+        : undefined,
+    ),
+  );
 
   return (
     <Page title={`Sites · ${client.location.name}`}>
@@ -176,6 +203,18 @@ export default async function Sites({
             ) : (
               <p className="text-sm text-neutral-600">No domain yet.</p>
             )}
+            {manager && needsRepo(s) && (
+              <RepoForm
+                siteId={s.id}
+                suggested={suggestedRepoName(briefNames.get(s.id))}
+                repos={repos}
+                choices={repoChoices}
+              />
+            )}
+            {manager && s.repoFullName && !s.hostProjectId && (
+              <ProjectForm siteId={s.id} problem={isProblem(projects) ? projects.problem : null} />
+            )}
+            {deployments[i] !== undefined && <DeploymentLine deployment={deployments[i]} />}
             {gone(s.hostProjectId) && (
               <Notice tone="error">This project is no longer on your Vercel team.</Notice>
             )}
@@ -310,6 +349,99 @@ function DomainPanel({
         {manager && <RemoveDomain siteId={siteId} />}
       </div>
     </div>
+  );
+}
+
+function ConnectFirst({ problem }: { problem: string }) {
+  return (
+    <Notice tone="error">
+      {problem}{" "}
+      <Link href="/connect" className="underline">
+        Connections
+      </Link>
+    </Notice>
+  );
+}
+
+/** Gives a draft site a GitHub repository: a new private one, or an existing empty one. */
+function RepoForm({
+  siteId,
+  suggested,
+  repos,
+  choices,
+}: {
+  siteId: string;
+  suggested: string;
+  repos: InstallationRepo[] | { problem: string };
+  choices: InstallationRepo[];
+}) {
+  if (isProblem(repos)) return <ConnectFirst problem={repos.problem} />;
+  return (
+    <form action={giveSiteRepository} className="space-y-2">
+      <input type="hidden" name="siteId" value={siteId} />
+      <label className="block text-sm">
+        <span className="text-neutral-700">GitHub repository</span>
+        <select
+          name="repo"
+          defaultValue=""
+          className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+        >
+          <option value="">Create a new private repository</option>
+          {choices.map((r) => (
+            <option key={r.fullName} value={r.fullName}>
+              Link {r.fullName}
+            </option>
+          ))}
+        </select>
+      </label>
+      <Field
+        label="New repository name"
+        name="name"
+        defaultValue={suggested}
+        maxLength={100}
+        autoComplete="off"
+      />
+      <p className="text-sm text-neutral-600">
+        Each saved version replaces everything in the repository, so link only an empty one.
+      </p>
+      <Button>Give the site a repository</Button>
+    </form>
+  );
+}
+
+/** Gives a site with a repository a Vercel project that builds it. */
+function ProjectForm({ siteId, problem }: { siteId: string; problem: string | null }) {
+  if (problem) return <ConnectFirst problem={problem} />;
+  return (
+    <form action={giveSiteVercelProject} className="space-y-2">
+      <input type="hidden" name="siteId" value={siteId} />
+      <p className="text-sm text-neutral-600">
+        A project on your Vercel team builds the repository and deploys each save.
+      </p>
+      <Button>Create Vercel project</Button>
+    </form>
+  );
+}
+
+function DeploymentLine({
+  deployment,
+}: {
+  deployment: SiteDeployment | null | { problem: string };
+}) {
+  if (isProblem(deployment)) return <Notice tone="error">{deployment.problem}</Notice>;
+  if (!deployment) return <p className="text-sm text-neutral-600">No deployment yet.</p>;
+  return (
+    <p className="text-sm text-neutral-600">
+      Latest deployment: {deploymentLabel(deployment.state)}
+      {deployment.url && (
+        <>
+          {" · "}
+          <a href={deployment.url} className="underline" target="_blank" rel="noreferrer">
+            {deployment.url.replace(/^https:\/\//, "")}
+          </a>
+        </>
+      )}
+    </p>
   );
 }
 
