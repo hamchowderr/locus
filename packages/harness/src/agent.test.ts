@@ -34,10 +34,17 @@ test("the agent loads a skill, queries GHL and answers from the SQL result", asy
   const ghl = createFakeGhl({
     "GET /forms/": { body: { forms: [{ id: "f1" }, { id: "f2" }, { id: "f3" }], total: 3 } },
   });
+  const budgeted: string[] = [];
   const agent = createLocusAgent({
     model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
     session: { token: "tok", tokenKind: "location", locationId: "loc-A" },
     fetch: ghl.fetch,
+    rateLimiter: {
+      acquire: async (key) => {
+        budgeted.push(key);
+      },
+      pause: () => {},
+    },
   });
 
   const result = await agent.generate("How many forms does this client have?", { maxSteps: 5 });
@@ -45,6 +52,8 @@ test("the agent loads a skill, queries GHL and answers from the SQL result", asy
   expect(result.text).toBe("You have 3 forms.");
   expect(ghl.requests).toHaveLength(1);
   expect(ghl.requests[0]?.url.searchParams.get("locationId")).toBe("loc-A");
+  // Every GHL request is counted against the client's shared burst budget.
+  expect(budgeted).toEqual(["location:loc-A"]);
 
   // The SQL result — not the rows — is what went back to the model.
   const toolResults = mock()

@@ -13,6 +13,7 @@ export interface RecordedRequest {
 export interface FakeResponse {
   status?: number;
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 /**
@@ -52,9 +53,15 @@ export function createFakeGhl(routes: FakeRoutes): FakeGhl {
         { status: 404 },
       );
     }
-    const { status = 200, body: payload = {} } =
-      typeof route === "function" ? route(recorded) : route;
-    return Response.json(payload, { status });
+    const {
+      status = 200,
+      body: payload = {},
+      headers: responseHeaders,
+    } = typeof route === "function" ? route(recorded) : route;
+    return Response.json(payload, {
+      status,
+      ...(responseHeaders ? { headers: responseHeaders } : {}),
+    });
   };
 
   return { fetch: fakeFetch as typeof fetch, requests };
