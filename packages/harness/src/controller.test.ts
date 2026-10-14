@@ -158,7 +158,9 @@ describe("act mode", () => {
       read("c3-read", "forms.get-forms-submissions", "SELECT name FROM t"),
     );
     mock().llm.on({ toolCallId: "c3-read" }, perform("c3-tag", "contacts.add-tags", tagC1));
-    mock().llm.on({ toolCallId: "c3-tag" }, { content: "Tagged." });
+    // After the approval the run resumes, still tainted: the next tag asks again.
+    mock().llm.on({ toolCallId: "c3-tag" }, perform("c3-tag-b", "contacts.add-tags", tagC1));
+    mock().llm.on({ toolCallId: "c3-tag-b" }, { content: "Tagged." });
     mock().llm.on(
       { userMessage: /c3: now tag c1/i, hasToolResult: false },
       perform("c3-tag2", "contacts.add-tags", tagC1),
@@ -170,11 +172,15 @@ describe("act mode", () => {
     });
     const session = await openClientSession(controller, { memberId: "m1" });
 
-    expect(await send(session, "c3: summarise submissions and tag")).toEqual(["approval:c3-tag"]);
+    expect(await send(session, "c3: summarise submissions and tag")).toEqual([
+      "approval:c3-tag",
+      "approval:c3-tag-b",
+    ]);
     // Same session, same thread, a new run: the taint was that run's alone.
     expect(await send(session, "c3: now tag c1")).toEqual([]);
     expect(sent(ghl)).toEqual([
       "GET /forms/submissions",
+      "POST /contacts/c1/tags",
       "POST /contacts/c1/tags",
       "POST /contacts/c1/tags",
     ]);
