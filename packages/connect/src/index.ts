@@ -36,6 +36,22 @@ export {
   verifyGithubSignature,
 } from "./github.ts";
 export {
+  checkSitePaths,
+  commitSiteVersion,
+  createAppJwt,
+  ensureSiteDeployment,
+  ensureSiteRepo,
+  type GithubAppCredentials,
+  type InstallationRepo,
+  InstallationTokenCache,
+  installationToken,
+  latestDeployment,
+  listInstallationRepos,
+  type PublishDeps,
+  type SiteDeployment,
+  type SiteFile,
+} from "./publish.ts";
+export {
   attachSiteDomain,
   type DnsRecord,
   type DomainStatus,
@@ -59,12 +75,16 @@ export { createStubGhl, STUB_AGENCY, STUB_CODE, type StubAgency } from "./stub.t
 export {
   createStubGithub,
   createStubVercel,
+  STUB_GITHUB_APP_ID,
   STUB_GITHUB_CODE,
+  STUB_GITHUB_EMPTY_REPO,
   STUB_GITHUB_INSTALLATION,
   STUB_VERCEL_CODE,
   STUB_VERCEL_CONFIGURATION,
+  STUB_VERCEL_NO_ACCESS_PREFIX,
   STUB_VERCEL_PROJECT,
   STUB_VERCEL_TEAM,
+  type StubGithub,
 } from "./stub-hosts.ts";
 export {
   connectVercel,
