@@ -25,6 +25,32 @@ Mistakes the model can fix (an unknown operation, a bad chain, a GHL 4xx) come b
 `query_data` uses an in-memory libSQL database per call, created and thrown away. Nested
 objects are stored as JSON text — query them with `json_extract`.
 
+## Conversations and approvals
+
+Pass the client's conversation store (a `LibSQLStore` over that client's own Turso database)
+as `storage` and the agent keeps message history per thread and parks changes that need
+approval as run snapshots, so a person can approve them in a later request:
+
+```ts
+const agent = createLocusAgent({ model, session, storage });
+await agent.generate(text, { memory: { thread: threadId, resource: clientResource(session) } });
+
+// later, in another request
+const later = createLocusAgent({ model, session, storage });
+await pendingApprovals(later, session, threadId);
+await decideApproval(later, session, { threadId, toolCallId, approve: true });
+```
+
+The resource is always `clientResource(session)`, so a thread, and anything pending in it, can
+only be read or decided for the client that owns it. GHL data is not cached between requests:
+`ForgetGhlData` replaces each tool result with a stub (keeping only `rowCount`, and that a call
+failed) before memory saves the run, and the next turn reads GHL again. That happens when a run
+finishes and also when a step is about to stop for an approval, since a paused run is saved as it
+stands and may never be decided. History is budgeted by tokens (`HISTORY_TOKENS`); titles and
+semantic recall are off because each would cost a model call. A paused run's stubs keep the taint
+mark, so a tainted run stays tainted when it resumes; a finished run's stubs drop it, so a later
+turn starts clean.
+
 ## GoHighLevel data is untrusted
 
 Form submissions, messages and notes are written by the public, so a tool result can carry
