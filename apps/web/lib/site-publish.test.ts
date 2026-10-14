@@ -248,9 +248,15 @@ describe("giving a site its Vercel project", () => {
       .where(eq(auditLog.action, "site.project.create"));
     expect(audits).toMatchObject([{ locationId: "client-1", actorUserId: "owner" }]);
 
-    // Anyone who may work on the client sees the deployment.
+    // Anyone who may work on the client sees the deployment, and it needs Vercel only: no
+    // GitHub App settings.
     const staff = await authorized("staff", "client-1");
-    const deployment = await latestDeployment(deps(), staff, "site-1");
+    const vercelOnly = {
+      db,
+      secrets,
+      http: { fetch: vercel, apiBaseUrl: "https://api.vercel.stub" },
+    };
+    const deployment = await latestDeployment(vercelOnly, staff, "site-1");
     expect(deployment).toMatchObject({ state: "READY", url: "https://bright-smiles.vercel.app" });
     expect(deploymentLabel(deployment?.state ?? "")).toBe("Live");
     expect(await siteRow("site-1")).toMatchObject({

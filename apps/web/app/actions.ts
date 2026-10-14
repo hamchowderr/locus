@@ -466,7 +466,8 @@ export async function giveSiteRepository(form: FormData) {
 
 /** Gives one of the active client's sites a Vercel project that builds its repository. */
 export async function giveSiteVercelProject(form: FormData) {
-  await siteAction((ctx, client) =>
-    giveSiteProject(publishDeps(), ctx, client, text(form, "siteId")),
+  await siteAction(
+    (ctx, client) => giveSiteProject(publishDeps(), ctx, client, text(form, "siteId")),
+    "Publishing to GitHub and Vercel isn't set up here yet.",
   );
 }

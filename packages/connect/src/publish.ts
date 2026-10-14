@@ -180,7 +180,7 @@ async function agencyInstallation(deps: PublishDeps, organizationId: string) {
 
 /** The client's site, looked up by id and the client from the session together. */
 async function clientSiteRow(
-  deps: PublishDeps,
+  deps: Pick<SiteDeps, "db">,
   client: AuthorizedClient,
   siteId: string,
 ): Promise<SiteRow> {
@@ -753,7 +753,7 @@ function productionHost(project: {
  * who may work on the client may look.
  */
 export async function latestDeployment(
-  deps: PublishDeps,
+  deps: SiteDeps,
   client: AuthorizedClient,
   siteId: string,
 ): Promise<SiteDeployment | null> {
