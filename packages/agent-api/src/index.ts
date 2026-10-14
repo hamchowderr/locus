@@ -24,6 +24,8 @@
  * permission rules, rebinding the resource, listing other resources or every active run,
  * cloning or deleting threads, goals, notifications and workspace routes.
  *
+ * The host caps request body size (the guard reads JSON bodies before Mastra does).
+ *
  * The controller keeps live sessions and approval gates in memory, and a message's reply
  * arrives on the session's event stream, so the host must be one long-running process.
  */
@@ -87,7 +89,11 @@ export interface AgentApiConfig {
    * act on any client. Must never take the client from the request's path, query or body.
    */
   authorize: (request: Request) => Promise<AgentApiMember | null>;
-  /** The controller for one client (`createLocusController`), created once and reused. */
+  /**
+   * The controller for one client (`createLocusController`), created once and reused. Its
+   * storage must be that client's own database: thread routes find threads and messages by id
+   * in whatever store the controller has.
+   */
   controllerFor: (locationId: string) => Promise<AgentController>;
   /**
    * Values the host puts on each run's request context, worked out server-side (for example

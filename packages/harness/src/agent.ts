@@ -37,6 +37,11 @@ export interface LocusAgentConfig extends ToolDeps {
    * from memory last.
    */
   processors?: { input?: InputProcessorOrWorkflow[]; output?: OutputProcessorOrWorkflow[] };
+  /**
+   * Tools whose results can never hold GHL data, so memory stores them as they are (for
+   * example the site builder reading its own files). Every other result is forgotten.
+   */
+  keepResults?: readonly string[];
 }
 
 /**
@@ -47,6 +52,7 @@ export function createLocusAgent({
   model,
   storage,
   processors = {},
+  keepResults = [],
   ...deps
 }: LocusAgentConfig): Agent {
   const untrusted = new UntrustedContentProcessor();
@@ -62,7 +68,7 @@ export function createLocusAgent({
     outputProcessors: [
       untrusted,
       ...(processors.output ?? []),
-      ...(storage ? [new ForgetGhlData(waitsForApproval(tools))] : []),
+      ...(storage ? [new ForgetGhlData(waitsForApproval(tools), keepResults)] : []),
     ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
   });

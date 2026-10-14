@@ -53,14 +53,10 @@ export function clientResource(session: GhlSession): string {
 }
 
 /**
- * The tools whose results are GHL data. Other tools' results (`load_skill`'s text, other
- * features' tools) are kept as they are.
- */
-const GHL_TOOLS = new Set(["query_data", "perform_action"]);
-
-/**
- * What a stored GHL tool result is replaced with. A GHL error can quote GHL data (a duplicate
- * contact's email), so errors keep only that they failed.
+ * What a stored tool result is replaced with. Results are forgotten unless the tool is named in
+ * `keep`: `load_skill` (our own text) always is, and a feature names its own tools whose results
+ * can never hold GHL data. A GHL error can quote GHL data (a duplicate contact's email), so
+ * errors keep only that they failed.
  * `keepTaint` keeps the untrusted-content mark, so a paused run that resumes from memory is
  * still tainted (see `untrusted.ts`); a finished run's stubs drop it, so a later turn in the
  * thread is not tainted by what an earlier one read.
@@ -68,9 +64,9 @@ const GHL_TOOLS = new Set(["query_data", "perform_action"]);
 export function forgetResult(
   toolName: string,
   result: unknown,
-  { keepTaint = false }: { keepTaint?: boolean } = {},
+  { keepTaint = false, keep = [] }: { keepTaint?: boolean; keep?: readonly string[] } = {},
 ): unknown {
-  if (!GHL_TOOLS.has(toolName)) return result;
+  if (toolName === "load_skill" || keep.includes(toolName)) return result;
   if (!result || typeof result !== "object") return { notKept: NOT_KEPT };
   const wrapped = "warning" in result && "result" in result;
   const inner = wrapped ? (result as { result: unknown }).result : result;
@@ -101,9 +97,12 @@ export class ForgetGhlData implements Processor<"locus-forget-ghl-data"> {
   readonly name = "Keep GoHighLevel data out of memory";
 
   readonly #waitsForApproval: WaitsForApproval;
+  readonly #keep: readonly string[];
 
-  constructor(waitsForApproval: WaitsForApproval) {
+  /** `keep`: tools whose results hold no GHL data and are stored as they are. */
+  constructor(waitsForApproval: WaitsForApproval, keep: readonly string[] = []) {
     this.#waitsForApproval = waitsForApproval;
+    this.#keep = keep;
   }
 
   async processOutputStep({
@@ -114,7 +113,7 @@ export class ForgetGhlData implements Processor<"locus-forget-ghl-data"> {
   }: ProcessOutputStepArgs) {
     for (const call of toolCalls ?? []) {
       if (await this.#waitsForApproval(call, requestContext)) {
-        forgetAll(messages, messageList, true);
+        forgetAll(messages, messageList, true, this.#keep);
         break;
       }
     }
@@ -122,7 +121,7 @@ export class ForgetGhlData implements Processor<"locus-forget-ghl-data"> {
   }
 
   processOutputResult({ messages, messageList }: ProcessOutputResultArgs) {
-    forgetAll(messages, messageList, false);
+    forgetAll(messages, messageList, false, this.#keep);
     return messages;
   }
 }
@@ -131,12 +130,13 @@ function forgetAll(
   messages: ProcessOutputResultArgs["messages"],
   messageList: ProcessOutputResultArgs["messageList"],
   keepTaint: boolean,
+  keep: readonly string[],
 ) {
   for (const message of messages) {
     for (const part of message.content.parts ?? []) {
       if (part.type !== "tool-invocation" || part.toolInvocation.state !== "result") continue;
       const { toolName, result } = part.toolInvocation;
-      const kept = forgetResult(toolName, result, { keepTaint });
+      const kept = forgetResult(toolName, result, { keepTaint, keep });
       if (kept === result) continue;
       messageList.updateToolInvocation({
         type: "tool-invocation",
