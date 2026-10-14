@@ -10,6 +10,9 @@
 
 import { createHmac, hkdfSync, timingSafeEqual } from "node:crypto";
 
+/** The longest a token may still be valid for; the kit's proxy signs them for five minutes. */
+const MAX_TOKEN_MS = 10 * 60 * 1000;
+
 /** The HMAC key for chat kit tokens, from the Better Auth secret. */
 export function chatKitKey(authSecret: string): string {
   return Buffer.from(
@@ -19,7 +22,8 @@ export function chatKitKey(authSecret: string): string {
 
 /**
  * The session id a chat kit token names, or null when the token is malformed, not signed with
- * `key`, or expired. Accepts only HS256, as the kit's proxy signs it.
+ * `key`, expired, or valid for longer than a few minutes (a long-lived token would be a bearer
+ * credential worth stealing). Accepts only HS256, as the kit's proxy signs it.
  */
 export function chatKitSessionId(token: string, key: string, now = Date.now()): string | null {
   const parts = token.split(".");
@@ -33,7 +37,7 @@ export function chatKitSessionId(token: string, key: string, now = Date.now()): 
     const { sub, exp } = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
     if (alg !== "HS256") return null;
     if (typeof sub !== "string" || !sub || typeof exp !== "number") return null;
-    if (exp * 1000 <= now) return null;
+    if (exp * 1000 <= now || exp * 1000 - now > MAX_TOKEN_MS) return null;
     return sub;
   } catch {
     return null;

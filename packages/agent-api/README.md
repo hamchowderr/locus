@@ -31,8 +31,8 @@ calls the kit's own routes (`/agent-controller/stream`, `/approve`, `/answer`, t
 Mastra's, so this API also serves those under `${prefix}/kit/agent-controller/`, behind the
 same `authorize` and on the same controller (`src/kit.ts`). Their source in
 `src/mastra/routes` and `src/mastra/lib` is the kit's `chat-server` item; update it with
-`npx shadcn@latest add @mastra-chat-kit/chat-server --overwrite` here rather than editing it.
+`npx shadcn@4.21.5 add @mastra-chat-kit/chat-server --overwrite` here rather than editing it.
 
 The kit's proxy signs each request with a short-lived token naming the Better Auth session
 (`chatKitKey` / `chatKitSessionId` in `@locus/auth`); the host loads that session and runs the
-usual checks, exactly as for a cookie.
+usual checks, exactly as for a cookie. A token still valid for more than ten minutes is refused.

@@ -16,7 +16,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { CONTROLLER_ID } from "@locus/harness";
+import { CONTROLLER_ID, openClientSession } from "@locus/harness";
 import type { AgentController, Session } from "@mastra/core/agent-controller";
 import { RequestContext } from "@mastra/core/request-context";
 import { createControllerRoutes } from "./mastra/routes/controller.ts";
@@ -25,8 +25,7 @@ import type { ChatServerDeps } from "./mastra/routes/types.ts";
 
 /** Who a kit request is for, and the request context its runs carry. */
 export interface KitCaller {
-  resourceId: string;
-  scope: string;
+  memberId: string;
   context: Record<string, unknown>;
 }
 
@@ -57,15 +56,11 @@ export function kitRoutes(controller: AgentController) {
     const who = caller.getStore();
     // Only the guard calls into these routes, and always inside `asCaller`.
     if (!who) throw new Error("kit route reached without a caller");
-    await controller.init();
-    // The same id Mastra's own routes give a scoped session, so both reach one session.
-    const session = await controller.createSession({
-      resourceId: who.resourceId,
-      id: `${who.resourceId}::${who.scope}`,
-      ownerId: controller.id,
-      scope: who.scope,
-    });
-    return withHostContext(session, who.context);
+    // The member's own session over the controller's client: the one Mastra's routes reach.
+    return withHostContext(
+      await openClientSession(controller, { memberId: who.memberId }),
+      who.context,
+    );
   };
   const unserved = () => {
     throw new Error("not served");
@@ -98,10 +93,11 @@ export function kitRoutes(controller: AgentController) {
 /**
  * The session, with the host's values put on the request context of every run it starts or
  * resumes, over whatever the kit's route set (the browser's time zone, its search toggle).
+ * An answer first claims the question it answers, as Mastra's own route does, so two answers
+ * sent at once can't resume one tool twice.
  */
 function withHostContext(session: Session, context: Record<string, unknown>): Session {
   const entries = Object.entries(context);
-  if (entries.length === 0) return session;
   const merged = (requestContext: RequestContext | undefined) => {
     const into = requestContext ?? new RequestContext();
     for (const [key, value] of entries) into.set(key, value);
@@ -114,11 +110,18 @@ function withHostContext(session: Session, context: Record<string, unknown>): Se
           target.sendMessage({ ...input, requestContext: merged(input.requestContext) });
       }
       if (key === "respondToToolSuspension") {
-        return (input: Parameters<Session["respondToToolSuspension"]>[0]) =>
-          target.respondToToolSuspension({
-            ...input,
-            requestContext: merged(input.requestContext),
-          });
+        return async (input: Parameters<Session["respondToToolSuspension"]>[0]) => {
+          const claim = target.claimToolSuspension(input.toolCallId);
+          if (!claim.accepted) throw new Error(`answer not accepted: ${claim.reason}`);
+          try {
+            return await target.respondToToolSuspension({
+              ...input,
+              requestContext: merged(input.requestContext),
+            });
+          } finally {
+            target.releaseToolResponse(claim.toolCallId);
+          }
+        };
       }
       const value = Reflect.get(target, key, target);
       // Session keeps private fields, so its methods must run on the session itself.

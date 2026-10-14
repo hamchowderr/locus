@@ -19,8 +19,9 @@ describe("chat kit tokens", () => {
     expect(chatKitSessionId(sign(key, "sess-1", later), key, now)).toBe("sess-1");
   });
 
-  it("are refused when expired, signed with another key, altered or not HS256", () => {
+  it("are refused when expired, long-lived, signed with another key, altered or not HS256", () => {
     expect(chatKitSessionId(sign(key, "sess-1", now / 1000), key, now)).toBeNull();
+    expect(chatKitSessionId(sign(key, "sess-1", now / 1000 + 24 * 3600), key, now)).toBeNull();
     expect(chatKitSessionId(sign(chatKitKey("other"), "sess-1", later), key, now)).toBeNull();
     const [header, , signature] = sign(key, "sess-1", later).split(".");
     const forged = `${header}.${b64({ sub: "sess-2", exp: later })}.${signature}`;

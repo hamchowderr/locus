@@ -153,9 +153,17 @@ export async function openClientSession(
 ) {
   const locationId = clientOf.get(controller);
   if (!locationId) throw new Error("not a Locus controller");
+  const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
+  const scope = `member:${memberId}`;
   return controller.createSession({
-    resourceId: clientResource({ token: "", tokenKind: "location", locationId }),
-    scope: `member:${memberId}`,
+    resourceId,
+    // The id Mastra's own routes give a scoped session, so every route reaches one session
+    // with one identity, whichever opens it first.
+    id: `${resourceId}::${scope}`,
+    ownerId: controller.id,
+    scope,
+    // A thread is made when the first message needs one, so opening leaves no empty thread.
+    createInitialThread: false,
     ...(threadId ? { threadId } : {}),
   });
 }

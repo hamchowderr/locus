@@ -374,11 +374,54 @@ describe("the chat kit's routes", () => {
     expect(seen).toEqual(["site-1"]);
   });
 
+  test("an answer resumes the agent's question once", async () => {
+    mock().llm.on(
+      { userMessage: /tidy up my tags/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "k3-ask",
+            name: "ask_user",
+            arguments: JSON.stringify({ question: "Which tags?" }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "k3-ask" }, { content: "Tidied the old ones." });
+    const { api } = apiFor(createFakeGhl({}));
+
+    const asking = kitEvents(await kit(api, "stream", { text: "Tidy up my tags" }));
+    // Locus doesn't yet exempt `ask_user` from approval (bead locus-8c0.16), so the question
+    // itself waits for a yes first.
+    await asking.until((e) => e.type === "tool_approval_required");
+    await kit(api, "approve", { decision: "approve", toolCallId: "k3-ask" });
+    await asking.until((e) => e.type === "__done__");
+    expect(asking.events.some((e) => e.type === "tool_suspended")).toBe(true);
+
+    const answer = { answer: "The old ones", toolCallId: "k3-ask" };
+    const [first, second] = await Promise.all([
+      kit(api, "answer", answer).then(kitEvents),
+      kit(api, "answer", answer).then(kitEvents),
+    ]);
+    await first.until((e) => e.type === "__done__");
+    await second.until((e) => e.type === "__done__");
+    const refused = (s: typeof first) =>
+      s.events.some((e) => e.type === "error" && /answer not accepted/.test(String(e.error)));
+    expect([first, second].filter(refused)).toHaveLength(1);
+    expect([first, second].filter((s) => !refused(s))[0]?.events.map((e) => e.type)).toContain(
+      "agent_end",
+    );
+  });
+
   test("refuses the unsigned, always-allow, other routes and others' threads", async () => {
     const { api, signIn } = apiFor(createFakeGhl({}));
     expect((await kit(api, "approve", { decision: "always_allow_category" })).status).toBe(403);
     for (const path of ["schedules", "threads/t1", "../../modes", "workspace/files"]) {
       expect((await kit(api, path)).status).toBe(404);
+    }
+    // Encoded separators and dot segments survive URL parsing, so the guard itself must refuse them.
+    for (const path of ["threads%2Ft1", "%2E%2E%2Fmodes", "stream%2F..%2F..%2Fmodes"]) {
+      expect([400, 404]).toContain((await kit(api, path)).status);
     }
     expect((await kit(api, "threads/someone-elses/messages")).status).toBe(404);
     signIn(null);

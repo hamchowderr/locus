@@ -59,6 +59,9 @@ import { Hono } from "hono";
 import { asCaller, isKitRoute, type KitCaller, kitRoutes } from "./kit.ts";
 
 /** The Mastra routes the chat needs. Anything else answers 404. */
+/** The largest body the chat kit's stream route takes (a message with its attachments). */
+export { STREAM_BODY_LIMIT as KIT_STREAM_BODY_LIMIT } from "./mastra/routes/stream-body.ts";
+
 export const SERVED_ROUTES = [
   CREATE_AGENT_CONTROLLER_SESSION_ROUTE,
   GET_AGENT_CONTROLLER_SESSION_STATE_ROUTE,
@@ -187,9 +190,12 @@ export function createAgentApi({
       if (segments[0] === "approve" && sent.decision === "always_allow_category") {
         return deny(403, "decide each change");
       }
-      body = JSON.stringify(sent);
+      // The host sets a run's request context; none of it comes from the browser.
+      const { requestContext: _ignored, ...rest } = sent;
+      body = JSON.stringify(rest);
     }
     const forwarded = new URL(url);
+    forwarded.searchParams.delete("requestContext");
     forwarded.pathname = ["/agent-controller", ...segments.map(encodeURIComponent)].join("/");
     const headers = new Headers(request.headers);
     if (body !== undefined) {
@@ -197,8 +203,7 @@ export function createAgentApi({
       headers.delete("content-length");
     }
     const who: KitCaller = {
-      resourceId: clientResource({ token: "", tokenKind: "location", ...member }),
-      scope: `member:${member.memberId}`,
+      memberId: member.memberId,
       context: (await requestContext?.(request, member)) ?? {},
     };
     const app = await kitAppFor(member);
