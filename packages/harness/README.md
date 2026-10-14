@@ -87,9 +87,25 @@ tags; updates and deletes only on records this run created; every created record
 ledger. `cleanupRun` (or `scripts/cleanup-test-run.ts <run> --delete`) removes them, newest
 first, and is safe to repeat.
 
+## The chat kit's controller
+
+`createLocusController` hosts the Locus agent in a Mastra `AgentController`, which is what
+Mastra's chat kit talks to. There is one controller per client, over that client's own
+database, and every session on it belongs to that client (`openClientSession`); a member only
+picks their own session. The host checks staff restrictions before opening one, and its
+`session` function returns a token for that client only (anything else is refused before a
+request is sent).
+
+- **Act** (default) reads and changes data with the usual approval rules. **Ask** offers only
+  reads. Other features add their own modes and tools.
+- Each tool decides whether a call waits for approval; the controller then asks the person.
+  "Always allow" approves only that call. Never set a session's `yolo` state or grant tools.
+- Planning and subagent built-ins are off: the GHL agent has no workspace.
+
 ## Not here yet
 
 - A rate-limit budget shared across serverless instances (today it is per process).
 - Cursor pagination (`after`, `cursor`, `startAfter`) — reported as incomplete for now.
 - Subagents per task or per client.
+- The agent API routes in `apps/web` that serve the controller to the chat kit.
 - Site Studio's workspace tools.
