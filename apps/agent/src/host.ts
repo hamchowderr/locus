@@ -11,6 +11,8 @@ import {
   type AuthorizedClient,
   authorizeClient,
   ClientAccessDenied,
+  chatKitKey,
+  chatKitSessionId,
   createAuth,
   mintClientDbToken,
   resolveActiveClient,
@@ -100,9 +102,13 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
       throw new Error("the agent server sends no email");
     },
   });
+  const kitSession = sessionFromKitToken(db, chatKitKey(config.authSecret));
   return {
     db,
     session: async (headers) => {
+      // The chat kit's proxy (on the web app) vouches with a token naming the session.
+      const vouched = await kitSession(headers);
+      if (vouched !== undefined) return vouched;
       const current = await auth.api.getSession({ headers });
       if (!current) return null;
       const { id, userId, activeOrganizationId, activeLocationId } = current.session;
@@ -120,6 +126,32 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
     },
     model: config.model,
     origin: new URL(config.authUrl).origin,
+  };
+}
+
+/**
+ * The session a chat kit token names (see `chatKitSessionId`), as long as it is still signed in;
+ * null for a bad or stale token; undefined when the request carries no token at all.
+ */
+export function sessionFromKitToken(db: ControlDb, key: string) {
+  return async (headers: Headers): Promise<SessionContext | null | undefined> => {
+    const bearer = headers.get("authorization")?.match(/^Bearer (\S+)$/)?.[1];
+    if (!bearer) return undefined;
+    const id = chatKitSessionId(bearer, key);
+    if (!id) return null;
+    const [row] = await db
+      .select({
+        id: authSession.id,
+        userId: authSession.userId,
+        expiresAt: authSession.expiresAt,
+        activeOrganizationId: authSession.activeOrganizationId,
+        activeLocationId: authSession.activeLocationId,
+      })
+      .from(authSession)
+      .where(eq(authSession.id, id));
+    if (!row || row.expiresAt.getTime() <= Date.now()) return null;
+    const { expiresAt: _expiresAt, ...ctx } = row;
+    return ctx;
   };
 }
 
@@ -238,20 +270,25 @@ export function createHost({
     },
   });
 
+  /** An event stream, cut off once the member it was opened for loses access. */
+  const guardStream = (request: Request, response: Response) => {
+    const stream = opened.get(request);
+    const events = response.headers.get("content-type")?.startsWith("text/event-stream");
+    if (!events || !stream || !response.body) return response;
+    // A member who loses access must stop receiving the client's live chat too. The chat
+    // kit's runs stream on the response to a POST, so this covers every method.
+    return new Response(
+      guarded(response.body, () => authorizedFor(stream.ctx, stream.clientId), streamCheckMs),
+      response,
+    );
+  };
+
   return {
     async fetch(request: Request): Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/health") return new Response("ok");
       if (request.method === "GET" || request.method === "HEAD") {
-        const response = await api.fetch(request);
-        const stream = opened.get(request);
-        const events = response.headers.get("content-type")?.startsWith("text/event-stream");
-        if (!events || !stream || !response.body) return response;
-        // A member who loses access must stop receiving the client's live chat too.
-        return new Response(
-          guarded(response.body, () => authorizedFor(stream.ctx, stream.clientId), streamCheckMs),
-          response,
-        );
+        return guardStream(request, await api.fetch(request));
       }
       // The session cookie authenticates these, so only the web app's pages may send them, and
       // a body only as JSON: a cross-site form or text/plain post can't.
@@ -262,14 +299,13 @@ export function createHost({
       if (body.length > 0 && !request.headers.get("content-type")?.startsWith("application/json")) {
         return Response.json({ error: "send JSON" }, { status: 415 });
       }
-      return api.fetch(
-        new Request(request.url, {
-          method: request.method,
-          headers: request.headers,
-          signal: request.signal,
-          ...(body.length > 0 ? { body } : {}),
-        }),
-      );
+      const forwarded = new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        signal: request.signal,
+        ...(body.length > 0 ? { body } : {}),
+      });
+      return guardStream(forwarded, await api.fetch(forwarded));
     },
   };
 }

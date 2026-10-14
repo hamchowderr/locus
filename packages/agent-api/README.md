@@ -23,3 +23,16 @@ runs), is described at the top of `src/index.ts`. The tests drive it through the
 
 The controller holds live sessions in memory, and replies arrive on an event stream, so the
 host must be a single long-running process, not serverless functions.
+
+## The chat kit's routes
+
+The website's chat is `hamchowderr/mastra-chat-kit`, installed from its registry. Its web proxy
+calls the kit's own routes (`/agent-controller/stream`, `/approve`, `/answer`, threads), not
+Mastra's, so this API also serves those under `${prefix}/kit/agent-controller/`, behind the
+same `authorize` and on the same controller (`src/kit.ts`). Their source in
+`src/mastra/routes` and `src/mastra/lib` is the kit's `chat-server` item; update it with
+`npx shadcn@latest add @mastra-chat-kit/chat-server --overwrite` here rather than editing it.
+
+The kit's proxy signs each request with a short-lived token naming the Better Auth session
+(`chatKitKey` / `chatKitSessionId` in `@locus/auth`); the host loads that session and runs the
+usual checks, exactly as for a cookie.

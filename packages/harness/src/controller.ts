@@ -39,6 +39,18 @@ export const CONTROLLER_ID = "locus";
 
 /** Which client each controller serves; sessions are opened through it, never named by caller. */
 const clientOf = new WeakMap<AgentController, string>();
+const storageOf = new WeakMap<AgentController, ConversationStore>();
+
+/**
+ * The client's own store a controller keeps its conversations in. A Mastra instance hosting the
+ * controller must be given it: the controller reads threads and messages through its parent
+ * Mastra's storage, and a Mastra without one falls back to an in-memory store.
+ */
+export function controllerStorage(controller: AgentController): ConversationStore {
+  const storage = storageOf.get(controller);
+  if (!storage) throw new Error("not a Locus controller");
+  return storage;
+}
 
 export const ASK_TOOLS = ["load_skill", "query_data", "ask_user"];
 
@@ -125,6 +137,7 @@ export async function createLocusController({
   });
   await controller.init();
   clientOf.set(controller, locationId);
+  storageOf.set(controller, storage);
   return controller;
 }
 
