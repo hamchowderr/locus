@@ -11,11 +11,14 @@ export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 /** Most files one site may have. A generated Next.js site needs far fewer. */
 export const MAX_FILES = 2_000;
 
+/** Folders the tools, the build or the sandbox own (`.locus/` holds the sandbox's markers). */
+const REFUSED_FOLDERS = new Set([".git", "node_modules", ".next", ".locus"]);
+
 const SEGMENT = /^[A-Za-z0-9_@()[\]+.,=-][A-Za-z0-9_@()[\]+.,= -]*$/;
 
 /**
  * A site-relative path, cleaned and checked: forward slashes, no leading `./` or `/`, no `..`,
- * nothing under `.git/` or `node_modules/`, and no `.env` files — generated code is pushed to
+ * nothing under `.git/`, `node_modules/`, `.next/` or `.locus/`, and no `.env` files — generated code is pushed to
  * the agency's repository and run in a sandbox, so it must never carry a secret.
  */
 export function normalizeSitePath(input: string): string {
@@ -34,7 +37,7 @@ export function normalizeSitePath(input: string): string {
     }
   }
   for (const segment of segments.map((s) => s.toLowerCase())) {
-    if (segment === ".git" || segment === "node_modules" || segment === ".next") {
+    if (REFUSED_FOLDERS.has(segment)) {
       throw new WorkspaceError(`Files under ${segment}/ aren't part of the site's source.`);
     }
   }
