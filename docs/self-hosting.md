@@ -167,10 +167,10 @@ environment:
 pnpm --filter @locus/web github-app-key < your-app.private-key.pem
 ```
 
-With `LOCUS_CONTROL_DB_URL` set, the script always seals the key in that database (it refuses
-`LOCUS_SECRETS=local` then) and says so; it accepts RSA keys only and never prints the key.
-Without a control database it writes the local development file, unencrypted, and says that
-instead. Until the key is stored, saving a site version still works but says publishing isn't
+The script stores the key where the app reads it: sealed in the control database in production
+(or with `LOCUS_SECRETS=encrypted`), and in the local development file, unencrypted, otherwise.
+It says which, refuses the local file in production, accepts RSA keys only and never prints the
+key. Until the key is stored, saving a site version still works but says publishing isn't
 set up.
 
 GitHub Apps can't create repositories in a personal account. An agency that installed the app

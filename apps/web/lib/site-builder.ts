@@ -193,6 +193,12 @@ const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^GitHub didn't [\w ',.]+\.( Try again\.)?$/,
   /^Publishing to GitHub isn't set up on this deployment yet\.$/,
   /^There are no files to publish\.$/,
+  /^That site isn't one of this client's\.$/,
+  /^GitHub didn't create [\w.-]+\/[\w.-]+: the name is taken or not allowed\. Pick another, or link the existing repository\.$/,
+  // Locus's own path checks; the path is one the agent wrote.
+  /^Locus won't publish the file "[^"\n]{1,300}": the path isn't allowed\.$/,
+  /^Locus won't publish "[^"\n]{1,300}": environment files can hold secrets and never go in the repository\.$/,
+  /^"[^"\n]{1,300}" is in the version twice\.$/,
 ];
 
 const GENERIC_PUBLISH_ERROR =

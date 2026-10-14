@@ -607,6 +607,18 @@ describe("what reaches the model from a publishing refusal", () => {
     expect(raw).not.toMatch(/ignore/);
     expect(raw).toMatch(/GitHub refused/);
   });
+
+  it("passes Locus's own file checks, so the agent can fix the file", () => {
+    for (const message of [
+      'Locus won\'t publish ".env.local": environment files can hold secrets and never go in the repository.',
+      "Locus won't publish the file \"../x\": the path isn't allowed.",
+      '"app/page.tsx" is in the version twice.',
+      "That site isn't one of this client's.",
+      "GitHub didn't create acme/site: the name is taken or not allowed. Pick another, or link the existing repository.",
+    ]) {
+      expect(publishMessage(new ConnectError(message))).toBe(message);
+    }
+  });
 });
 
 describe("sandboxes from the environment", () => {
@@ -633,19 +645,20 @@ describe("storing the GitHub App key", () => {
     await expect(storeGithubAppKey("nope", {})).rejects.toBeInstanceOf(GithubAppKeyError);
   });
 
-  it("seals it in the control database whenever one is named, even without NODE_ENV", async () => {
+  it("seals it in the control database when the app reads sealed secrets", async () => {
     const localFile = join(dir, "secrets.json");
     const url = `file:${join(dir, "control.db")}`;
     const key = generateSecretsKey();
+    const sealed = { LOCUS_CONTROL_DB_URL: url, LOCUS_SECRETS: "encrypted" };
+    await expect(storeGithubAppKey(rsa, sealed, { localFile })).rejects.toThrow(
+      /LOCUS_SECRETS_KEY/,
+    );
     await expect(
-      storeGithubAppKey(rsa, { LOCUS_CONTROL_DB_URL: url, LOCUS_SECRETS: "local" }, { localFile }),
-    ).rejects.toThrow(/LOCUS_SECRETS=local/);
-    await expect(
-      storeGithubAppKey(rsa, { LOCUS_CONTROL_DB_URL: url }, { localFile }),
-    ).rejects.toThrow(/LOCUS_SECRETS_KEY/);
+      storeGithubAppKey(rsa, { LOCUS_SECRETS: "encrypted", LOCUS_SECRETS_KEY: key }, { localFile }),
+    ).rejects.toThrow(/LOCUS_CONTROL_DB_URL/);
     const result = await storeGithubAppKey(
       rsa,
-      { LOCUS_CONTROL_DB_URL: url, LOCUS_SECRETS_KEY: key },
+      { ...sealed, LOCUS_SECRETS_KEY: key },
       { localFile },
     );
     expect(result).toEqual({ store: "encrypted", url });
@@ -654,9 +667,11 @@ describe("storing the GitHub App key", () => {
     expect(await store.get(GITHUB_APP_KEY_SECRET)).toBe(`${rsa.trim()}\n`);
   });
 
-  it("uses the local file only without a control database, and never in production", async () => {
+  it("uses the local file where the app does, and never in production", async () => {
     const localFile = join(dir, "secrets.json");
-    expect(await storeGithubAppKey(rsa, {}, { localFile })).toEqual({
+    const url = `file:${join(dir, "control.db")}`;
+    // Development with a control database still reads `.data/secrets.json`, so the key goes there.
+    expect(await storeGithubAppKey(rsa, { LOCUS_CONTROL_DB_URL: url }, { localFile })).toEqual({
       store: "local",
       file: localFile,
     });
@@ -664,5 +679,12 @@ describe("storing the GitHub App key", () => {
     await expect(storeGithubAppKey(rsa, { NODE_ENV: "production" }, { localFile })).rejects.toThrow(
       /LOCUS_CONTROL_DB_URL/,
     );
+    await expect(
+      storeGithubAppKey(
+        rsa,
+        { NODE_ENV: "production", LOCUS_SECRETS: "local", LOCUS_CONTROL_DB_URL: url },
+        { localFile },
+      ),
+    ).rejects.toThrow(/only stored sealed/);
   });
 });
