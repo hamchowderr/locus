@@ -3,8 +3,10 @@ import { createLocusController } from "@locus/harness";
 import { createFakeGhl, type FakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
 import type { AgentController } from "@mastra/core/agent-controller";
+import { createTool } from "@mastra/core/tools";
 import { LibSQLStore } from "@mastra/libsql";
 import { beforeEach, describe, expect, test } from "vitest";
+import { z } from "zod";
 import { type AgentApiMember, createAgentApi } from "./index.ts";
 
 const mock = useAimock();
@@ -14,7 +16,11 @@ const PREFIX = "/api/agent";
 const RESOURCE = "client:loc-A";
 
 /** The API over one fake client, with the member each request is signed in as. */
-function apiFor(ghl: FakeGhl) {
+function apiFor(
+  ghl: FakeGhl,
+  extras: Partial<Parameters<typeof createLocusController>[0]> = {},
+  hostContext?: Record<string, unknown>,
+) {
   let signedIn: AgentApiMember | null = { memberId: "m1", locationId: "loc-A" };
   let controller: AgentController | undefined;
   const api = createAgentApi({
@@ -31,9 +37,11 @@ function apiFor(ghl: FakeGhl) {
         }),
         storage: new LibSQLStore({ id: "client", url: ":memory:" }),
         fetch: ghl.fetch,
+        ...extras,
       });
       return controller;
     },
+    ...(hostContext ? { requestContext: async () => hostContext } : {}),
   });
   const client = new MastraClient({
     baseUrl: "http://locus.test",
@@ -110,6 +118,50 @@ describe("the chat, through the agent API", () => {
   });
 });
 
+describe("features that plug in", () => {
+  test("their tools and processors run, with the host's request context, not the browser's", async () => {
+    mock().llm.on(
+      { userMessage: /which site/i, hasToolResult: false },
+      { toolCalls: [{ id: "x3-site", name: "current_site", arguments: "{}" }] },
+    );
+    mock().llm.on({ toolCallId: "x3-site" }, { content: "Done." });
+    const seenByProcessor: string[] = [];
+    const currentSite = createTool({
+      id: "current_site",
+      description: "The site being built.",
+      inputSchema: z.object({}),
+      requireApproval: () => false,
+      execute: async (_input, context) => ({ siteId: context?.requestContext?.get("siteId") }),
+    });
+    const { client } = apiFor(
+      createFakeGhl({}),
+      {
+        tools: { current_site: currentSite },
+        processors: {
+          output: [
+            {
+              id: "probe",
+              processToolResult: ({ toolName, result }) => {
+                seenByProcessor.push(`${toolName}:${JSON.stringify(result)}`);
+              },
+            },
+          ],
+        },
+      },
+      { siteId: "site-1" },
+    );
+    const session = client.getAgentController("locus").session(RESOURCE);
+    await session.create();
+    const stream = await watch(session);
+
+    await session.sendMessage("Which site?", { requestContext: { siteId: "someone-elses" } });
+    await stream.next((e) => e.type === "agent_end");
+    stream.stop();
+
+    expect(seenByProcessor).toEqual(['current_site:{"siteId":"site-1"}']);
+  });
+});
+
 describe("the guard", () => {
   const ghl = createFakeGhl({ "*": { body: {} } });
 
@@ -137,6 +189,42 @@ describe("the guard", () => {
       }),
     );
     expect(create.status).toBe(403);
+  });
+
+  test("an encoded path reaches nothing the plain path couldn't", async () => {
+    const { api, client, controller } = apiFor(ghl);
+    await client.getAgentController("locus").session(RESOURCE).create();
+    const at = (path: string, init?: RequestInit) =>
+      api.fetch(new Request(`http://locus.test${PREFIX}/agent-controller/locus/${path}`, init));
+    const post = { method: "POST", headers: { "content-type": "application/json" } };
+
+    // Another member's scope, through an encoded "sessions": still the caller's own scope.
+    const state = await at(`%73essions/${encodeURIComponent(RESOURCE)}?sessionScope=member:m9`);
+    expect(state.status).toBe(200);
+    const create = await at("%73essions", {
+      ...post,
+      body: JSON.stringify({ resourceId: RESOURCE, sessionScope: "member:m9" }),
+    });
+    expect(create.status).toBe(200);
+    expect(await controller().getSessionByResource(RESOURCE, "member:m9")).toBeUndefined();
+    // Another client, encoded in the first segment or doubly in the second.
+    const other = await at("%73essions", {
+      ...post,
+      body: JSON.stringify({ resourceId: "client:loc-B" }),
+    });
+    expect(other.status).toBe(403);
+    expect((await at(`sessions/client%253Aloc-B`)).status).toBe(403);
+    // Routes the allowlist leaves out stay out when encoded.
+    expect(
+      (await at(`sessions/${encodeURIComponent(RESOURCE)}/%73tate`, { method: "PUT" })).status,
+    ).toBe(404);
+    expect((await at("active%2Druns")).status).toBe(404);
+    // A malformed escape is a bad request, not a crash.
+    expect((await at("sessions/%E0")).status).toBe(400);
+    // An encoded dot segment is resolved by the URL parser, leaving a route nobody serves.
+    expect(
+      (await at(`sessions/${encodeURIComponent(RESOURCE)}/threads/%2E%2E/messages`)).status,
+    ).toBe(404);
   });
 
   test("routes that would change what needs approval are not served", async () => {
