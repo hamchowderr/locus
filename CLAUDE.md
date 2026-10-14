@@ -36,7 +36,9 @@ packages/ghl      operation descriptors + the one GHL request path
 packages/testing  AIMock wiring + a fake GHL for tests
 packages/skills   the GHL skill catalog, generated from the docs (see its README)
 packages/harness  Mastra loop, query_data, perform_action, subagents
+packages/sandbox  the isolated runtime where Site Studio builds and previews a site
 packages/db       Drizzle schema (control DB + per-client DB) and migrations
+packages/studio   generated sites' source, versions, design brief and templates
 packages/ui       shared shadcn components for web and desktop
 ```
 
