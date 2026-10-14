@@ -2,7 +2,7 @@ import { type AuthorizedClient, authorizeClient, ClientAccessDenied } from "@loc
 import { imagesFromEnv } from "@locus/builder";
 import { provisionerFromEnv } from "@locus/db";
 import type { RuntimeProvider } from "@locus/sandbox";
-import { configured } from "./connect.ts";
+import { baseUrl, configured } from "./connect.ts";
 import { publishDeps } from "./hosts.ts";
 import { billingEnabled, locus, configured as locusConfigured, sessionContext } from "./locus.ts";
 import {
@@ -33,6 +33,7 @@ export function siteBuilderDeps(): SiteBuilderDeps {
     runtimes: siteRuntimes,
     images,
     publish: publishDeps,
+    locusUrl: baseUrl(),
     billing: billingEnabled(),
   };
 }
@@ -44,7 +45,7 @@ export function siteBuilderDeps(): SiteBuilderDeps {
  * const client = await resolveActiveClient(locus().db, sessionContext(current));
  * const builder = siteBuilderForClient({ client });
  * createLocusController({ ..., modes: builder.modes, tools: builder.tools,
- *   processors: builder.processors });
+ *   processors: builder.processors, ownTextTools: builder.ownTextTools });
  * createAgentApi({ requestContext: async (request, member) =>
  *   ({ [SITE_ID_KEY]: await resolveActiveSiteId(request, member) }) });
  * ```

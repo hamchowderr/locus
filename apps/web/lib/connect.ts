@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { type AuthorizedClient, agencyEntitlement, newClientRefusal } from "@locus/auth";
 import {
   type ConnectDeps,
@@ -10,7 +11,7 @@ import {
 } from "@locus/connect";
 import { DbSecretStore, provisionerFromEnv } from "@locus/db";
 import { GhlError } from "@locus/ghl";
-import { secretsFromEnv } from "@locus/secrets";
+import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
 import { deploymentBaseUrl } from "./base-url.ts";
 import { billingEnabled, locus, NotConfigured } from "./locus.ts";
 
@@ -76,6 +77,21 @@ export function secretStore(db: ReturnType<typeof locus>["db"]) {
       encrypted: (cipher) => new DbSecretStore(db, cipher),
     }),
   );
+}
+
+let devIpKey: Buffer | undefined;
+
+/**
+ * The key site leads' visitor IPs are hashed with: derived from `LOCUS_SECRETS_KEY` (HKDF, label
+ * "locus/site-lead-ip"). Without that key outside production, a random one for this process.
+ * Server-side only; never logged.
+ */
+export function siteLeadIpKey(): Buffer {
+  if (process.env.LOCUS_SECRETS_KEY || production) {
+    return configured(() => deriveSecretsSubkey("locus/site-lead-ip"));
+  }
+  devIpKey ??= randomBytes(32);
+  return devIpKey;
 }
 
 /** Everything the connect flow needs, from the environment. Server-side only. */

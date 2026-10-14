@@ -42,6 +42,26 @@ export interface LocusAgentConfig extends ToolDeps {
    * example the site builder reading its own files). Every other result is forgotten.
    */
   keepResults?: readonly string[];
+  /**
+   * Tools whose results are Locus's own text and that only read it (for example the site
+   * builder's skill tools): the GHL screen passes them through and memory keeps them. Never a
+   * tool that reads GHL or outside data.
+   */
+  ownTextTools?: readonly string[];
+}
+
+/**
+ * Throws when a name in `ownTextTools` is one of the harness's own tools: those read GHL data
+ * (or the person's words), and naming one would let it past the GHL screen and into memory.
+ */
+export function refuseOwnTextCollisions(
+  ownTextTools: readonly string[],
+  reserved: readonly string[],
+) {
+  const clash = ownTextTools.filter((name) => reserved.includes(name));
+  if (clash.length > 0) {
+    throw new Error(`ownTextTools can't name the harness's own tools: ${clash.join(", ")}`);
+  }
 }
 
 /**
@@ -53,10 +73,12 @@ export function createLocusAgent({
   storage,
   processors = {},
   keepResults = [],
+  ownTextTools = [],
   ...deps
 }: LocusAgentConfig): Agent {
-  const untrusted = new UntrustedContentProcessor();
   const tools = createLocusTools(deps);
+  refuseOwnTextCollisions(ownTextTools, Object.keys(tools));
+  const untrusted = new UntrustedContentProcessor(ownTextTools);
   const agent = new Agent({
     id: "locus",
     name: "Locus",
@@ -68,7 +90,9 @@ export function createLocusAgent({
     outputProcessors: [
       untrusted,
       ...(processors.output ?? []),
-      ...(storage ? [new ForgetGhlData(waitsForApproval(tools), keepResults)] : []),
+      ...(storage
+        ? [new ForgetGhlData(waitsForApproval(tools), [...keepResults, ...ownTextTools])]
+        : []),
     ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
   });

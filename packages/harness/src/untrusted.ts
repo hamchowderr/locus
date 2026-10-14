@@ -144,6 +144,12 @@ function sourceOperations(toolName: string, args: unknown): string[] {
 export class UntrustedContentProcessor implements Processor<"locus-untrusted-content"> {
   readonly id = "locus-untrusted-content" as const;
   readonly name = "Withhold instructions in GoHighLevel data";
+  readonly #trusted: ReadonlySet<string>;
+
+  /** `trusted`: further tools whose results are Locus's own text (e.g. skill tools). */
+  constructor(trusted: readonly string[] = []) {
+    this.#trusted = new Set([...TRUSTED_TOOLS, ...trusted]);
+  }
 
   processInputStep({ messages, requestContext }: ProcessInputStepArgs) {
     if (isTainted(requestContext)) return;
@@ -166,7 +172,7 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
     messageList,
     requestContext,
   }: ProcessToolResultArgs) {
-    if (TRUSTED_TOOLS.has(toolName)) return;
+    if (this.#trusted.has(toolName)) return;
     const screened = withholdInstructions(result);
     const publicText = sourceOperations(toolName, args).some(readsPublicText);
     if (screened.withheld === 0 && !publicText) return;

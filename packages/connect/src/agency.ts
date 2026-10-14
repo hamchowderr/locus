@@ -100,7 +100,7 @@ export async function connectAgency(
 
 /** A current agency token for an organisation's GHL connection, renewed when close to expiry. */
 export async function agencyToken(
-  deps: ConnectDeps,
+  deps: Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now">,
   organizationId: string,
 ): Promise<{ token: string; companyId: string }> {
   const [connection] = await deps.db
