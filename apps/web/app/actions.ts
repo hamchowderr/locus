@@ -19,7 +19,9 @@ import {
   removeSiteDomain,
   type SyncResult,
   syncLocations,
+  unlinkHostProject,
 } from "@locus/connect";
+import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
@@ -353,6 +355,8 @@ async function siteAction(
     if (error instanceof NotConfigured) back("/sites", new Error("Vercel isn't set up here yet."));
     throw error;
   }
+  // The redirect lands on the page the form was on, so drop its cached render.
+  revalidatePath("/sites");
   redirect("/sites");
 }
 
@@ -433,4 +437,11 @@ export async function chooseSite(form: FormData) {
     maxAge: 60 * 60 * 24 * 30,
   });
   redirect("/sites?chosen=1");
+}
+
+/** Takes a linked Vercel project off the active client. */
+export async function unlinkSiteProject(form: FormData) {
+  await siteAction((ctx, client) =>
+    unlinkHostProject(siteDeps(), ctx, client, text(form, "siteId")),
+  );
 }

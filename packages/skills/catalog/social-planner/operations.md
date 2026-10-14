@@ -46,17 +46,17 @@
   Scheduled for removal in a future version.
 - `social-planner.fetch-available-categories` — **Get all categories with their queue status** — `GET /social-media-posting/category/queues/available-categories` (read, location)
   Returns categories with status: "available" (no queue), "in_queue" (active/paused queue), or "draft" (queue in draft).
-- `social-planner.fetch-calendar-list` — **Get scheduled posts calendar view** — `POST /social-media-posting/category/queues/list/calendar` (write, location)
+- `social-planner.fetch-calendar-list` — **Get scheduled posts calendar view** — `POST /social-media-posting/category/queues/list/calendar` (read, location)
   Returns scheduled posts from active queues within a date range.
-- `social-planner.fetch-edit-session-calendar` — **Fetch calendar view for an edit session** — `POST /social-media-posting/category/queues/{queueId}/edit/calendar` (write, location)
+- `social-planner.fetch-edit-session-calendar` — **Fetch calendar view for an edit session** — `POST /social-media-posting/category/queues/{queueId}/edit/calendar` (read, location)
   Retrieves a calendar preview of scheduled posts based on draft items within an edit session.
 - `social-planner.fetch-queue-by-id` — **Fetch a category queue by ID** — `GET /social-media-posting/category/queues/{queueId}` (read, location)
   Retrieves the details of a single category queue by its unique ID.
-- `social-planner.fetch-queue-items` — **Fetch items from a queue** — `POST /social-media-posting/category/queues/{queueId}/items` (write, location)
+- `social-planner.fetch-queue-items` — **Fetch items from a queue** — `POST /social-media-posting/category/queues/{queueId}/items` (read, location)
   Returns paginated queue items.
-- `social-planner.fetch-queues` — **Fetch category queues for a location** — `POST /social-media-posting/category/queues/list` (write, location)
+- `social-planner.fetch-queues` — **Fetch category queues for a location** — `POST /social-media-posting/category/queues/list` (read, location)
   Retrieves a paginated list of all category queues for a given location, excluding any that have been marked as deleted.
-- `social-planner.fetch-slots` — **Fetch slot information for queue items** — `POST /social-media-posting/category/queues/{queueId}/slots` (write, location)
+- `social-planner.fetch-slots` — **Fetch slot information for queue items** — `POST /social-media-posting/category/queues/{queueId}/slots` (read, location)
   Returns paginated slot information (scheduledDateTime, isSkipped) for queue items.
 - `social-planner.get-account` — **Get Accounts** — `GET /social-media-posting/{locationId}/accounts` (read, location)
   Scheduled for removal in a future version.
@@ -66,7 +66,7 @@
   Scheduled for removal in a future version.
 - `social-planner.get-categories-location-id` — **Get categories by location ID** — `GET /social-media-posting/{locationId}/categories` (read, location)
   Scheduled for removal in a future version.
-- `social-planner.get-comment-list` — **List comments for a post or thread** — `POST /social-media-posting/comments/{platform}/list` (write, location)
+- `social-planner.get-comment-list` — **List comments for a post or thread** — `POST /social-media-posting/comments/{platform}/list` (read, location)
   Paginated list of comments scoped to a post (`parentId` = postId) or a comment thread (`parentId` = commentId).
 - `social-planner.get-community-users` — **Get Community Members** — `GET /social-media-posting/{locationId}/community/accounts/{accountId}/users` (read, location)
   Scheduled for removal in a future version.
@@ -76,11 +76,11 @@
   Scheduled for removal in a future version.
 - `social-planner.get-post` — **Get post** — `GET /social-media-posting/{locationId}/posts/{id}` (read, location)
   Scheduled for removal in a future version.
-- `social-planner.get-posts` — **Get posts** — `POST /social-media-posting/{locationId}/posts/list` (write, location)
+- `social-planner.get-posts` — **Get posts** — `POST /social-media-posting/{locationId}/posts/list` (read, location)
   Scheduled for removal in a future version.
-- `social-planner.get-statistics` — **Get Social Media Statistics** — `POST /social-media-posting/statistics` (write, location)
+- `social-planner.get-statistics` — **Get Social Media Statistics** — `POST /social-media-posting/statistics` (read, location)
   Retrieve analytics data for multiple social media accounts.
-- `social-planner.get-tags-by-ids` — **Get tags by IDs** — `POST /social-media-posting/{locationId}/tags/details` (write, location)
+- `social-planner.get-tags-by-ids` — **Get tags by IDs** — `POST /social-media-posting/{locationId}/tags/details` (read, location)
   Scheduled for removal in a future version.
 - `social-planner.get-tags-location-id` — **Get tags by location ID** — `GET /social-media-posting/{locationId}/tags` (read, location)
   Scheduled for removal in a future version.

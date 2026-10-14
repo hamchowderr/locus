@@ -41,3 +41,15 @@ test("every POST titled as a read is reviewed", () => {
     .map((op) => `${op.id} (${op.title})`);
   expect(unreviewed).toEqual([]);
 });
+
+// The model chooses query_data or perform_action from these labels, so a label that disagrees
+// with the code costs a refused call and a retry.
+test("the operation index labels every operation read or write the way the tools route it", () => {
+  for (const skill of catalog) {
+    const index = skillDocs(skill.category)?.operations ?? "";
+    for (const op of skill.operations) {
+      const line = index.split("\n").find((l) => l.startsWith(`- \`${op.id}\` `));
+      expect(line, op.id).toMatch(isRead(op) ? /\(read[,)]/ : /\(write[,)]/);
+    }
+  }
+});

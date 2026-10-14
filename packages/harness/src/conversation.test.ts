@@ -357,6 +357,10 @@ describe("forgetResult", () => {
   test("keeps our own text, drops GHL data and what GHL errors said", () => {
     const skill = { skill: "# Forms", operations: "…" };
     expect(forgetResult("load_skill", skill)).toBe(skill);
+    // Another feature's tool is forgotten too, unless it says its results hold no GHL data.
+    const file = { path: "app/page.tsx", content: "…" };
+    expect(forgetResult("read_file", file)).toEqual({ notKept: expect.any(String) });
+    expect(forgetResult("read_file", file, { keep: ["read_file"] })).toBe(file);
     // A GHL error can quote data back ("a contact with ann@example.com already exists").
     expect(
       forgetResult("perform_action", { error: "contacts.x: 400 ann@example.com exists" }),

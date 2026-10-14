@@ -20,8 +20,8 @@
 - `objects.get-record-by-id` — **Get Record By Id** — `GET /objects/{schemaKey}/records/{id}` (read, location)
   Allows you to get a Standard Object like business and custom object record by Id
 - `objects.restore-note` — **Restore Note** — `POST /notes/{id}/restore` (write, location)
-- `objects.search-notes` — **Search Notes** — `POST /notes/search` (write, location)
-- `objects.search-object-records` — **Search Object Records** — `POST /objects/{schemaKey}/records/search` (write, location)
+- `objects.search-notes` — **Search Notes** — `POST /notes/search` (read, location)
+- `objects.search-object-records` — **Search Object Records** — `POST /objects/{schemaKey}/records/search` (read, location)
   Supported Objects are custom objects and standard objects like "business".
 - `objects.update-custom-object` — **Update Object Schema By Key / Id** — `PUT /objects/{key}` (write, location)
   Update Custom Object Schema or standard object's like contact, opportunity, business searchable fields.
