@@ -1,6 +1,6 @@
 import type { GhlSession } from "@locus/ghl";
 import { createFakeGhl, type FakeRoutes, type RecordedRequest, useAimock } from "@locus/testing";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import { createLocusAgent } from "./agent.ts";
 import { createTestWriteGuard, memoryLedger, type WriteGuard } from "./test-mode.ts";
 
@@ -58,12 +58,23 @@ function agentOver(routes: FakeRoutes, writeGuard?: WriteGuard) {
   return { ghl, agent };
 }
 
-/** Everything the agent sent back to the model, tool results included, as one string. */
+// The journal outlives a test; clear it so each test only sees its own traffic.
+beforeEach(() => mock().llm.clearRequests());
+
+/**
+ * The tool results the agent sent back to the model, as one string. Only `tool` messages count:
+ * the scripted calls' own arguments travel in the same requests and would match anything they
+ * contain, so a check against the whole request could pass without GHL's data ever arriving.
+ */
 function shownToModel(): string {
-  return mock()
-    .llm.getRequests()
-    .map((entry) => JSON.stringify(entry.body ?? ""))
-    .join("\n");
+  const results = new Set<string>();
+  for (const entry of mock().llm.getRequests()) {
+    const messages = (entry.body as { messages?: { role: string; content: unknown }[] }).messages;
+    for (const m of messages ?? []) {
+      if (m.role === "tool") results.add(JSON.stringify(m.content));
+    }
+  }
+  return [...results].join("\n");
 }
 
 const sent = (ghl: { requests: RecordedRequest[] }) =>
@@ -269,7 +280,7 @@ describe("calendars", () => {
                   params: { body: { query: "ada@example.com" } },
                 },
               ],
-              sql: `SELECT c.id AS calendarId, p.id AS contactId
+              sql: `SELECT c.id AS bookOnCalendar, p.id AS bookForContact
                     FROM calendars c, people p
                     WHERE c.name = 'Consultation' AND p.email = 'ada@example.com'`,
             },
@@ -319,7 +330,7 @@ describe("calendars", () => {
 
     expect(result.text).toMatch(/Booked Ada/);
     expect(shownToModel()).toContain(
-      '\\"calendarId\\":\\"cal-consult\\",\\"contactId\\":\\"c-ada\\"',
+      '\\"bookOnCalendar\\":\\"cal-consult\\",\\"bookForContact\\":\\"c-ada\\"',
     );
     expect(sent(ghl)).toEqual([
       "GET /calendars/",
