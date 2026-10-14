@@ -23,7 +23,7 @@ setting does:
 
 - `BETTER_AUTH_SECRET`, `BETTER_AUTH_URL` or `LOCUS_CONTROL_DB_URL`: every page shows "Locus is
   being set up" and the auth API answers 503.
-- Email (`EMAIL_MODE`, `RESEND_API_KEY`, `EMAIL_FROM`): pages and the auth API fail with a
+- Email (`EMAIL_MODE` unset or `console`, `RESEND_API_KEY`, `EMAIL_FROM`): pages and the auth API fail with a
   server error.
 - Anything else (GoHighLevel, GitHub, Vercel, Turso, `LOCUS_SECRETS_KEY`): only that feature
   fails, for example connecting GoHighLevel or adding a client.
@@ -39,7 +39,7 @@ deployment is not considered set up without it.
 | `BETTER_AUTH_URL` | yes | The deployment's public URL, e.g. `https://locus.example.com`. Used for email links, OAuth callbacks and Stripe return pages |
 | `LOCUS_CONTROL_DB_URL` | yes | The control database's `libsql://` URL |
 | `LOCUS_CONTROL_DB_TOKEN` | yes | A token for the control database |
-| `EMAIL_MODE` | yes | `resend` in production. `console` prints messages, including sign-in and reset links, to the log: never use it in production |
+| `EMAIL_MODE` | yes | `resend` in production. `console` (prints messages to the log) is for development and is refused in production |
 | `RESEND_API_KEY` | yes | Resend API key |
 | `EMAIL_FROM` | yes | The sender, e.g. `Locus <no-reply@example.com>`, on a domain verified in Resend |
 | `LOCUS_SECRETS` | no | `encrypted`, the default and only choice in production |
@@ -63,8 +63,7 @@ deployment is not considered set up without it.
 
 The `GHL_MODE`, `GITHUB_MODE` and `VERCEL_MODE` switches exist so development can use
 stand-ins; in production leave them unset or set them to `live`. Set to `stub` in production,
-they are logged as a problem and refused. `EMAIL_MODE=console` is logged as a problem but still
-used, so check it yourself.
+they are logged as a problem and refused. `EMAIL_MODE=console` is refused the same way.
 
 GoHighLevel's OAuth scopes are not a setting: they are `GHL_SCOPES` in
 [`packages/connect/src/ghl-scopes.ts`](../packages/connect/src/ghl-scopes.ts), and your app
