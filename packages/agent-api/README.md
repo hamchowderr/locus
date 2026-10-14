@@ -6,8 +6,8 @@ The HTTP API the chat talks to: Mastra's agent-controller routes for one Locus
 ```ts
 const api = createAgentApi({
   prefix: "/api/agent",
-  authorize: async (request) => /* Better Auth session + staff check */ ({ memberId, locationId }),
-  controllerFor: async (locationId) => /* cached createLocusController(...) */,
+  authorize: async (request) => /* Better Auth session + staff check */ ({ memberId, locationId, clientId }),
+  controllerFor: async ({ clientId, locationId }) => /* createLocusController(...), once per client */,
 });
 // In a route handler: return api.fetch(request);
 ```

@@ -79,6 +79,11 @@ export interface AgentApiMember {
   memberId: string;
   /** The client (GHL location) this member may act on, after the staff check. */
   locationId: string;
+  /**
+   * The host's own id for that client, which keys its controller. A GHL location can belong to
+   * more than one agency over time, so the location id alone must not pick a controller.
+   */
+  clientId: string;
 }
 
 export interface AgentApiConfig {
@@ -94,7 +99,7 @@ export interface AgentApiConfig {
    * storage must be that client's own database: thread routes find threads and messages by id
    * in whatever store the controller has.
    */
-  controllerFor: (locationId: string) => Promise<AgentController>;
+  controllerFor: (member: AgentApiMember) => Promise<AgentController>;
   /**
    * Values the host puts on each run's request context, worked out server-side (for example
    * the site being built, after checking it belongs to the member's client). Whatever the
@@ -118,11 +123,12 @@ export function createAgentApi({
   const base = `${prefix}/agent-controller/${CONTROLLER_ID}`;
   const apps = new Map<string, Promise<Hono>>();
 
-  const appFor = (locationId: string) => {
-    let app = apps.get(locationId);
+  const appFor = (member: AgentApiMember) => {
+    const { clientId } = member;
+    let app = apps.get(clientId);
     if (!app) {
       app = (async () => {
-        const controller = await controllerFor(locationId);
+        const controller = await controllerFor(member);
         const mastra = new Mastra({
           agentControllers: { [CONTROLLER_ID]: controller },
           logger: false,
@@ -137,8 +143,8 @@ export function createAgentApi({
         }
         return hono;
       })();
-      app.catch(() => apps.delete(locationId));
-      apps.set(locationId, app);
+      app.catch(() => apps.delete(clientId));
+      apps.set(clientId, app);
     }
     return app;
   };
@@ -203,7 +209,7 @@ export function createAgentApi({
         ...(body !== undefined ? { body } : {}),
         signal: request.signal,
       });
-      const app = await appFor(member.locationId);
+      const app = await appFor(member);
       return app.fetch(forwarded);
     },
   };

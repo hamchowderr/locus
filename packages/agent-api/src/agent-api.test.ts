@@ -21,12 +21,16 @@ function apiFor(
   extras: Partial<Parameters<typeof createLocusController>[0]> = {},
   hostContext?: Record<string, unknown>,
 ) {
-  let signedIn: AgentApiMember | null = { memberId: "m1", locationId: "loc-A" };
+  let signedIn: AgentApiMember | null = {
+    memberId: "m1",
+    locationId: "loc-A",
+    clientId: "client-A",
+  };
   let controller: AgentController | undefined;
   const api = createAgentApi({
     prefix: PREFIX,
     authorize: async () => signedIn,
-    controllerFor: async (locationId) => {
+    controllerFor: async ({ locationId }) => {
       controller = await createLocusController({
         model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
         locationId,
@@ -258,7 +262,7 @@ describe("the guard", () => {
     await stream.next((e) => e.type === "tool_approval_required");
 
     // Member m2 naming m1's scope still lands in a session of their own.
-    signIn({ memberId: "m2", locationId: "loc-A" });
+    signIn({ memberId: "m2", locationId: "loc-A", clientId: "client-A" });
     const theirs = client.getAgentController("locus").session(RESOURCE, "member:m1");
     await theirs.create();
     const live = (scope?: string) => controller().getSessionByResource(RESOURCE, scope);

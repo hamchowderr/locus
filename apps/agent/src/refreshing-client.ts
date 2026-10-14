@@ -3,42 +3,57 @@ import type { Client } from "@libsql/client";
 /**
  * A libSQL client whose token is renewed before it expires. Client databases are reached with
  * short-lived tokens that name only that database, but the agent keeps one store per client
- * for as long as the process runs; this swaps in a client with a fresh token every `renewMs`.
- * The client it replaces is closed after `graceMs`, so a query or transaction already running
- * on it can finish.
+ * for as long as the process runs; this opens a client with a fresh token every `renewMs`.
+ *
+ * The client it replaces stays in use until the new one has opened, and is closed `graceMs`
+ * after that, so a query already running on it can finish (a transaction held longer than
+ * that is cut off). If a renewal fails, the current client keeps serving and the renewal is
+ * tried again after `retryMs`.
  */
 export function refreshingClient(
   open: () => Promise<Client>,
   {
     renewMs,
     graceMs = 60_000,
+    retryMs = 30_000,
     now = Date.now,
-  }: {
-    renewMs: number;
-    graceMs?: number;
-    now?: () => number;
-  },
+  }: { renewMs: number; graceMs?: number; retryMs?: number; now?: () => number },
 ): Client {
-  let current: Promise<Client> | undefined;
-  let openedAt = 0;
-  const client = (): Promise<Client> => {
-    if (!current || now() - openedAt >= renewMs) {
-      const previous = current;
-      openedAt = now();
-      const opening = open();
-      current = opening;
-      // A failed open must not stick: the next call tries again.
-      opening.catch(() => {
-        if (current === opening) current = undefined;
-      });
-      previous?.then(
-        (old) => setTimeout(() => old.close(), graceMs).unref?.(),
-        () => {},
-      );
+  let current: Client | undefined;
+  let renewAt = 0;
+  let opening: Promise<Client> | undefined;
+  let closed = false;
+
+  const renew = () => {
+    opening ??= open().then(
+      (fresh) => {
+        const previous = current;
+        current = fresh;
+        renewAt = now() + renewMs;
+        opening = undefined;
+        if (previous) setTimeout(() => previous.close(), graceMs).unref?.();
+        if (closed) fresh.close();
+        return fresh;
+      },
+      (error: unknown) => {
+        opening = undefined;
+        renewAt = now() + retryMs;
+        throw error;
+      },
+    );
+    return opening;
+  };
+
+  const client = async (): Promise<Client> => {
+    if (closed) throw new Error("the client is closed");
+    if (!current) return renew();
+    if (now() >= renewAt) {
+      // Keep serving from the current client; a failed renewal is retried later.
+      renew().catch(() => {});
     }
     return current;
   };
-  let closed = false;
+
   return {
     execute: (async (...args: unknown[]) =>
       (await client()).execute(...(args as [never]))) as Client["execute"],
@@ -52,20 +67,16 @@ export function refreshingClient(
     sync: async () => (await client()).sync(),
     close: () => {
       closed = true;
-      current?.then(
-        (c) => c.close(),
-        () => {},
-      );
+      current?.close();
     },
     reconnect: () => {
-      current?.then(
-        (c) => c.reconnect(),
-        () => {},
-      );
+      current?.reconnect();
     },
     get closed() {
       return closed;
     },
-    protocol: "https",
+    get protocol() {
+      return current?.protocol ?? "unknown";
+    },
   };
 }
