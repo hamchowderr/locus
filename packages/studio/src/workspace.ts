@@ -33,12 +33,18 @@ export interface FileChanges {
   deleted: string[];
 }
 
+/** The client database, or a transaction on it. */
+type Tx = Parameters<Parameters<TenantDb["transaction"]>[0]>[0];
+type Executor = TenantDb | Tx;
+
 interface Blob {
   hash: string;
   encoding: "utf8" | "base64";
   content: string;
   size: number;
 }
+
+const strictUtf8 = new TextDecoder("utf-8", { fatal: true });
 
 function toBlob(path: string, content: FileContent): Blob {
   const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
@@ -47,11 +53,24 @@ function toBlob(path: string, content: FileContent): Blob {
       `${path} is ${bytes.byteLength} bytes; files are limited to ${MAX_FILE_BYTES}.`,
     );
   }
-  const text = typeof content === "string" || isTextPath(path);
-  const hash = createHash("sha256").update(bytes).digest("hex");
-  return text
-    ? { hash, encoding: "utf8", content: bytes.toString("utf8"), size: bytes.byteLength }
-    : { hash, encoding: "base64", content: bytes.toString("base64"), size: bytes.byteLength };
+  // Bytes are kept as text only when they really are UTF-8, so nothing is ever mangled.
+  let text: string | null = typeof content === "string" ? content : null;
+  if (text === null && isTextPath(path)) {
+    try {
+      text = strictUtf8.decode(bytes);
+    } catch {
+      text = null;
+    }
+  }
+  const encoding = text === null ? "base64" : "utf8";
+  // The encoding is part of the key: the same bytes read back as a string or as bytes.
+  const hash = createHash("sha256").update(`${encoding}:`).update(bytes).digest("hex");
+  return {
+    hash,
+    encoding,
+    content: text ?? bytes.toString("base64"),
+    size: bytes.byteLength,
+  };
 }
 
 function fromBlob(blob: Pick<Blob, "encoding" | "content">): FileContent {
@@ -62,18 +81,50 @@ function fromBlob(blob: Pick<Blob, "encoding" | "content">): FileContent {
 
 const sqlExcluded = (column: string) => sql.raw(`excluded.${column}`);
 
-/** SQLite's limit on bound parameters is generous on libSQL, but chunk to stay well inside it. */
+/** Rows per statement, well inside SQLite's bound-parameter limit. */
 const CHUNK = 200;
 const chunks = <T>(items: T[]) =>
   Array.from({ length: Math.ceil(items.length / CHUNK) }, (_, i) =>
     items.slice(i * CHUNK, (i + 1) * CHUNK),
   );
 
+/** Blob statements also stay under this many characters, so a remote request stays small. */
+const BLOB_BATCH_CHARS = 8 * 1024 * 1024;
+function blobBatches(blobs: Blob[]): Blob[][] {
+  const batches: Blob[][] = [];
+  let batch: Blob[] = [];
+  let chars = 0;
+  for (const blob of blobs) {
+    if (
+      batch.length > 0 &&
+      (chars + blob.content.length > BLOB_BATCH_CHARS || batch.length >= CHUNK)
+    ) {
+      batches.push(batch);
+      batch = [];
+      chars = 0;
+    }
+    batch.push(blob);
+    chars += blob.content.length;
+  }
+  if (batch.length > 0) batches.push(batch);
+  return batches;
+}
+
+const WRITE_RETRIES = 6;
+const isBusy = (error: unknown) =>
+  /SQLITE_BUSY|database is locked/i.test(`${error} ${(error as { cause?: unknown })?.cause ?? ""}`);
+
+const isUniqueViolation = (error: unknown) =>
+  /UNIQUE constraint failed/i.test(`${error} ${(error as { cause?: unknown })?.cause ?? ""}`);
+
 /**
  * One site's source in the client's database: a working tree the agent edits (the draft) and
  * numbered versions saved from it. Every path goes through `normalizeSitePath`. The caller has
  * already resolved the client from the session and opened that client's database; `siteId`
  * must be a site of that client (checked against the control database by the caller).
+ *
+ * Changes that must not interleave (saving, restoring) run in one write transaction that takes
+ * the database's write lock first, so two saves at once can't both claim the next number.
  */
 export class SiteWorkspace {
   readonly db: TenantDb;
@@ -86,15 +137,29 @@ export class SiteWorkspace {
     this.now = options.now ?? (() => new Date());
   }
 
+  /**
+   * Runs `work` in a transaction holding the write lock from its first statement. Another
+   * writer holding the lock (SQLITE_BUSY) is waited out with a short backoff.
+   */
+  private async write<T>(work: (tx: Tx) => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.db.transaction(work, { behavior: "immediate" });
+      } catch (error) {
+        if (!isBusy(error) || attempt >= WRITE_RETRIES) throw error;
+        await new Promise((r) => setTimeout(r, 25 * 2 ** attempt + Math.random() * 25));
+      }
+    }
+  }
+
   /** The draft's files, sorted by path. */
-  async listFiles(): Promise<SiteFileInfo[]> {
-    const rows = await this.db
+  listFiles(q: Executor = this.db): Promise<SiteFileInfo[]> {
+    return q
       .select({ path: siteDraftFile.path, hash: siteBlob.hash, size: siteBlob.size })
       .from(siteDraftFile)
       .innerJoin(siteBlob, eq(siteBlob.hash, siteDraftFile.blobHash))
       .where(eq(siteDraftFile.siteId, this.siteId))
       .orderBy(siteDraftFile.path);
-    return rows;
   }
 
   /** One draft file, or null when it doesn't exist. */
@@ -116,14 +181,14 @@ export class SiteWorkspace {
       const path = normalizeSitePath(file.path);
       byPath.set(path, toBlob(path, file.content));
     }
-    const existing = new Set((await this.listFiles()).map((f) => f.path));
-    const added = [...byPath.keys()].filter((p) => !existing.has(p)).length;
-    if (existing.size + added > MAX_FILES) {
-      throw new WorkspaceError(`A site can have at most ${MAX_FILES} files.`);
-    }
     const blobs = [...new Map([...byPath.values()].map((b) => [b.hash, b])).values()];
-    await this.db.transaction(async (tx) => {
-      for (const batch of chunks(blobs)) {
+    await this.write(async (tx) => {
+      const existing = new Set((await this.listFiles(tx)).map((f) => f.path));
+      const added = [...byPath.keys()].filter((p) => !existing.has(p)).length;
+      if (existing.size + added > MAX_FILES) {
+        throw new WorkspaceError(`A site can have at most ${MAX_FILES} files.`);
+      }
+      for (const batch of blobBatches(blobs)) {
         await tx.insert(siteBlob).values(batch).onConflictDoNothing();
       }
       const rows = [...byPath].map(([path, blob]) => ({
@@ -177,11 +242,13 @@ export class SiteWorkspace {
   /** Removes files from the draft. Missing files are ignored. */
   async deleteFiles(paths: string[]): Promise<void> {
     const clean = [...new Set(paths.map(normalizeSitePath))];
-    for (const batch of chunks(clean)) {
-      await this.db
-        .delete(siteDraftFile)
-        .where(and(eq(siteDraftFile.siteId, this.siteId), inArray(siteDraftFile.path, batch)));
-    }
+    await this.write(async (tx) => {
+      for (const batch of chunks(clean)) {
+        await tx
+          .delete(siteDraftFile)
+          .where(and(eq(siteDraftFile.siteId, this.siteId), inArray(siteDraftFile.path, batch)));
+      }
+    });
   }
 
   /** Every draft file with its content, for the sandbox or a commit. */
@@ -196,7 +263,7 @@ export class SiteWorkspace {
   }
 
   /** The site's versions, newest first. */
-  async listVersions(): Promise<VersionInfo[]> {
+  listVersions(): Promise<VersionInfo[]> {
     return this.db
       .select()
       .from(siteVersion)
@@ -204,8 +271,8 @@ export class SiteWorkspace {
       .orderBy(desc(siteVersion.number));
   }
 
-  async latestVersion(): Promise<VersionInfo | null> {
-    const [row] = await this.db
+  async latestVersion(q: Executor = this.db): Promise<VersionInfo | null> {
+    const [row] = await q
       .select()
       .from(siteVersion)
       .where(eq(siteVersion.siteId, this.siteId))
@@ -214,8 +281,8 @@ export class SiteWorkspace {
     return row ?? null;
   }
 
-  async getVersion(versionId: string): Promise<VersionInfo> {
-    const [row] = await this.db
+  async getVersion(versionId: string, q: Executor = this.db): Promise<VersionInfo> {
+    const [row] = await q
       .select()
       .from(siteVersion)
       .where(and(eq(siteVersion.id, versionId), eq(siteVersion.siteId, this.siteId)));
@@ -239,18 +306,16 @@ export class SiteWorkspace {
     return rows.map((r) => ({ path: r.path, content: fromBlob(r) }));
   }
 
-  /** How the draft differs from a version (the latest when none is given). */
-  async changes(versionId?: string): Promise<FileChanges> {
-    const base = versionId ? await this.getVersion(versionId) : await this.latestVersion();
+  private async diff(q: Executor, base: VersionInfo | null): Promise<FileChanges> {
     const before = new Map<string, string>();
     if (base) {
-      const rows = await this.db
+      const rows = await q
         .select({ path: siteVersionFile.path, hash: siteVersionFile.blobHash })
         .from(siteVersionFile)
         .where(eq(siteVersionFile.versionId, base.id));
       for (const row of rows) before.set(row.path, row.hash);
     }
-    const after = new Map((await this.listFiles()).map((f) => [f.path, f.hash]));
+    const after = new Map((await this.listFiles(q)).map((f) => [f.path, f.hash]));
     const changes: FileChanges = { added: [], modified: [], deleted: [] };
     for (const [path, hash] of after) {
       const was = before.get(path);
@@ -259,6 +324,42 @@ export class SiteWorkspace {
     }
     for (const path of before.keys()) if (!after.has(path)) changes.deleted.push(path);
     return changes;
+  }
+
+  /** How the draft differs from a version (the latest when none is given). */
+  async changes(versionId?: string): Promise<FileChanges> {
+    const base = versionId ? await this.getVersion(versionId) : await this.latestVersion();
+    return this.diff(this.db, base);
+  }
+
+  /** Saves the draft as the next version inside `tx`; null when nothing changed. */
+  async saveVersionIn(
+    tx: Tx,
+    input: { message: string; source: VersionSource; userId?: string | null },
+  ): Promise<VersionInfo | null> {
+    const latest = await this.latestVersion(tx);
+    if (latest) {
+      const { added, modified, deleted } = await this.diff(tx, latest);
+      if (added.length + modified.length + deleted.length === 0) return null;
+    }
+    const files = await this.listFiles(tx);
+    if (files.length === 0) throw new WorkspaceError("There's nothing to save: the site is empty.");
+    const row: VersionInfo = {
+      id: randomUUID(),
+      siteId: this.siteId,
+      number: (latest?.number ?? 0) + 1,
+      message: input.message.trim().slice(0, 500) || "Saved changes",
+      source: input.source,
+      parentId: latest?.id ?? null,
+      bookmarked: false,
+      commitSha: null,
+      createdByUserId: input.userId ?? null,
+      createdAt: this.now(),
+    };
+    await tx.insert(siteVersion).values(row);
+    const rows = files.map((f) => ({ versionId: row.id, path: f.path, blobHash: f.hash }));
+    for (const batch of chunks(rows)) await tx.insert(siteVersionFile).values(batch);
+    return row;
   }
 
   /**
@@ -270,73 +371,52 @@ export class SiteWorkspace {
     source: VersionSource;
     userId?: string | null;
   }): Promise<VersionInfo | null> {
-    const latest = await this.latestVersion();
-    if (latest) {
-      const { added, modified, deleted } = await this.changes(latest.id);
-      if (added.length + modified.length + deleted.length === 0) return null;
+    try {
+      return await this.write((tx) => this.saveVersionIn(tx, input));
+    } catch (error) {
+      // Another writer took the number (a database without a write lock): try once more.
+      if (!isUniqueViolation(error)) throw error;
+      return this.write((tx) => this.saveVersionIn(tx, input));
     }
-    const files = await this.listFiles();
-    if (files.length === 0) throw new WorkspaceError("There's nothing to save: the site is empty.");
-    const message = input.message.trim().slice(0, 500) || "Saved changes";
-    const row: VersionInfo = {
-      id: randomUUID(),
-      siteId: this.siteId,
-      number: (latest?.number ?? 0) + 1,
-      message,
-      source: input.source,
-      parentId: latest?.id ?? null,
-      bookmarked: false,
-      commitSha: null,
-      createdByUserId: input.userId ?? null,
-      createdAt: this.now(),
-    };
-    await this.db.transaction(async (tx) => {
-      await tx.insert(siteVersion).values(row);
-      const rows = files.map((f) => ({ versionId: row.id, path: f.path, blobHash: f.hash }));
-      for (const batch of chunks(rows)) await tx.insert(siteVersionFile).values(batch);
-    });
-    return row;
+  }
+
+  private async replaceDraft(tx: Tx, versionId: string): Promise<void> {
+    const rows = await tx
+      .select({ path: siteVersionFile.path, blobHash: siteVersionFile.blobHash })
+      .from(siteVersionFile)
+      .where(eq(siteVersionFile.versionId, versionId));
+    await tx.delete(siteDraftFile).where(eq(siteDraftFile.siteId, this.siteId));
+    const draft = rows.map((r) => ({ siteId: this.siteId, ...r }));
+    for (const batch of chunks(draft)) await tx.insert(siteDraftFile).values(batch);
   }
 
   /**
    * Makes a version's files the draft again and saves that as a new version, so restoring is
-   * itself undoable and history only ever grows.
+   * itself undoable and history only ever grows. All in one transaction.
    */
-  async restoreVersion(versionId: string, input: { userId?: string | null } = {}) {
-    const target = await this.getVersion(versionId);
-    const rows = await this.db
-      .select({ path: siteVersionFile.path, blobHash: siteVersionFile.blobHash })
-      .from(siteVersionFile)
-      .where(eq(siteVersionFile.versionId, target.id));
-    await this.db.transaction(async (tx) => {
-      await tx.delete(siteDraftFile).where(eq(siteDraftFile.siteId, this.siteId));
-      const draft = rows.map((r) => ({ siteId: this.siteId, ...r }));
-      for (const batch of chunks(draft)) await tx.insert(siteDraftFile).values(batch);
+  async restoreVersion(
+    versionId: string,
+    input: { userId?: string | null } = {},
+  ): Promise<VersionInfo> {
+    return this.write(async (tx) => {
+      const target = await this.getVersion(versionId, tx);
+      await this.replaceDraft(tx, target.id);
+      const saved = await this.saveVersionIn(tx, {
+        message: `Restored version ${target.number}`,
+        source: "restore",
+        userId: input.userId ?? null,
+      });
+      // Restoring the latest version changes nothing: it is still the current one.
+      return saved ?? target;
     });
-    const saved = await this.saveVersion({
-      message: `Restored version ${target.number}`,
-      source: "restore",
-      userId: input.userId ?? null,
-    });
-    // Restoring the latest version changes nothing: it is still the current one.
-    return saved ?? target;
   }
 
   /** Throws away unsaved draft changes, back to the latest version. */
   async discardDraft(): Promise<void> {
-    const latest = await this.latestVersion();
-    if (!latest) {
-      await this.db.delete(siteDraftFile).where(eq(siteDraftFile.siteId, this.siteId));
-      return;
-    }
-    const rows = await this.db
-      .select({ path: siteVersionFile.path, blobHash: siteVersionFile.blobHash })
-      .from(siteVersionFile)
-      .where(eq(siteVersionFile.versionId, latest.id));
-    await this.db.transaction(async (tx) => {
-      await tx.delete(siteDraftFile).where(eq(siteDraftFile.siteId, this.siteId));
-      const draft = rows.map((r) => ({ siteId: this.siteId, ...r }));
-      for (const batch of chunks(draft)) await tx.insert(siteDraftFile).values(batch);
+    await this.write(async (tx) => {
+      const latest = await this.latestVersion(tx);
+      if (latest) await this.replaceDraft(tx, latest.id);
+      else await tx.delete(siteDraftFile).where(eq(siteDraftFile.siteId, this.siteId));
     });
   }
 

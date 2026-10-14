@@ -17,22 +17,31 @@ export async function startSite(
   workspace: SiteWorkspace,
   input: { brief: z.input<typeof DesignBrief>; templateId?: string; userId?: string | null },
 ): Promise<{ brief: DesignBrief; template: SiteTemplate; version: VersionInfo }> {
-  if ((await workspace.listFiles()).length > 0 || (await workspace.latestVersion())) {
-    throw new WorkspaceError("This site has already been started.");
-  }
   const parsed = DesignBrief.parse(input.brief);
   const template = input.templateId ? templateById(input.templateId) : defaultTemplate(parsed);
   if (!template) throw new WorkspaceError(`There's no template called ${input.templateId}.`);
-  const brief = await writeBrief(workspace.db, workspace.siteId, {
-    ...parsed,
-    templateId: template.id,
-  });
-  await workspace.writeFiles(renderTemplate(template, brief));
-  const version = await workspace.saveVersion({
-    message: `Started from the ${template.title} template`,
-    source: "template",
-    userId: input.userId ?? null,
-  });
-  // biome-ignore lint/style/noNonNullAssertion: the first save of a non-empty draft always saves
-  return { brief, template, version: version! };
+  const brief = DesignBrief.parse({ ...parsed, templateId: template.id });
+  const files = renderTemplate(template, brief);
+  if ((await workspace.listFiles()).length > 0 || (await workspace.latestVersion())) {
+    throw new WorkspaceError("This site has already been started.");
+  }
+  // Files first: if anything after fails, the site is still empty and can be started again.
+  // A second start racing this one finds the draft taken, or loses the version number.
+  await workspace.writeFiles(files);
+  let version: VersionInfo | null;
+  try {
+    version = await workspace.saveVersion({
+      message: `Started from the ${template.title} template`,
+      source: "template",
+      userId: input.userId ?? null,
+    });
+  } catch (error) {
+    if (!(await workspace.latestVersion())) await workspace.deleteFiles(files.map((f) => f.path));
+    throw error;
+  }
+  if (version?.number !== 1) {
+    throw new WorkspaceError("This site has already been started.");
+  }
+  await writeBrief(workspace.db, workspace.siteId, brief);
+  return { brief, template, version };
 }
