@@ -523,6 +523,74 @@ describe("the chat kit", () => {
     expect(text).toContain('"type":"__done__"');
   });
 
+  test("a message may carry attachments larger than other posts", async () => {
+    const { host } = await hostFor({ as: "owner" }, await scriptedModel());
+    const post = (path: string) =>
+      host.fetch(
+        new Request(`http://agent.test${PREFIX}/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: "Hello there", padding: "x".repeat(1_500_000) }),
+        }),
+      );
+    const kit = await post("kit/agent-controller/stream");
+    expect(kit.status).not.toBe(413);
+    await kit.text();
+    expect((await post("kit/agent-controller/answer")).status).toBe(413);
+  });
+
+  test("a member removed while a change waits loses the run, not just the stream", async () => {
+    mock().llm.on(
+      { userMessage: /delete contact c3/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "kh-del",
+            name: "perform_action",
+            arguments: JSON.stringify({
+              operation: "contacts.delete-contact",
+              params: { path: { contactId: "c3" } },
+            }),
+          },
+        ],
+      },
+    );
+    const { connect, sessions, client } = await agency();
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: client.id });
+    const host = createHost({
+      db,
+      session: async () => sessions.staff ?? null,
+      connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      fetch: createFakeGhl({ "*": { body: {} } }).fetch,
+      origin: "http://locus.test",
+      streamCheckMs: 50,
+    });
+    const kit = (path: string, body: unknown) =>
+      host.fetch(
+        new Request(`http://agent.test${PREFIX}/kit/agent-controller/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    const res = await kit("stream", { text: "Delete contact c3" });
+    const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+    let text = "";
+    while (!text.includes("tool_approval_required")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream ended early: ${text}`);
+      text += new TextDecoder().decode(value);
+    }
+
+    await db.delete(memberLocation).where(eq(memberLocation.memberId, "m-staff"));
+    while (!(await reader.read()).done) {}
+    // Let them back in: the change they were asked about is gone with the run.
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: client.id });
+    const approve = await kit("approve", { decision: "approve", toolCallId: "kh-del" });
+    expect(approve.status).toBe(409);
+  });
+
   test("a member who may not act on their client is refused there too", async () => {
     const { host } = await hostFor({ as: "staff" });
     const res = await host.fetch(
