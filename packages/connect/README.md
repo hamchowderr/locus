@@ -36,21 +36,29 @@ account, and a project on the agency's own Vercel team builds it.
 - `ensureSiteRepo(deps, ctx, client, { siteId, name })` creates a private, empty repository in
   the organization Locus is installed on. GitHub Apps can't create repositories in a personal
   account, so there the agency creates an empty repository, gives the app access, and links it
-  with `{ siteId, repoFullName }` (`listInstallationRepos` lists what the app can see). One
-  repository per site. Owners and admins only.
+  with `{ siteId, repoFullName }` (`listInstallationRepos` lists what the app can see; it reads
+  at most 1,000). A linked repository must be empty: each save replaces everything in it, so
+  one with files is refused. One repository per site and one site per repository, held by a
+  unique index too, so racing requests can't break it. Owners and admins only.
 - `commitSiteVersion(deps, client, { siteId, files, message, parentSha? })` commits the full
   snapshot to the repository's default branch: text files go inline in the tree, binary ones as
-  base64 blobs, and the tree has no base, so a file left out is deleted. An empty repository
-  gets its first commit through the contents API (the Git database API answers 409 until then).
-  Paths with `..`, absolute paths, anything under `.git/` and any `.env*` file are refused.
-  `parentSha` refuses the save if the branch moved. Anyone who may work on the client may save.
+  base64 blobs, and the tree has no base, so a file left out is deleted. A file marked
+  `executable` keeps its executable bit. An empty repository gets its first commit through the
+  contents API (the Git database API answers 409 until then). Paths with `..`, absolute paths,
+  anything under `.git/` and any `.env*` file are refused. `parentSha` refuses the save if the
+  branch moved; `null` says the repository should still be empty. Anyone who may work on the
+  client may save.
 - `ensureSiteDeployment(deps, ctx, client, { siteId })` creates a Next.js project on the agency's
-  Vercel team, linked to the repository; every push then deploys. If the site already has a
+  Vercel team, linked to the repository; every push then deploys. If the team already has a
+  project by that name, it tries once more with the site's id added. If the site already has a
   commit, it asks for the first production deployment too. Vercel's own GitHub app must be able
   to see the repository; if it can't, the agency is told to give it access. Owners and admins
   only.
-- `latestDeployment(deps, client, siteId)` gives the latest deployment's state and address, and
-  keeps the address on the site once it is ready.
+- `latestDeployment(deps, client, siteId)` gives the latest production deployment's state and
+  the site's public address: the project's production alias (`<name>.vercel.app` unless it has
+  others), never the deployment's own URL, which Vercel's deployment protection hides by
+  default. It keeps that address on the site once a deployment is ready. A failed production
+  build marks the site failed; previews change nothing.
 
 Each change is in the audit log. Another client's site id looks like a missing site.
 
@@ -73,6 +81,9 @@ whose name starts with `no-vercel-access` is one the stub Vercel team can't see.
 - The authorize path (`/oauth/chooselocation`) and the AppInstall webhook's field names come
   from GHL's developer guides, not the API export the catalog is built from.
 - The webhook signature encoding (base64) — confirm with a real delivery.
-- Publishing: the error Vercel returns when its GitHub app can't see a repository (matched on
-  its code and message), and the `gitSource` shape of the first deployment request
-  (`org`/`repo`/`ref`), were taken from Vercel's docs through search, not a live call.
+- Publishing: these came from Vercel's docs and community answers through search, not a live
+  call. The error Vercel returns when its GitHub app can't see a repository (Vercel documents
+  no dedicated code; Locus matches its "install the GitHub integration" and "repository can't
+  be found" sentences), the status of a project-name clash (409 assumed), the project's
+  production aliases (`targets.production.alias`, or `alias`), and the `gitSource` shape of the
+  first deployment request (`org`/`repo`/`ref`).

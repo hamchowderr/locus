@@ -241,6 +241,53 @@ describe("installation tokens", () => {
     expect(gh.of("POST", "/app/installations/77/access_tokens")).toHaveLength(3);
   });
 
+  it("never serves a cached token to another repository or another set of permissions", async () => {
+    let n = 0;
+    const mint: Route = () => [
+      201,
+      { token: `ghs_${++n}`, expires_at: new Date(clock + 60 * 60_000).toISOString() },
+    ];
+    const gh = fakeFetch({
+      "POST /app/installations/77/access_tokens": mint,
+      "POST /app/installations/78/access_tokens": mint,
+    });
+    const d = deps({ github: gh.fetch });
+    const one = await installationToken(d, "77", {
+      repository: "site-one",
+      permissions: { contents: "write" },
+    });
+    const two = await installationToken(d, "77", {
+      repository: "site-two",
+      permissions: { contents: "write" },
+    });
+    const readOnly = await installationToken(d, "77", {
+      repository: "site-one",
+      permissions: { contents: "read" },
+    });
+    const wider = await installationToken(d, "77", {
+      repository: "site-one",
+      permissions: { contents: "write", administration: "write" },
+    });
+    const otherInstallation = await installationToken(d, "78", {
+      repository: "site-one",
+      permissions: { contents: "write" },
+    });
+    expect(new Set([one, two, readOnly, wider, otherInstallation]).size).toBe(5);
+    expect(
+      await installationToken(d, "77", {
+        repository: "site-one",
+        permissions: { contents: "write" },
+      }),
+    ).toBe(one);
+    expect(gh.calls.map((c) => c.body)).toEqual([
+      { repositories: ["site-one"], permissions: { contents: "write" } },
+      { repositories: ["site-two"], permissions: { contents: "write" } },
+      { repositories: ["site-one"], permissions: { contents: "read" } },
+      { repositories: ["site-one"], permissions: { contents: "write", administration: "write" } },
+      { repositories: ["site-one"], permissions: { contents: "write" } },
+    ]);
+  });
+
   it("says when the app is no longer installed", async () => {
     const gh = fakeFetch({});
     await expect(
@@ -326,16 +373,49 @@ describe("giving a site a repository", () => {
     ).rejects.toThrow(/name is taken/);
   });
 
+  const linkRoutes = (head: [number, unknown], size = 0) => ({
+    [`POST ${installationPath}/access_tokens`]: tokenRoute,
+    "GET /installation/repositories": (): [number, unknown] => [
+      200,
+      { total_count: 1, repositories: [{ full_name: "Sam/Acme-Site", private: true }] },
+    ],
+    "GET /repos/Sam/Acme-Site": (): [number, unknown] => [
+      200,
+      { full_name: "Sam/Acme-Site", default_branch: "main", size },
+    ],
+    "GET /repos/Sam/Acme-Site/git/ref/heads/main": (): [number, unknown] => head,
+  });
+
+  it("refuses to link a repository that already has files", async () => {
+    await addSite("site-1");
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    for (const [head, size] of [
+      [[200, { object: { sha: "abc" } }], 0],
+      [[404, { message: "Not Found" }], 12],
+    ] as [[number, unknown], number][]) {
+      const gh = fakeFetch(linkRoutes(head, size));
+      await expect(
+        ensureSiteRepo(deps({ github: gh.fetch }), ctx("owner"), client, {
+          siteId: "site-1",
+          repoFullName: "Sam/Acme-Site",
+        }),
+      ).rejects.toThrow(
+        "Sam/Acme-Site already has files, and each save replaces everything in the repository. Pick an empty repository, or create one.",
+      );
+      // Checked with a read-only token for that repository.
+      expect(gh.of("POST", `${installationPath}/access_tokens`)[1]?.body).toEqual({
+        repositories: ["Acme-Site"],
+        permissions: { contents: "read" },
+      });
+    }
+    expect((await siteRow("site-1"))?.repoFullName).toBeNull();
+    expect(await db.select().from(auditLog)).toEqual([]);
+  });
+
   it("links a repository the installation can see, in any account, once per site", async () => {
     await addSite("site-1");
     await addSite("site-2", "client-2");
-    const gh = fakeFetch({
-      [`POST ${installationPath}/access_tokens`]: tokenRoute,
-      "GET /installation/repositories": () => [
-        200,
-        { total_count: 1, repositories: [{ full_name: "Sam/Acme-Site", private: true }] },
-      ],
-    });
+    const gh = fakeFetch(linkRoutes([409, { message: "Git Repository is empty." }]));
     const d = deps({ github: gh.fetch });
     expect(await listInstallationRepos(d, ctx("owner"))).toEqual([
       { fullName: "Sam/Acme-Site", private: true },
@@ -357,6 +437,52 @@ describe("giving a site a repository", () => {
     await expect(
       ensureSiteRepo(d, ctx("owner"), other, { siteId: "site-2", repoFullName: "Sam/Acme-Site" }),
     ).rejects.toThrow(/already another site's/);
+  });
+
+  it("holds one repository per site, and one site per repository, under concurrent requests", async () => {
+    await addSite("site-1");
+    await addSite("site-2", "client-2");
+    await addSite("site-3");
+    const d = deps({ github: createStubGithub(), appId: STUB_GITHUB_APP_ID });
+    const c1 = await authorizeClient(db, ctx("owner"), "client-1");
+    const c2 = await authorizeClient(db, ctx("owner"), "client-2");
+
+    // Two sites racing for the same repository: one gets it.
+    const linked = await Promise.allSettled([
+      ensureSiteRepo(d, ctx("owner"), c1, {
+        siteId: "site-1",
+        repoFullName: STUB_GITHUB_EMPTY_REPO,
+      }),
+      ensureSiteRepo(d, ctx("owner"), c2, {
+        siteId: "site-2",
+        repoFullName: STUB_GITHUB_EMPTY_REPO,
+      }),
+    ]);
+    expect(linked.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const lost = linked.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(lost.reason).toBeInstanceOf(ConnectError);
+    expect(String(lost.reason)).toMatch(/already another site's/);
+    const owners = await db
+      .select()
+      .from(site)
+      .where(eq(site.repoFullName, STUB_GITHUB_EMPTY_REPO));
+    expect(owners).toHaveLength(1);
+
+    // One site, two repositories asked for at once: it keeps the first, both callers see it.
+    const both = await Promise.all([
+      ensureSiteRepo(d, ctx("owner"), c1, { siteId: "site-3", name: "race-a" }),
+      ensureSiteRepo(d, ctx("owner"), c1, { siteId: "site-3", name: "race-b" }),
+    ]);
+    const stored = (await siteRow("site-3"))?.repoFullName;
+    expect(stored).toMatch(/\/race-[ab]$/);
+    expect(both.map((r) => r.repoFullName)).toEqual([stored, stored]);
+    const audits = await db.select().from(auditLog).where(eq(auditLog.action, "site.repo.create"));
+    expect(audits).toHaveLength(1);
+  });
+
+  it("refuses a second site on a repository at the database too", async () => {
+    await addSite("site-1", "client-1", { repoFullName: "acme/one" });
+    await expect(addSite("site-2", "client-2", { repoFullName: "acme/one" })).rejects.toThrow();
   });
 
   it("needs GitHub connected", async () => {
@@ -563,6 +689,46 @@ describe("committing a version", () => {
     ).rejects.toThrow(/changed while saving/);
   });
 
+  it("takes parentSha null to mean the repository should still be empty", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    const busy = gitRoutes(200);
+    await expect(
+      commitSiteVersion(deps({ github: busy.fetch }), client, {
+        siteId: "site-1",
+        files,
+        message: "v1",
+        parentSha: null,
+      }),
+    ).rejects.toThrow(/changed since/);
+    expect(busy.of("POST", `${repo}/git/trees`)).toHaveLength(0);
+
+    const empty = gitRoutes(409, {
+      [`PUT ${repo}/contents/app/page.tsx`]: () => [201, { commit: { sha: "seed-1" } }],
+    });
+    await commitSiteVersion(deps({ github: empty.fetch }), client, {
+      siteId: "site-1",
+      files,
+      message: "v1",
+      parentSha: null,
+    });
+    expect(empty.of("POST", `${repo}/git/commits`)).toHaveLength(1);
+  });
+
+  it("keeps a file marked executable executable", async () => {
+    const gh = gitRoutes(200);
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await commitSiteVersion(deps({ github: gh.fetch }), client, {
+      siteId: "site-1",
+      files: [
+        { path: "scripts/build.sh", content: "#!/bin/sh\n", executable: true },
+        { path: "README.md", content: "hi" },
+      ],
+      message: "v2",
+    });
+    const body = gh.of("POST", `${repo}/git/trees`)[0]?.body as { tree: { mode: string }[] };
+    expect(body.tree.map((t) => t.mode)).toEqual(["100755", "100644"]);
+  });
+
   it("refuses unsafe paths before calling GitHub", async () => {
     const gh = gitRoutes(200);
     const client = await authorizeClient(db, ctx("owner"), "client-1");
@@ -599,7 +765,33 @@ describe("deploying a site on Vercel", () => {
       "POST /v13/deployments": () => [200, { id: "dpl_1", readyState: "QUEUED" }],
       "GET /v6/deployments": () => [
         200,
-        { deployments: [{ url: "acme-dental.vercel.app", readyState: "READY", created: 1 }] },
+        {
+          deployments: [
+            {
+              // The deployment's own address, behind deployment protection: never the site's.
+              url: "acme-dental-k2j4h6g8f-agency.vercel.app",
+              readyState: "READY",
+              target: "production",
+              created: 1,
+            },
+          ],
+        },
+      ],
+      "GET /v9/projects/prj_new": () => [
+        200,
+        {
+          id: "prj_new",
+          name: "acme-dental",
+          targets: {
+            production: {
+              alias: [
+                "www.acme.example",
+                "acme-dental-agency.vercel.app",
+                "acme-dental.vercel.app",
+              ],
+            },
+          },
+        },
       ],
       ...extra,
     });
@@ -644,10 +836,102 @@ describe("deploying a site on Vercel", () => {
     });
     expect(v.of("GET", "/v6/deployments")[0]?.url.searchParams.get("projectId")).toBe("prj_new");
     expect(v.of("GET", "/v6/deployments")[0]?.url.searchParams.get("limit")).toBe("1");
+    expect(v.of("GET", "/v6/deployments")[0]?.url.searchParams.get("target")).toBe("production");
     expect(await siteRow("site-1")).toMatchObject({
       deployUrl: "https://acme-dental.vercel.app",
       status: "deployed",
     });
+  });
+
+  it("shows the production address, not a protected deployment URL, and ignores previews", async () => {
+    await addSite("site-1", "client-1", {
+      repoFullName: "acme/site",
+      host: "vercel",
+      hostProjectId: "prj_new",
+      status: "deployed",
+      deployUrl: "https://acme-dental.vercel.app",
+    });
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+
+    // A project without aliases: `<name>.vercel.app`.
+    const bare = vercelRoutes({
+      "GET /v9/projects/prj_new": () => [200, { id: "prj_new", name: "acme-site" }],
+    });
+    expect((await latestDeployment(deps({ vercel: bare.fetch }), client, "site-1"))?.url).toBe(
+      "https://acme-site.vercel.app",
+    );
+    expect((await siteRow("site-1"))?.deployUrl).toBe("https://acme-site.vercel.app");
+
+    // A failed preview is not the live site: nothing changes.
+    const preview = vercelRoutes({
+      "GET /v6/deployments": () => [
+        200,
+        { deployments: [{ url: "acme-site-git-x.vercel.app", state: "ERROR", target: "preview" }] },
+      ],
+    });
+    expect(await latestDeployment(deps({ vercel: preview.fetch }), client, "site-1")).toBeNull();
+    expect(await siteRow("site-1")).toMatchObject({
+      status: "deployed",
+      deployUrl: "https://acme-site.vercel.app",
+    });
+
+    // While a new production build runs, the address already live.
+    const building = vercelRoutes({
+      "GET /v6/deployments": () => [
+        200,
+        {
+          deployments: [{ url: "acme-site-b.vercel.app", state: "BUILDING", target: "production" }],
+        },
+      ],
+    });
+    expect(await latestDeployment(deps({ vercel: building.fetch }), client, "site-1")).toEqual({
+      state: "BUILDING",
+      url: "https://acme-site.vercel.app",
+      createdAt: null,
+    });
+  });
+
+  it("tries a suffixed project name when the team already has one by that name", async () => {
+    await addSite("site-1", "client-1", { repoFullName: "acme/site" });
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    const v = vercelRoutes({
+      "POST /v11/projects": (call) =>
+        (call.body as { name: string }).name === "site"
+          ? [409, { error: { code: "conflict", message: "Project already exists" } }]
+          : [200, { id: "prj_new", name: (call.body as { name: string }).name }],
+    });
+    const row = await ensureSiteDeployment(deps({ vercel: v.fetch }), ctx("owner"), client, {
+      siteId: "site-1",
+    });
+    expect(row.hostProjectId).toBe("prj_new");
+    expect(v.of("POST", "/v11/projects").map((c) => (c.body as { name: string }).name)).toEqual([
+      "site",
+      "site-site1",
+    ]);
+
+    await addSite("site-2", "client-1", { repoFullName: "acme/site" + "-two" });
+    const full = vercelRoutes({
+      "POST /v11/projects": () => [409, { error: { code: "conflict", message: "exists" } }],
+    });
+    await expect(
+      ensureSiteDeployment(deps({ vercel: full.fetch }), ctx("owner"), client, {
+        siteId: "site-2",
+      }),
+    ).rejects.toThrow(/already has projects named site-two and site-two-site2/);
+  });
+
+  it("keeps Vercel's own message for an unrelated refusal", async () => {
+    await addSite("site-1", "client-1", { repoFullName: "acme/site" });
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    const v = vercelRoutes({
+      "POST /v11/projects": () => [
+        400,
+        { error: { code: "bad_request", message: "Invalid request: `framework` is not valid." } },
+      ],
+    });
+    await expect(
+      ensureSiteDeployment(deps({ vercel: v.fetch }), ctx("owner"), client, { siteId: "site-1" }),
+    ).rejects.toThrow("Vercel: Invalid request: `framework` is not valid.");
   });
 
   it("doesn't ask for a deployment before anything is committed", async () => {
@@ -687,7 +971,10 @@ describe("deploying a site on Vercel", () => {
     await addSite("site-1", "client-1", { repoFullName: "acme/site", status: "pushed" });
     await addSite("site-2");
     const v = vercelRoutes({
-      "GET /v6/deployments": () => [200, { deployments: [{ url: null, state: "ERROR" }] }],
+      "GET /v6/deployments": () => [
+        200,
+        { deployments: [{ url: null, state: "ERROR", target: "production" }] },
+      ],
     });
     const client = await authorizeClient(db, ctx("owner"), "client-1");
     expect(await latestDeployment(deps({ vercel: v.fetch }), client, "site-1")).toBeNull();
