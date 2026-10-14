@@ -1,10 +1,17 @@
-import { GhlError, type GhlSession, GhlUsageError } from "@locus/ghl";
+import {
+  GhlError,
+  type GhlRateLimiter,
+  type GhlSession,
+  GhlUsageError,
+  sharedRateLimiter,
+} from "@locus/ghl";
 import { catalog } from "@locus/skills";
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
 import { QueryError, type QueryLimits, runQuery } from "./query-data.ts";
 import type { WriteGuard } from "./test-mode.ts";
+import type { RunTaint } from "./untrusted.ts";
 
 export interface ToolDeps {
   /** Resolved server-side from the signed-in user. The model can never change it. */
@@ -13,6 +20,10 @@ export interface ToolDeps {
   limits?: Partial<QueryLimits>;
   /** Test-write mode for a real client's account; see `test-mode.ts`. */
   writeGuard?: WriteGuard;
+  /** The client's GHL burst budget. Defaults to the one shared by the whole process. */
+  rateLimiter?: GhlRateLimiter;
+  /** Set by the run's `UntrustedContentProcessor`; a tainted run approves every write. */
+  taint?: RunTaint;
 }
 
 const categories = catalog.map((skill) => skill.category) as [string, ...string[]];
@@ -33,6 +44,7 @@ const requestInput = z
  * client and nothing the model says can point them elsewhere.
  */
 export function createLocusTools(deps: ToolDeps) {
+  const rateLimiter = deps.rateLimiter ?? sharedRateLimiter;
   const loadSkillTool = createTool({
     id: "load_skill",
     description:
@@ -76,6 +88,7 @@ export function createLocusTools(deps: ToolDeps) {
           session: deps.session,
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
           ...(deps.limits ? { limits: deps.limits } : {}),
+          rateLimiter,
         }),
       ),
   });
@@ -89,13 +102,14 @@ export function createLocusTools(deps: ToolDeps) {
       operation: z.string().describe("Operation id, e.g. contacts.create-contact"),
       params: requestInput.optional(),
     }),
-    requireApproval: ({ operation }) => needsApproval(operation),
+    requireApproval: ({ operation }) => deps.taint?.tainted === true || needsApproval(operation),
     execute: async (input) =>
       recoverable(() =>
         performAction(input, {
           session: deps.session,
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
           ...(deps.writeGuard ? { writeGuard: deps.writeGuard } : {}),
+          rateLimiter,
         }),
       ),
   });

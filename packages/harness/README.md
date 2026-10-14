@@ -25,6 +25,22 @@ Mistakes the model can fix (an unknown operation, a bad chain, a GHL 4xx) come b
 `query_data` uses an in-memory libSQL database per call, created and thrown away. Nested
 objects are stored as JSON text — query them with `json_extract`.
 
+## GoHighLevel data is untrusted
+
+Form submissions, messages and notes are written by the public, so a tool result can carry
+text aimed at the agent. `UntrustedContentProcessor` (Mastra `processToolResult`) screens every
+GHL-derived result before the model or memory sees it: strings that read like instructions are
+replaced with a `withheld` marker and the model is told how many. From then on the run is
+*tainted* and every `perform_action` waits for a person's approval, whatever the operation.
+No model is involved, so this costs nothing per call.
+
+## Rate limit
+
+Every request goes through the client's burst budget in `@locus/ghl` (`sharedRateLimiter`, 90
+per 10 s per location, under GHL's 100). Callers wait for a slot instead of failing. A 429
+pauses that client's whole budget for as long as GHL asks; the request that got it fails as a
+normal `{ error }` and is not retried in a loop. The budget is per process.
+
 ## Test-write mode
 
 The only way to write to a real client's account while testing. Pass a guard to the tools or
@@ -43,8 +59,7 @@ first, and is safe to repeat.
 
 ## Not here yet
 
-- A shared GHL rate-limit budget across agents (100 req / 10 s per location).
+- A rate-limit budget shared across serverless instances (today it is per process).
 - Cursor pagination (`after`, `cursor`, `startAfter`) — reported as incomplete for now.
 - Subagents per task or per client.
-- The prompt-injection processor on tool results.
 - Site Studio's workspace tools.
