@@ -340,7 +340,8 @@ export const pooledUsers = (locationId: string) => pool.get(locationId)?.users ?
 
 /**
  * Site sandboxes from the environment: Vercel Sandbox with `LOCUS_SANDBOX_TOKEN`,
- * `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`; otherwise the in-memory fake outside
+ * `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`, or on a Vercel deployment with its own
+ * OIDC token (see `sandboxFromEnv`); otherwise the in-memory fake outside
  * production (commands succeed and run nothing, like the other stubs). In production without
  * them, sandbox tools answer that previews aren't set up; the setting names go to the log only.
  */
@@ -353,7 +354,7 @@ export function runtimesFromEnv(
   return {
     async open() {
       console.error(
-        "Locus is not configured: LOCUS_SANDBOX_TOKEN, LOCUS_SANDBOX_TEAM_ID or LOCUS_SANDBOX_PROJECT_ID is not set",
+        "Locus is not configured: no Vercel OIDC token, and LOCUS_SANDBOX_TOKEN, LOCUS_SANDBOX_TEAM_ID or LOCUS_SANDBOX_PROJECT_ID is not set",
       );
       throw new BuilderError("Site previews aren't set up on this deployment.");
     },
