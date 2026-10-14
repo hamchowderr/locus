@@ -11,6 +11,11 @@ license: Proprietary (Otaku Solutions)
   forwards the submission, server to server, to Locus, which puts it in the client's CRM: the
   contact is created or updated, tagged "website lead" and "website form: <form>", and the
   message and any extra answers are added as a note.
+- When the email or phone matches a contact already in the CRM, that contact is updated:
+  the name, phone and company name the form sends replace what the CRM had. Tags are added,
+  never removed. Ask only for details the business is happy to have updated this way.
+- If a visitor resends after an error, the contact is matched again, but the note can be added
+  twice when the first try did reach the CRM.
 - Every site already has the route and `lib/locus.ts`. Don't edit, move or delete either:
   Locus rewrites `lib/locus.ts` with the site's endpoint each time the site is published. In a
   draft or preview it is null and the route answers `{ ok: true, preview: true }` without

@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  deriveSecretsSubkey,
   generateSecretsKey,
   LocalSecretStore,
   MemorySecretStore,
@@ -58,5 +59,20 @@ describe("secret stores", () => {
     expect(store).toBeInstanceOf(MemorySecretStore);
     expect(cipher).toBeInstanceOf(SecretCipher);
     expect(() => secretsFromEnv(options, { LOCUS_SECRETS: "infisical" })).toThrow(/LOCUS_SECRETS/);
+  });
+});
+
+describe("deriveSecretsSubkey", () => {
+  it("derives a stable 32-byte key per label, unrelated to the sealing key", () => {
+    const LOCUS_SECRETS_KEY = generateSecretsKey();
+    const env = { LOCUS_SECRETS_KEY };
+    const a = deriveSecretsSubkey("locus/site-lead-ip", env);
+    expect(a).toHaveLength(32);
+    expect(deriveSecretsSubkey("locus/site-lead-ip", env).equals(a)).toBe(true);
+    expect(deriveSecretsSubkey("locus/other", env).equals(a)).toBe(false);
+    expect(a.equals(Buffer.from(LOCUS_SECRETS_KEY, "base64"))).toBe(false);
+    const other = { LOCUS_SECRETS_KEY: generateSecretsKey() };
+    expect(deriveSecretsSubkey("locus/site-lead-ip", other).equals(a)).toBe(false);
+    expect(() => deriveSecretsSubkey("locus/site-lead-ip", {})).toThrow(/LOCUS_SECRETS_KEY/);
   });
 });

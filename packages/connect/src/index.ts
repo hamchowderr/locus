@@ -52,11 +52,13 @@ export {
   type SiteFile,
 } from "./publish.ts";
 export {
+  hashVisitorIp,
   LEAD_ELAPSED_FIELD,
   LEAD_HONEYPOT_FIELD,
   leadTags,
   MAX_LEAD_BODY_BYTES,
   parseLead,
+  readLeadBody,
   SITE_LEAD_LIMITS,
   type SiteLeadDeps,
   type SiteLeadInput,
