@@ -352,6 +352,41 @@ export async function removeSiteDomain(
   });
 }
 
+/**
+ * Takes a linked Vercel project off the client, e.g. after the project was deleted on Vercel.
+ * Owners and admins only, and only once its domain is removed. Nothing changes on Vercel. A site
+ * made only by linking is deleted; one with a repository keeps its row, without the project.
+ */
+export async function unlinkHostProject(
+  deps: SiteDeps,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<void> {
+  assertAuthorizedClient(client);
+  await requireAgencyManager(deps.db, ctx);
+  const [row] = await deps.db
+    .select()
+    .from(site)
+    .where(and(eq(site.id, siteId), eq(site.locationId, client.location.id)));
+  if (!row) throw new ConnectError("That site isn't one of this client's.");
+  if (row.customDomain) {
+    throw new ConnectError(`Remove ${row.customDomain} from this site first.`);
+  }
+  if (row.repoFullName) {
+    await deps.db
+      .update(site)
+      .set({ host: null, hostProjectId: null, deployUrl: null, status: "pushed" })
+      .where(eq(site.id, row.id));
+  } else {
+    await deps.db.delete(site).where(eq(site.id, row.id));
+  }
+  await audit(deps.db, ctx, client, "site.unlink", {
+    siteId: row.id,
+    projectId: row.hostProjectId,
+  });
+}
+
 export async function audit(
   db: ControlDb,
   ctx: SessionContext,
