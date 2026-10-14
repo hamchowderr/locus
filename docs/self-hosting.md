@@ -10,6 +10,9 @@ every outside service has a stand-in outside production.
 ## What a deployment is
 
 - **One web app**, `apps/web` (Next.js), which serves both the product and its API.
+- **One agent server**, `apps/agent`, a long-running process for the AI chat. The web app
+  forwards `/api/agent/*` to it when `LOCUS_AGENT_URL` is set; see its
+  [README](../apps/agent/README.md) for its settings.
 - **One control database** (Turso / libSQL): accounts, agencies, the client registry, staff
   access, connections, sites, billing state, rate-limit counters, and agencies' tokens, sealed.
 - **One database per client**, created on demand through the Turso Platform API.
@@ -60,6 +63,7 @@ deployment is not considered set up without it.
 | `STRIPE_SECRET_KEY` | no | Turns billing on. Unset means billing is off and agencies are not limited |
 | `STRIPE_WEBHOOK_SECRET` | with Stripe | The signing secret of your Stripe webhook endpoint |
 | `LOCUS_OPERATORS` | no | Comma-separated emails of the deployment's operators (verified accounts only). Unset means nobody can open `/operator` |
+| `LOCUS_AGENT_URL` | for the chat | The agent server's address, e.g. `https://agent.example.com`. Unset means the chat has no backend |
 
 The `GHL_MODE`, `GITHUB_MODE` and `VERCEL_MODE` switches exist so development can use
 stand-ins; in production leave them unset or set them to `live`. Set to `stub` in production,

@@ -1,0 +1,29 @@
+{
+  "name": "@locus/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@hono/node-server": "1.19.17",
+    "@libsql/client": "0.18.0",
+    "@locus/agent-api": "workspace:*",
+    "@locus/auth": "workspace:*",
+    "@locus/connect": "workspace:*",
+    "@locus/db": "workspace:*",
+    "@locus/harness": "workspace:*",
+    "@locus/secrets": "workspace:*",
+    "@mastra/core": "1.75.0",
+    "@mastra/libsql": "1.25.1"
+  },
+  "devDependencies": {
+    "@locus/testing": "workspace:*",
+    "@mastra/client-js": "1.52.0",
+    "@types/node": "22.20.5",
+    "vitest": "5.0.3"
+  }
+}
