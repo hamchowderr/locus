@@ -33,7 +33,7 @@ import {
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { createLocusAgent, type LocusAgentConfig } from "./agent.ts";
 import { type ConversationStore, clientResource } from "./conversation.ts";
-import type { ToolDeps } from "./tools.ts";
+import type { RunContext, ToolDeps } from "./tools.ts";
 
 export const CONTROLLER_ID = "locus";
 
@@ -69,7 +69,8 @@ export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   /** The client this controller serves. */
   locationId: string;
   /** A current location token for that client, minted server-side. Called per tool call. */
-  session: () => Promise<GhlSession>;
+  /** Called for each GHL call, with the run's request context (see `ToolDeps.session`). */
+  session: (requestContext?: RunContext) => Promise<GhlSession>;
   /** The client's own conversation store. */
   storage: ConversationStore;
   /** Further modes (for example the site engine's), after Locus's own. */
@@ -96,8 +97,8 @@ export async function createLocusController({
   ...deps
 }: LocusControllerConfig): Promise<AgentController> {
   const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
-  const checkedSession = async () => {
-    const current = await session();
+  const checkedSession = async (requestContext?: RunContext) => {
+    const current = await session(requestContext);
     // A wiring mistake here would act on the wrong client; fail before any request is sent.
     if (current.tokenKind !== "location" || current.locationId !== locationId) {
       throw new Error(`session is not for client ${locationId}`);

@@ -18,6 +18,55 @@ importers:
         specifier: 7.0.2
         version: 7.0.2
 
+  apps/agent:
+    dependencies:
+      '@hono/node-server':
+        specifier: 1.19.17
+        version: 1.19.17(hono@4.13.13)
+      '@libsql/client':
+        specifier: 0.18.0
+        version: 0.18.0
+      '@locus/agent-api':
+        specifier: workspace:*
+        version: link:../../packages/agent-api
+      '@locus/auth':
+        specifier: workspace:*
+        version: link:../../packages/auth
+      '@locus/connect':
+        specifier: workspace:*
+        version: link:../../packages/connect
+      '@locus/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@locus/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
+      '@locus/secrets':
+        specifier: workspace:*
+        version: link:../../packages/secrets
+      '@mastra/core':
+        specifier: 1.75.0
+        version: 1.75.0(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/libsql':
+        specifier: 1.25.1
+        version: 1.25.1(@mastra/core@1.75.0(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@libsql/client@0.18.0)(kysely@0.29.6)
+    devDependencies:
+      '@locus/testing':
+        specifier: workspace:*
+        version: link:../../packages/testing
+      '@mastra/client-js':
+        specifier: 1.52.0
+        version: 1.52.0(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
   apps/desktop:
     devDependencies:
       '@types/node':
