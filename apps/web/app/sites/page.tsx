@@ -129,7 +129,7 @@ export default async function Sites({
             {gone(s.hostProjectId) && (
               <Notice tone="error">This project is no longer on your Vercel team.</Notice>
             )}
-            {manager && !s.customDomain && (
+            {manager && s.hostProjectId && !s.customDomain && (
               <form action={unlinkSiteProject} className="text-sm">
                 <input type="hidden" name="siteId" value={s.id} />
                 <button type="submit" className="underline">
