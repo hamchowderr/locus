@@ -39,6 +39,7 @@ packages/harness  Mastra loop, query_data, perform_action, subagents
 packages/sandbox  the isolated runtime where Site Studio builds and previews a site
 packages/db       Drizzle schema (control DB + per-client DB) and migrations
 packages/studio   generated sites' source, versions, design brief and templates
+packages/builder  the site-builder agent: its tools, instructions and AgentController mode
 packages/ui       shared shadcn components for web and desktop
 ```
 
