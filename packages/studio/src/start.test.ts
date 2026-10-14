@@ -2,9 +2,17 @@ import type { TenantDb } from "@locus/db";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { briefForAgent, DesignBrief, openQuestions, readBrief } from "./brief.ts";
 import { startSite } from "./start.ts";
-import { renderTemplate, TEMPLATES } from "./templates/index.ts";
+import {
+  readableOn,
+  renderTemplate,
+  SHADCN_COMPONENTS,
+  SITE_STACK,
+  TEMPLATES,
+} from "./templates/index.ts";
 import { tenantDbForTest } from "./test-db.ts";
-import { SiteWorkspace } from "./workspace.ts";
+import { type SiteFile, SiteWorkspace } from "./workspace.ts";
+
+const file = (files: SiteFile[], path: string) => files.find((f) => f.path === path)?.content;
 
 let db: TenantDb;
 let close: () => Promise<void>;
@@ -77,7 +85,40 @@ describe("templates", () => {
         expect(version).toMatch(/^\d+\.\d+\.\d+$/);
       }
       const css = String(files.find((f) => f.path === "app/globals.css")?.content);
-      expect(css).toContain("--color-primary: #0ea5e9");
+      expect(css).toContain("--primary: #0ea5e9");
+      // Dark text reads better on a light sky blue; the brand accent stays separate.
+      expect(css).toContain("--primary-foreground: #0a0a0a");
+      expect(css).toContain("--highlight: #f59e0b");
+      expect(css).toContain('@import "shadcn/tailwind.css"');
+      // shadcn/ui is set up as its manual installation describes, components as source.
+      const components = JSON.parse(String(file(files, "components.json")));
+      expect(components).toMatchObject({
+        aliases: { ui: "@/components/ui", utils: "@/lib/utils" },
+      });
+      expect(file(files, "lib/utils.ts")).toContain('export { cn } from "cn"');
+      for (const name of SHADCN_COMPONENTS) {
+        const source = String(file(files, `components/ui/${name}.tsx`));
+        expect(source).toContain('from "@/lib/utils"');
+      }
+      for (const dep of ["class-variance-authority", "cn", "lucide-react", "radix-ui"]) {
+        expect(pkg.dependencies[dep]).toBe(SITE_STACK[dep as keyof typeof SITE_STACK]);
+      }
+      expect(Object.keys(pkg.devDependencies)).toEqual(
+        expect.arrayContaining(["shadcn", "tw-animate-css"]),
+      );
+      // Every @/components/ui import in the template's own code resolves to a vendored file.
+      for (const f of files) {
+        for (const [, name] of String(f.content).matchAll(/from "@\/components\/ui\/([\w-]+)"/g)) {
+          expect(paths).toContain(`components/ui/${name}.tsx`);
+        }
+      }
+      // Forms keep posting to the site's own route, with labelled fields.
+      const form = file(files, "components/lead-form.tsx");
+      if (form !== undefined) {
+        expect(form).toContain('fetch("/api/lead"');
+        expect(form).toContain('<FieldLabel htmlFor="lead-email">');
+        expect(paths).toContain("app/api/lead/route.ts");
+      }
       const layout = String(files.find((f) => f.path === "app/layout.tsx")?.content);
       expect(layout).toContain("import { Playfair_Display, Inter }");
       // The name is quoted as a string literal, never pasted into code.
@@ -85,6 +126,15 @@ describe("templates", () => {
       expect(site).toContain(`name: "Joe's \\"Best\\" Plumbing"`);
     },
   );
+});
+
+describe("readableOn", () => {
+  it("picks the text colour with more contrast", () => {
+    expect(readableOn("#1d4ed8")).toBe("#ffffff");
+    expect(readableOn("#0f172a")).toBe("#ffffff");
+    expect(readableOn("#f59e0b")).toBe("#0a0a0a");
+    expect(readableOn("#ffffff")).toBe("#0a0a0a");
+  });
 });
 
 describe("brief", () => {

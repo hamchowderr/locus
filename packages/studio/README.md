@@ -36,11 +36,21 @@ carries a secret. Files are capped at 4 MB and sites at 2,000 files.
 
 ## Templates
 
-Every site is a Next.js App Router project (TypeScript, Tailwind CSS) on the same versions as
-`apps/web` (`SITE_STACK`). `TEMPLATES` adds starting pages on top of `baseFiles`: blank, landing
-page, local business, lead funnel and portfolio. Brand colours and fonts from the brief become
-Tailwind theme tokens and `next/font` faces. Forms post to the site's own `/api/lead` route,
-which Locus connects to the client's CRM.
+Every site is a Next.js App Router project (TypeScript, Tailwind CSS, shadcn/ui). Next, React
+and Tailwind are on the same versions as `apps/web`; the shadcn packages are the ones its manual
+installation names (`cn`, `class-variance-authority`, `lucide-react`, `radix-ui`, and `shadcn`
+plus `tw-animate-css` for the CSS), all pinned in `SITE_STACK`. `TEMPLATES` adds starting pages
+on top of `baseFiles`: blank, landing page, local business, lead funnel and portfolio.
+
+shadcn/ui is set up as source, the way the CLI would leave it: `components.json`, `lib/utils.ts`
+(`cn`), and the components in `SHADCN_COMPONENTS` (accordion, badge, button, card, field, input,
+label, separator, sheet, textarea) under `components/ui/`, vendored in `src/templates/shadcn.ts`
+from shadcn's new-york style. The header's mobile menu is a Sheet and the lead form is built from
+Field parts. Brand colours from the brief become shadcn's CSS variables in `app/globals.css`
+(`--primary`, with a readable `--primary-foreground`; the brand accent as `--highlight`), surface
+tones are mixed from the background and foreground, and the fonts are `next/font` faces. Forms
+post to the site's own `/api/lead` route, which Locus connects to the client's CRM. The builder
+adds further components from the shadcn registry (`add_dependency` with a `component`).
 
 ## Design brief
 
