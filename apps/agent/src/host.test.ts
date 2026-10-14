@@ -8,6 +8,7 @@ import { location, member, organization, user } from "@locus/db/control";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createHost, PREFIX } from "./host.ts";
 
@@ -64,8 +65,38 @@ async function agency() {
   return { connect, client: first, sessions };
 }
 
+/** A second agency holding a row for the same GHL location, with its own database. */
+async function secondAgencyFor(
+  connect: { provisioner: LocalProvisioner },
+  ghlLocationId: string,
+): Promise<SessionContext> {
+  await db.insert(organization).values({ id: "org2", name: "Org2", slug: "org2", createdAt: now });
+  await db
+    .insert(user)
+    .values({ id: "owner2", name: "o2", email: "o2@b.test", emailVerified: true });
+  await db.insert(member).values({
+    id: "m-owner2",
+    userId: "owner2",
+    organizationId: "org2",
+    role: "owner",
+    createdAt: now,
+  });
+  const { dbName, hostname } = await connect.provisioner.create("other");
+  await db.insert(location).values({
+    id: "client-b",
+    organizationId: "org2",
+    ghlLocationId,
+    name: "Same sub-account",
+    tursoDbName: dbName,
+    tursoDbHostname: hostname,
+    status: "active",
+  });
+  return { id: "s3", userId: "owner2", activeOrganizationId: "org2", activeLocationId: "client-b" };
+}
+
 async function hostFor(signedIn: { as: string | null }) {
   const { connect, client, sessions } = await agency();
+  sessions.owner2 = await secondAgencyFor(connect, client.ghlLocationId);
   const ghl = createFakeGhl({ "*": { body: {} } });
   const host = createHost({
     db,
@@ -73,6 +104,7 @@ async function hostFor(signedIn: { as: string | null }) {
     connect,
     model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
     fetch: ghl.fetch,
+    origin: "http://locus.test",
   });
   const chat = new MastraClient({
     baseUrl: "http://agent.test",
@@ -151,5 +183,75 @@ describe("the agent server", () => {
       new Request(`http://agent.test${PREFIX}/agent-controller/locus/modes`),
     );
     expect(res.status).toBe(401);
+  });
+
+  test("two agencies holding the same GHL location never share a conversation", async () => {
+    const signedIn = { as: "owner" as string | null };
+    const { chat, client } = await hostFor(signedIn);
+    const resource = `client:${client.ghlLocationId}`;
+    const mine = chat.getAgentController("locus").session(resource);
+    await mine.create();
+    const thread = await mine.createThread("Agency A's plans");
+
+    signedIn.as = "owner2";
+    const theirs = chat.getAgentController("locus").session(resource);
+    await theirs.create();
+    const listed = JSON.stringify(await theirs.listThreads());
+    expect(listed).not.toContain(thread.id);
+    expect(listed).not.toContain("Agency A's plans");
+  });
+
+  test("a change waiting in a client that is then suspended can't be approved", async () => {
+    mock().llm.on(
+      { userMessage: /delete contact c9/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "h9-del",
+            name: "perform_action",
+            arguments: JSON.stringify({
+              operation: "contacts.delete-contact",
+              params: { path: { contactId: "c9" } },
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "h9-del" }, { content: "Done." });
+    const { chat, ghl, client } = await hostFor({ as: "owner" });
+    const session = chat.getAgentController("locus").session(`client:${client.ghlLocationId}`);
+    await session.create();
+    const waiting = new Promise<void>((resolve) => {
+      void session.subscribe({
+        onEvent: (event) => {
+          if ((event as { type: string }).type === "tool_approval_required") resolve();
+        },
+      });
+    });
+    await session.sendMessage("Delete contact c9");
+    await waiting;
+    await db.update(location).set({ status: "suspended" }).where(eq(location.id, client.id));
+
+    await expect(session.approveTool("h9-del", true)).rejects.toThrow(/401/);
+    expect(ghl.requests).toEqual([]);
+  });
+
+  test("posts must be JSON from the web app's own pages, and small", async () => {
+    const { host, client } = await hostFor({ as: "owner" });
+    const url = `http://agent.test${PREFIX}/agent-controller/locus/sessions`;
+    const body = JSON.stringify({ resourceId: `client:${client.ghlLocationId}` });
+    const post = (headers: Record<string, string>, data: string = body) =>
+      host.fetch(new Request(url, { method: "POST", headers, body: data }));
+    expect(
+      (await post({ "content-type": "application/json", origin: "https://evil.test" })).status,
+    ).toBe(403);
+    expect((await post({ "content-type": "text/plain", origin: "http://locus.test" })).status).toBe(
+      415,
+    );
+    const huge = JSON.stringify({ resourceId: "x".repeat(1_100_000) });
+    expect((await post({ "content-type": "application/json" }, huge)).status).toBe(413);
+    expect(
+      (await post({ "content-type": "application/json", origin: "http://locus.test" })).status,
+    ).toBe(200);
   });
 });

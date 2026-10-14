@@ -9,6 +9,7 @@ import { createClient } from "@libsql/client";
 import { createAgentApi } from "@locus/agent-api";
 import {
   type AuthorizedClient,
+  authorizeClient,
   createAuth,
   mintClientDbToken,
   resolveActiveClient,
@@ -74,6 +75,8 @@ export interface HostDeps {
   model: MastraModelConfig;
   /** GHL's API; tests pass a fake. */
   fetch?: typeof fetch;
+  /** The web app's origin, the only one whose pages may post to the agent. */
+  origin: string;
 }
 
 export function hostDepsFromEnv(env: Env = process.env): HostDeps {
@@ -108,41 +111,52 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
       ghl: { ...config.ghl, redirectUri: `${config.authUrl}/api/connect/crm/callback`, scopes: [] },
     },
     model: config.model,
+    origin: new URL(config.authUrl).origin,
   };
 }
 
-export function createHost({ db, session, connect, model, fetch }: HostDeps) {
-  // The latest staff-checked client for each GHL location. Its GHL token and database token
-  // carry no user identity, so any member's check will do; every request is checked again.
-  const clients = new Map<string, AuthorizedClient>();
+/** The largest request body the agent reads; a chat message is far smaller. */
+const MAX_BODY_BYTES = 1_000_000;
+
+export function createHost({ db, session, connect, model, fetch, origin }: HostDeps) {
+  // The member who last opened each client (keyed by Locus's client id, never the GHL location
+  // id, which more than one agency can hold). Before any GHL or database token is minted for
+  // the client, their staff check runs again, so a removed member or a suspended client stops
+  // getting tokens even for a run already under way.
+  const openedBy = new Map<string, SessionContext>();
+  const authorized = async (clientId: string): Promise<AuthorizedClient> => {
+    const ctx = openedBy.get(clientId);
+    if (!ctx) throw new Error("this client has not been opened");
+    return authorizeClient(db, ctx, clientId);
+  };
 
   const api = createAgentApi({
     prefix: PREFIX,
     authorize: async (request) => {
       const ctx = await session(request.headers);
       if (!ctx) return null;
+      let client: AuthorizedClient;
       try {
-        const client = await resolveActiveClient(db, ctx);
-        clients.set(client.location.ghlLocationId, client);
-        return { memberId: client.memberId, locationId: client.location.ghlLocationId };
+        client = await resolveActiveClient(db, ctx);
       } catch {
         return null;
       }
-    },
-    controllerFor: async (locationId) => {
-      const client = () => {
-        const current = clients.get(locationId);
-        if (!current) throw new Error(`no authorized client for ${locationId}`);
-        return current;
+      openedBy.set(client.location.id, ctx);
+      return {
+        memberId: client.memberId,
+        locationId: client.location.ghlLocationId,
+        clientId: client.location.id,
       };
-      const { location } = client();
+    },
+    controllerFor: async ({ clientId, locationId }) => {
+      const { location } = await authorized(clientId);
       const storage = new LibSQLStore({
         id: `client-${location.id}`,
         client: refreshingClient(
           async () =>
             createClient({
               url: connect.provisioner.url(location.tursoDbHostname),
-              authToken: await mintClientDbToken(connect.provisioner, client(), {
+              authToken: await mintClientDbToken(connect.provisioner, await authorized(clientId), {
                 ttl: DB_TOKEN_TTL,
               }),
             }),
@@ -154,7 +168,7 @@ export function createHost({ db, session, connect, model, fetch }: HostDeps) {
       return createLocusController({
         model,
         locationId,
-        session: () => clientGhlSession(connect, client()),
+        session: async () => clientGhlSession(connect, await authorized(clientId)),
         storage,
         ...(fetch ? { fetch } : {}),
       });
@@ -165,7 +179,29 @@ export function createHost({ db, session, connect, model, fetch }: HostDeps) {
     async fetch(request: Request): Promise<Response> {
       const { pathname } = new URL(request.url);
       if (pathname === "/health") return new Response("ok");
-      return api.fetch(request);
+      if (!request.body) return api.fetch(request);
+      // The session cookie authenticates these, so only the web app's pages may send them, and
+      // only as JSON: a cross-site form or text/plain post can't.
+      const from = request.headers.get("origin");
+      if (from && from !== origin) return Response.json({ error: "wrong origin" }, { status: 403 });
+      if (!request.headers.get("content-type")?.startsWith("application/json")) {
+        return Response.json({ error: "send JSON" }, { status: 415 });
+      }
+      const body = await readCapped(request.body, MAX_BODY_BYTES);
+      if (!body) return Response.json({ error: "too large" }, { status: 413 });
+      return api.fetch(new Request(request, { body }));
     },
   };
+}
+
+/** The whole stream, or null as soon as it passes `max` bytes. */
+async function readCapped(stream: ReadableStream<Uint8Array>, max: number) {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for await (const chunk of stream) {
+    size += chunk.byteLength;
+    if (size > max) return null;
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
 }

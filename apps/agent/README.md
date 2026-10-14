@@ -8,7 +8,8 @@ functions.
 The web app forwards `/api/agent/*` here when `LOCUS_AGENT_URL` is set (see
 `apps/web/next.config.ts`). The browser's Better Auth cookie arrives as it does on the web app,
 and the same checks run: the signed-in member, their active agency, and the staff check on their
-active client. Each client's conversations live in that client's own database, reached with a
+active client, and again before any GoHighLevel or database token is minted for a run. Posts
+must be JSON from the web app's own origin, at most 1 MB. Each client's conversations live in that client's own database, reached with a
 token that names only it and is renewed while the server runs.
 
 ## Run
