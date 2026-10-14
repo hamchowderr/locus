@@ -14,7 +14,7 @@ export const SCRIPTED_REPLY =
 
 /** Starts the scripted model on a local port and returns its model config. */
 export async function scriptedModel(): Promise<MastraModelConfig> {
-  const mock = new LLMock({ host: "127.0.0.1", port: 0 });
+  const mock = new LLMock({ host: "127.0.0.1", port: 0, journalMaxEntries: 50 });
   mock.onMessage(/^/, { content: SCRIPTED_REPLY });
   await mock.start();
   return { id: "anthropic/locus-scripted", url: `${mock.url}/v1`, apiKey: SCRIPTED };
