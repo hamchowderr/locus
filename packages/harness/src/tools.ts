@@ -11,19 +11,21 @@ import { z } from "zod";
 import { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
 import { QueryError, type QueryLimits, runQuery } from "./query-data.ts";
 import type { WriteGuard } from "./test-mode.ts";
-import type { RunTaint } from "./untrusted.ts";
+import { isTainted } from "./untrusted.ts";
 
 export interface ToolDeps {
-  /** Resolved server-side from the signed-in user. The model can never change it. */
-  session: GhlSession;
+  /**
+   * Resolved server-side from the signed-in user; the model can never change it. A function is
+   * called for each tool call, so a long-lived host (the agent controller) always uses a
+   * current token.
+   */
+  session: GhlSession | (() => Promise<GhlSession>);
   fetch?: typeof fetch;
   limits?: Partial<QueryLimits>;
   /** Test-write mode for a real client's account; see `test-mode.ts`. */
   writeGuard?: WriteGuard;
   /** The client's GHL burst budget. Defaults to the one shared by the whole process. */
   rateLimiter?: GhlRateLimiter;
-  /** Set by the run's `UntrustedContentProcessor`; a tainted run approves every write. */
-  taint?: RunTaint;
 }
 
 const categories = catalog.map((skill) => skill.category) as [string, ...string[]];
@@ -45,12 +47,16 @@ const requestInput = z
  */
 export function createLocusTools(deps: ToolDeps) {
   const rateLimiter = deps.rateLimiter ?? sharedRateLimiter;
+  const session = async () => (typeof deps.session === "function" ? deps.session() : deps.session);
   const loadSkillTool = createTool({
     id: "load_skill",
     description:
       "Load the guidance and operation index for one GoHighLevel area before using its " +
       "operations. Call it for every area a task touches.",
     inputSchema: z.object({ category: z.enum(categories) }),
+    // Each tool decides its own approval, so a host that asks for approval of every tool call
+    // (the AgentController does) still lets reads through.
+    requireApproval: () => false,
     execute: async ({ category }) => recoverable(() => loadSkill(category)),
   });
 
@@ -82,10 +88,11 @@ export function createLocusTools(deps: ToolDeps) {
         .min(1),
       sql: z.string().describe("One SELECT over the source tables"),
     }),
+    requireApproval: () => false,
     execute: async (spec) =>
-      recoverable(() =>
+      recoverable(async () =>
         runQuery(spec, {
-          session: deps.session,
+          session: await session(),
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
           ...(deps.limits ? { limits: deps.limits } : {}),
           rateLimiter,
@@ -102,11 +109,13 @@ export function createLocusTools(deps: ToolDeps) {
       operation: z.string().describe("Operation id, e.g. contacts.create-contact"),
       params: requestInput.optional(),
     }),
-    requireApproval: ({ operation }) => deps.taint?.tainted === true || needsApproval(operation),
+    // A run that read untrusted content (see `untrusted.ts`) approves every write.
+    requireApproval: ({ operation }, ctx) =>
+      isTainted(ctx?.requestContext) || needsApproval(operation),
     execute: async (input) =>
-      recoverable(() =>
+      recoverable(async () =>
         performAction(input, {
-          session: deps.session,
+          session: await session(),
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
           ...(deps.writeGuard ? { writeGuard: deps.writeGuard } : {}),
           rateLimiter,
