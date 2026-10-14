@@ -1,6 +1,8 @@
+import { Mastra } from "@mastra/core";
 import { Agent } from "@mastra/core/agent";
 import type { MastraModelConfig } from "@mastra/core/llm";
-import { createLocusTools, type ToolDeps } from "./tools.ts";
+import { type ConversationStore, createLocusMemory, ForgetGhlData } from "./conversation.ts";
+import { createLocusTools, type ToolDeps, waitsForApproval } from "./tools.ts";
 import { createRunTaint, UntrustedContentProcessor } from "./untrusted.ts";
 
 /**
@@ -22,22 +24,37 @@ with query_data. Answer briefly and say what you changed.`;
 
 export interface LocusAgentConfig extends Omit<ToolDeps, "taint"> {
   model: MastraModelConfig;
+  /**
+   * The client's own conversation store. With one, the agent keeps message history per thread
+   * and changes waiting for approval survive the request (see `conversation.ts`). Without
+   * one, every request starts from nothing.
+   */
+  storage?: ConversationStore;
 }
 
 /**
  * One agent per request: its tools are bound to that request's session, and the run's taint
- * (see `untrusted.ts`) is shared by its tools and its tool-result processor only.
+ * (see `untrusted.ts`) is shared by its tools and its processor only.
  */
-export function createLocusAgent({ model, ...deps }: LocusAgentConfig) {
+export function createLocusAgent({ model, storage, ...deps }: LocusAgentConfig): Agent {
   const taint = createRunTaint();
   const untrusted = new UntrustedContentProcessor(taint);
-  return new Agent({
+  const tools = createLocusTools({ ...deps, taint });
+  const agent = new Agent({
     id: "locus",
     name: "Locus",
     instructions: INSTRUCTIONS,
     model,
-    tools: createLocusTools({ ...deps, taint }),
+    tools,
     inputProcessors: [untrusted],
-    outputProcessors: [untrusted],
+    // ForgetGhlData runs after the screen and before memory's own processors save the run.
+    outputProcessors: storage
+      ? [untrusted, new ForgetGhlData(waitsForApproval(tools))]
+      : [untrusted],
+    ...(storage ? { memory: createLocusMemory(storage) } : {}),
   });
+  if (!storage) return agent;
+  // Approvals are resumed from a run snapshot, which Mastra keeps in its instance's storage.
+  const mastra = new Mastra({ agents: { locus: agent }, storage, logger: false });
+  return mastra.getAgent("locus");
 }
