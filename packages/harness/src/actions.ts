@@ -3,7 +3,7 @@
  * wrappers over these, so the rules here are tested without a model in the loop.
  */
 
-import { type GhlRequestInput, type GhlSession, ghlRequest } from "@locus/ghl";
+import { type GhlRateLimiter, type GhlRequestInput, type GhlSession, ghlRequest } from "@locus/ghl";
 import { isRead, operationById, type SkillOperation, skillDocs } from "@locus/skills";
 import type { WriteGuard } from "./test-mode.ts";
 
@@ -14,6 +14,7 @@ export class ActionError extends Error {
 export interface ActionDeps {
   session: GhlSession;
   fetch?: typeof fetch;
+  rateLimiter?: GhlRateLimiter | undefined;
   /** Set when writing to a real client's account in testing; see `test-mode.ts`. */
   writeGuard?: WriteGuard | undefined;
 }
@@ -29,6 +30,7 @@ export async function performAction(
     : (input.params ?? {});
   const result = await ghlRequest(op, deps.session, params, {
     ...(deps.fetch ? { fetch: deps.fetch } : {}),
+    rateLimiter: deps.rateLimiter,
   });
   deps.writeGuard?.record(op, params, result);
   return result;

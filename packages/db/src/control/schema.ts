@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
+import { index, integer, primaryKey, sqliteTable, text, unique } from "drizzle-orm/sqlite-core";
 import { member, organization } from "./auth-schema.ts";
 
 // The control database: shared by every agency, and holds nothing about any single client
@@ -75,7 +75,13 @@ export const site = sqliteTable(
       .default("draft"),
     createdAt: createdAt(),
   },
-  (t) => [index("site_location_idx").on(t.locationId)],
+  (t) => [
+    index("site_location_idx").on(t.locationId),
+    // A host project is one site, whichever agency or client links it.
+    unique("site_host_project_unique").on(t.hostProjectId),
+    // Each save replaces the whole repository, so a repository is one site.
+    unique("site_repo_full_name_unique").on(t.repoFullName),
+  ],
 );
 
 // The three connections. Each names its credential by path (`secretRef`); the value lives in
@@ -188,4 +194,91 @@ export const authRateLimit = sqliteTable(
   },
   // Expired keys are deleted by window start.
   (t) => [index("auth_rate_limit_window_start_idx").on(t.windowStart)],
+);
+
+// Usage metering for AI site generation. Credits are integers in hundredths of a credit
+// (`CREDIT = 100` in `@locus/auth`); one credit is $0.01 of provider cost times Locus's markup.
+
+/**
+ * One metered piece of work (an LLM call, AI images, sandbox time) for one client. `location_id`
+ * is not a foreign key, like `audit_log`: an agency's monthly total must not shrink when one of
+ * its clients is offboarded mid-month. `site_id` is not one either, for the same reason.
+ */
+export const usageEvent = sqliteTable(
+  "usage_event",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    locationId: text("location_id").notNull(),
+    siteId: text("site_id"),
+    actorUserId: text("actor_user_id"),
+    kind: text("kind", { enum: ["llm", "image", "sandbox"] }).notNull(),
+    /** Hundredths of a credit. */
+    credits: integer("credits").notNull(),
+    /** The measurement the credits were priced from: model and tokens, image count, seconds. */
+    detail: text("detail", { mode: "json" }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("usage_event_location_created_idx").on(t.locationId, t.createdAt),
+    index("usage_event_org_created_idx").on(t.organizationId, t.createdAt),
+  ],
+);
+
+/**
+ * Each client's credits per calendar month (UTC), kept alongside `usage_event` in the same batch
+ * so a monthly total reads one row per client instead of every event (Turso bills rows read).
+ * Not a foreign key to `location`, for the same reason as `usage_event`.
+ */
+export const usageMonth = sqliteTable(
+  "usage_month",
+  {
+    locationId: text("location_id").notNull(),
+    /** "YYYY-MM", UTC. */
+    month: text("month").notNull(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** Hundredths of a credit. */
+    credits: integer("credits").notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.locationId, t.month] }),
+    index("usage_month_org_month_idx").on(t.organizationId, t.month),
+  ],
+);
+
+/** An agency's own limits for one client. No row means the defaults below. */
+export const usageLimit = sqliteTable("usage_limit", {
+  locationId: text("location_id")
+    .primaryKey()
+    .references(() => location.id, { onDelete: "cascade" }),
+  /** Hundredths of a credit per calendar month (UTC). Null: no cap of its own, only the plan's. */
+  monthlyCreditCap: integer("monthly_credit_cap"),
+  alertAtPercent: integer("alert_at_percent").notNull().default(80),
+  paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/**
+ * A usage alert that fired, so each one fires once per period. `subject` is `"agency"` or
+ * `"location:<id>"` (a nullable location id can't be part of a unique key in SQLite);
+ * `period` is the calendar month, `"YYYY-MM"` in UTC; `threshold` a percentage of the limit.
+ */
+export const usageAlert = sqliteTable(
+  "usage_alert",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    subject: text("subject").notNull(),
+    period: text("period").notNull(),
+    threshold: integer("threshold").notNull(),
+    createdAt: createdAt(),
+  },
+  // Leads with organization_id, so it also serves the foreign key.
+  (t) => [unique("usage_alert_once").on(t.organizationId, t.subject, t.period, t.threshold)],
 );

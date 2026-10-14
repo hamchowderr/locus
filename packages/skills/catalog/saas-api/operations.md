@@ -24,9 +24,9 @@
   Fetch all SaaS-activated locations for a company with pagination
 - `saas-api.get-saas-plan` — **Get SaaS Plan** — `GET /saas/saas-plan/{planId}` (read, agency)
   Fetch a specific SaaS plan by plan ID
-- `saas-api.list-agency-wallet-transactions` — **List agency wallet transactions** — `POST /saas/companies/{companyId}/wallet-transactions` (write, agency)
+- `saas-api.list-agency-wallet-transactions` — **List agency wallet transactions** — `POST /saas/companies/{companyId}/wallet-transactions` (read, agency)
   Fetch paginated wallet transactions for an agency (company).
-- `saas-api.list-location-wallet-transactions` — **List location wallet transactions** — `POST /saas/locations/{locationId}/wallet-transactions` (write, agency)
+- `saas-api.list-location-wallet-transactions` — **List location wallet transactions** — `POST /saas/locations/{locationId}/wallet-transactions` (read, agency)
   Fetch paginated wallet transactions for a sub-account (location).
 - `saas-api.locations` — **Get locations by stripeId with companyId** — `GET /saas/locations` (read, agency)
   Get locations by stripeCustomerId or stripeSubscriptionId with companyId

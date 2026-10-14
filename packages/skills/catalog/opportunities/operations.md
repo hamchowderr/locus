@@ -18,7 +18,7 @@
 - `opportunities.get-pipelines` — **Get Pipelines** — `GET /opportunities/pipelines` (read, location)
 - `opportunities.remove-followers-opportunity` — **Remove Followers** — `DELETE /opportunities/{id}/followers` (write, location)
   Allows removal of one or all followers from an opportunity.
-- `opportunities.search-opportunities-advanced` — **Search Opportunities** — `POST /opportunities/search` (write, location)
+- `opportunities.search-opportunities-advanced` — **Search Opportunities** — `POST /opportunities/search` (read, location)
   Search Opportunities based on combinations of advanced filters.
 - `opportunities.search-opportunity` — **Search Opportunity** — `GET /opportunities/search` (read, location)
 - `opportunities.update-opportunity` — **Update Opportunity** — `PUT /opportunities/{id}` (write, location)

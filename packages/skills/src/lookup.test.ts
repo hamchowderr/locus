@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { isRead, operationById, POST_READS, skillDocs } from "./index.ts";
+import { catalog, isRead, operationById, POST_READS, skillDocs } from "./index.ts";
 
 test("every reviewed POST read exists in the catalog and is a POST", () => {
   for (const id of POST_READS) expect(operationById(id)?.method, id).toBe("POST");
@@ -21,4 +21,35 @@ test("skill docs load for a category and not for an unknown one", () => {
   expect(skillDocs("contacts")?.operations).toContain("contacts.get-contact");
   expect(skillDocs("contacts")?.skill).toContain("name: contacts");
   expect(skillDocs("nope")).toBeUndefined();
+});
+
+// A POST that GHL titles as a read but is missing from POST_READS can't be used by query_data,
+// so the agent could never read it. Any new one in a docs refresh fails here until it is
+// reviewed: added to POST_READS, or listed below with the reason it is not a read.
+const READ_TITLE = /^(get|fetch|list|search|retrieve|find|filter|preview)\b/i;
+const NOT_READS: Record<string, string> = {
+  "oauth.get-access-token": "exchanges an OAuth code; reads nothing from a client",
+  "oauth.get-location-access-token": "mints a location token; reads nothing from a client",
+};
+
+test("every POST titled as a read is reviewed", () => {
+  for (const id of Object.keys(NOT_READS)) expect(operationById(id)?.method, id).toBe("POST");
+  const unreviewed = catalog
+    .flatMap((skill) => skill.operations)
+    .filter((op) => op.method === "POST" && READ_TITLE.test(op.title))
+    .filter((op) => !POST_READS.has(op.id) && !(op.id in NOT_READS))
+    .map((op) => `${op.id} (${op.title})`);
+  expect(unreviewed).toEqual([]);
+});
+
+// The model chooses query_data or perform_action from these labels, so a label that disagrees
+// with the code costs a refused call and a retry.
+test("the operation index labels every operation read or write the way the tools route it", () => {
+  for (const skill of catalog) {
+    const index = skillDocs(skill.category)?.operations ?? "";
+    for (const op of skill.operations) {
+      const line = index.split("\n").find((l) => l.startsWith(`- \`${op.id}\` `));
+      expect(line, op.id).toMatch(isRead(op) ? /\(read[,)]/ : /\(write[,)]/);
+    }
+  }
 });

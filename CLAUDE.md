@@ -29,11 +29,19 @@ files. The short version:
 ```
 apps/web          Next.js + shadcn/ui — the product and its API
 apps/desktop      Electron thin client of apps/web (holds no tokens)
+apps/agent        the agent server: the chat's API for every client, one long-running process
+packages/auth     Better Auth: accounts, agencies, staff access, billing, operators
+packages/connect  GHL, GitHub and Vercel connections, sites and domains
+packages/secrets  where agencies' credentials are sealed
 packages/ghl      operation descriptors + the one GHL request path
 packages/testing  AIMock wiring + a fake GHL for tests
 packages/skills   the GHL skill catalog, generated from the docs (see its README)
 packages/harness  Mastra loop, query_data, perform_action, subagents
+packages/agent-api the chat's HTTP API: guarded agent-controller routes per client
+packages/sandbox  the isolated runtime where Site Studio builds and previews a site
 packages/db       Drizzle schema (control DB + per-client DB) and migrations
+packages/studio   generated sites' source, versions, design brief and templates
+packages/builder  the site-builder agent: its tools, instructions and AgentController mode
 packages/ui       shared shadcn components for web and desktop
 ```
 

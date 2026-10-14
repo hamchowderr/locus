@@ -17,6 +17,8 @@
     "@locus/ghl": "workspace:*",
     "@locus/skills": "workspace:*",
     "@mastra/core": "1.75.0",
+    "@mastra/libsql": "1.25.1",
+    "@mastra/memory": "1.36.0",
     "zod": "4.6.5"
   },
   "devDependencies": {

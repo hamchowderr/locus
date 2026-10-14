@@ -1,0 +1,16 @@
+**/node_modules
+**/.next
+**/.turbo
+**/.data
+**/dist
+**/.env*
+.git
+.beads
+.locus-test-runs
+**/.dolt
+**/*.db
+**/*.db-*
+**/*.pem
+.beads-credential-key
+.claude/settings.local.json
+**/.vercel
