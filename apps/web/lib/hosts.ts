@@ -2,6 +2,9 @@ import {
   createStubGithub,
   createStubVercel,
   type GithubConnectDeps,
+  InstallationTokenCache,
+  type PublishDeps,
+  type SiteDeps,
   STUB_GITHUB_CODE,
   STUB_GITHUB_INSTALLATION,
   STUB_VERCEL_CODE,
@@ -10,6 +13,7 @@ import {
   type VercelConnectDeps,
 } from "@locus/connect";
 import { baseUrl, required, secretStore, serviceMode } from "./connect.ts";
+import { liveGithubApp, stubGithubApp } from "./github-app.ts";
 import { locus } from "./locus.ts";
 
 export const GITHUB_STATE_COOKIE = "locus_github_state";
@@ -70,6 +74,34 @@ export function vercelDeps(): VercelConnectDeps {
       clientSecret: required("VERCEL_INTEGRATION_CLIENT_SECRET"),
       redirectUri,
     },
+  };
+}
+
+/** For a client's site and its domain, on the agency's connected Vercel team. */
+export function siteDeps(): SiteDeps {
+  const { db, secrets, http } = vercelDeps();
+  return { db, secrets, ...(http ? { http } : {}) };
+}
+
+/**
+ * For publishing a client's site to the agency's GitHub (as the Locus GitHub App) and its
+ * Vercel team. The App's private key comes from the secret store, never the environment.
+ */
+const installationTokens = new InstallationTokenCache();
+
+export function publishDeps(): PublishDeps {
+  const site = { ...siteDeps(), tokens: installationTokens };
+  if (serviceMode("GITHUB_MODE") === "stub") {
+    stubGithub ??= createStubGithub();
+    return {
+      ...site,
+      githubApp: stubGithubApp(),
+      github: { fetch: stubGithub, apiBaseUrl: "https://api.github.stub" },
+    };
+  }
+  return {
+    ...site,
+    githubApp: liveGithubApp(required("GITHUB_APP_CLIENT_ID"), () => site.secrets),
   };
 }
 

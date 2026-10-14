@@ -8,14 +8,23 @@ const config: NextConfig = {
   // Workspace packages ship TypeScript source.
   transpilePackages: [
     "@locus/auth",
+    "@locus/builder",
     "@locus/connect",
     "@locus/db",
     "@locus/ghl",
+    "@locus/sandbox",
     "@locus/secrets",
     "@locus/skills",
+    "@locus/studio",
   ],
   // libSQL loads a native binding; keep it out of the server bundle.
   serverExternalPackages: ["@libsql/client", "libsql"],
+  // The chat's API runs in the agent server (`apps/agent`), a long-running process. Forwarding
+  // it from here keeps it on this origin, so the browser's sign-in cookie reaches it.
+  async rewrites() {
+    const agent = process.env.LOCUS_AGENT_URL;
+    return agent ? [{ source: "/api/agent/:path*", destination: `${agent}/api/agent/:path*` }] : [];
+  },
 };
 
 export default config;

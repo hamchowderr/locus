@@ -15,6 +15,9 @@ provider: open the verification link from the log.
 
 ## Configuration
 
+The production column describes Otaku's own deployment (its host, app slugs, Turso group and
+Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hosting.md).
+
 | Variable | Locally | Production |
 |---|---|---|
 | `LOCUS_CONTROL_DB_URL` | `file:.data/control.db` | Turso URL — required |
@@ -38,6 +41,8 @@ provider: open the verification link from the log.
 | `LOCUS_OPERATORS` | your own email, to try `/operator` | the deployment's operators, comma-separated emails (verified accounts only). They see every agency at `/operator` and can comp one; unset means none |
 | `STRIPE_SECRET_KEY` | a **test-mode** key, to try billing | Stripe's secret key. Unset means billing is off and nothing is limited |
 | `STRIPE_WEBHOOK_SECRET` | from `stripe listen` | the signing secret of the webhook endpoint `https://<host>/api/auth/stripe/webhook` |
+| `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID`, `LOCUS_SANDBOX_PROJECT_ID` | unset: the site builder uses the in-memory fake sandbox (commands succeed and run nothing) | Otaku's own Vercel team, for site sandboxes. Required for the site builder's sandbox tools |
+| `LOCUS_IMAGE_API_KEY` (+ optional `LOCUS_IMAGE_BASE_URL`, `LOCUS_IMAGE_MODEL`) | — | the site builder's image API. Unset means no image generation |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
 auth API answers 503 — it never falls back to development defaults.
@@ -47,6 +52,7 @@ Vercel sync: `dev:/locus` → Preview, `prod:/locus` → Production. Change them
 Vercel; the sync overwrites Vercel's copy.
 
 ## Deploying
+
 
 Vercel builds with `vercel.json`'s command: `db:migrate`, then `next build`. Each deployment
 migrates its own control database before it is built (Production the production database,
@@ -58,12 +64,51 @@ Agencies' own tokens are not in Infisical: they are sealed in the control databa
 
 ## Pages
 
-`/sign-up` · `/sign-in` · `/onboarding` (create the agency) · `/clients` (pick the client to work
+`/sign-up` · `/sign-in` · `/forgot-password` and `/reset-password` · `/onboarding` (create the agency) · `/clients` (pick the client to work
 on — the access check runs before it is stored on the session) · `/team` (owners and admins:
 invite staff, choose each member's clients) · `/invite/[id]` (accept; verified email required) ·
-`/connect` (owners and admins: connect GoHighLevel and sync clients, connect GitHub and Vercel) · `/`
+`/connect` (owners and admins: connect GoHighLevel and sync clients, connect GitHub and Vercel) ·
+`/sites` (the active client's sites: anyone who may work on the client creates a site from a
+template, which saves version 1; owners and admins link a project from the connected Vercel
+team and connect its domain; Locus lists the DNS records to add and checks them) · `/billing` (owners
+and admins: the agency's plan, through Stripe) · `/operator` (the deployment's operators: every
+agency, and comping one) · `/`
 
 `?next=` on sign-in and sign-up only ever accepts a path on this site (`lib/next-path.ts`).
+
+## Site builder
+
+`lib/site-builder.ts` wires `@locus/builder` to a signed-in member's client; `lib/site-builder-host.ts`
+builds it from the environment. The chat API host calls `siteBuilderForClient({ client })` with
+the client from `resolveActiveClient`, and gets `{ modes, tools, processors: { output }, resolve,
+close }` for the client's `AgentController`. In the chat API's `requestContext` hook it calls
+`resolveActiveSiteId(request, member)`: the site the member chose on the Sites page ("Build this
+site" sets the httpOnly `locus_site` cookie), returned only if the request's own session may
+work on `member.locationId` and the site is that client's, else null. The hook's result becomes
+`siteId` (`SITE_ID_KEY`); a host sharing one controller between members also sets that
+request's `AuthorizedClient` (`CLIENT_KEY`). The host sets both on every run, overwriting
+anything the browser sent.
+
+On every tool call the staff check runs again for the member (removed access stops the next
+call), the member's user id is read from the control database, and the site id is checked
+against the client's own `site` rows before anything opens; another client's site and a
+missing one are refused alike. Then the client's database is borrowed from a per-process pool
+(one connection per client, token for that database alone, replaced before the token expires
+and closed only once no call uses it), along with the site's sandbox (`<locationId>/<siteId>`,
+never given a credential; in production without `LOCUS_SANDBOX_*` the tools answer that previews
+aren't set up), images, a credit meter over `checkAllowance`/`recordUsage`, and publishing.
+
+Creating a site: any member who may work on the client; with billing on, the agency needs a plan
+and stays within its `sitesPerMonth` (counted from `site.create` audit entries this month, UTC;
+soft by concurrent creates).
+
+Publishing: each saved version is committed to the site's GitHub repository (`commitSiteVersion`)
+once the site has one, and Vercel deploys the push once it has a project. A site without a
+repository is saved in the client's database only; the agent never creates a repository or a
+Vercel project, which stay an owner's or admin's step (`ensureSiteRepo`, `ensureSiteDeployment`).
+Only Locus's own refusal messages reach the model; GitHub's raw text is logged instead.
+The GitHub App's private key comes from the secret store (`github-app-key` script), never the
+environment. With `GITHUB_MODE=stub` the stub GitHub and a throwaway key are used.
 
 ## Billing
 

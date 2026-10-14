@@ -6,7 +6,7 @@
 
 - `users.create-user` — **Create User** — `POST /users/` (write, agency/location)
 - `users.delete-user` — **Delete User** — `DELETE /users/{userId}` (write, agency/location)
-- `users.filter-users-by-email` — **Filter Users by Email** — `POST /users/search/filter-by-email` (write, agency)
+- `users.filter-users-by-email` — **Filter Users by Email** — `POST /users/search/filter-by-email` (read, agency)
   Filter users by company ID, deleted status, and email array
 - `users.get-user` — **Get User** — `GET /users/{userId}` (read, agency/location)
 - `users.search-users` — **Search Users** — `GET /users/search` (read, agency/location)

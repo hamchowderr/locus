@@ -5,22 +5,37 @@ import {
   NotOperator,
   operatorsFromEnv,
   requireAgencyManager,
+  resolveActiveClient,
   selectClient,
   setComped,
   setMemberClients,
 } from "@locus/auth";
 import {
+  attachSiteDomain,
   ConnectError,
   importStaffAccess,
+  linkHostProject,
   refusedQuery,
+  removeSiteDomain,
   type SyncResult,
   syncLocations,
+  unlinkHostProject,
 } from "@locus/connect";
-import { headers } from "next/headers";
+import { revalidatePath } from "next/cache";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
-import { billingEnabled, currentSession, locus, sessionContext } from "@/lib/locus";
+import { publishDeps, siteDeps } from "@/lib/hosts";
+import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
+import {
+  ACTIVE_SITE_COOKIE,
+  clientSite,
+  createClientSite,
+  SiteInputError,
+} from "@/lib/site-builder";
+import { siteBuilderDeps } from "@/lib/site-builder-host";
+import { giveSiteProject, giveSiteRepo } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -319,4 +334,140 @@ export async function openBillingPortal() {
   }
   if (!url) back("/billing", new Error("Stripe didn't open the billing portal. Try again."));
   redirect(url);
+}
+
+/**
+ * Runs a change to the active client's site, then returns to the Sites page. The client is the
+ * session's, never the form's; the site and project ids from the form are checked against it.
+ */
+async function siteAction(
+  change: (
+    ctx: ReturnType<typeof sessionContext>,
+    client: Awaited<ReturnType<typeof resolveActiveClient>>,
+  ) => Promise<unknown>,
+  notConfigured = "Vercel isn't set up here yet.",
+) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  try {
+    await change(ctx, await resolveActiveClient(locus().db, ctx));
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof ConnectError) back("/sites", error);
+    if (error instanceof NotConfigured) back("/sites", new Error(notConfigured));
+    throw error;
+  }
+  // The redirect lands on the page the form was on, so drop its cached render.
+  revalidatePath("/sites");
+  redirect("/sites");
+}
+
+/** Makes a project on the agency's Vercel team the active client's site. */
+export async function linkSiteProject(form: FormData) {
+  await siteAction((ctx, client) =>
+    linkHostProject(siteDeps(), ctx, client, { projectId: text(form, "projectId") }),
+  );
+}
+
+/** Adds a domain to one of the active client's sites. */
+export async function addSiteDomain(form: FormData) {
+  await siteAction((ctx, client) =>
+    attachSiteDomain(siteDeps(), ctx, client, {
+      siteId: text(form, "siteId"),
+      domain: text(form, "domain"),
+    }),
+  );
+}
+
+/** Takes the domain off one of the active client's sites. */
+export async function deleteSiteDomain(form: FormData) {
+  await siteAction((ctx, client) =>
+    removeSiteDomain(siteDeps(), ctx, client, text(form, "siteId")),
+  );
+}
+
+/**
+ * Creates a site for the active client and starts it from a template, so version 1 exists.
+ * The client is the session's (after the staff check), never the form's.
+ */
+export async function createSite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  try {
+    const client = await resolveActiveClient(locus().db, ctx);
+    await createClientSite(siteBuilderDeps(), ctx, client, {
+      name: text(form, "name"),
+      kind: text(form, "kind"),
+      templateId: text(form, "templateId"),
+    });
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Client databases aren't set up here yet."));
+    }
+    throw error;
+  }
+  redirect("/sites?created=1");
+}
+
+/**
+ * Picks the site the site builder works on, for this browser. The site is checked against the
+ * session's client here, and again by the chat API (`resolveActiveSiteId`) and on every tool
+ * call; the cookie only names it.
+ */
+export async function chooseSite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  let siteId = "";
+  try {
+    const client = await resolveActiveClient(locus().db, ctx);
+    siteId = (await clientSite(locus().db, client, text(form, "siteId"))).id;
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) back("/sites", error);
+    if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
+    throw error;
+  }
+  (await cookies()).set(ACTIVE_SITE_COOKIE, siteId, {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
+  redirect("/sites?chosen=1");
+}
+
+/** Takes a linked Vercel project off the active client. */
+export async function unlinkSiteProject(form: FormData) {
+  await siteAction((ctx, client) =>
+    unlinkHostProject(siteDeps(), ctx, client, text(form, "siteId")),
+  );
+}
+
+/**
+ * Gives one of the active client's sites a GitHub repository in the agency's account: a new
+ * private one, or an existing empty one the Locus app can see. Owners and admins only.
+ */
+export async function giveSiteRepository(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      giveSiteRepo(publishDeps(), ctx, client, {
+        siteId: text(form, "siteId"),
+        repo: text(form, "repo"),
+        name: text(form, "name"),
+      }),
+    "Publishing to GitHub isn't set up here yet.",
+  );
+}
+
+/** Gives one of the active client's sites a Vercel project that builds its repository. */
+export async function giveSiteVercelProject(form: FormData) {
+  await siteAction(
+    (ctx, client) => giveSiteProject(publishDeps(), ctx, client, text(form, "siteId")),
+    "Publishing to GitHub and Vercel isn't set up here yet.",
+  );
 }

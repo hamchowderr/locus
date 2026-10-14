@@ -8,6 +8,13 @@ export {
   type TokenKind,
 } from "./operation.ts";
 export {
+  createRateLimiter,
+  GHL_BURST_LIMIT,
+  type GhlRateLimiter,
+  type RateLimitOptions,
+  sharedRateLimiter,
+} from "./rate-limit.ts";
+export {
   GHL_BASE_URL,
   GhlError,
   type GhlRequestInput,
@@ -15,4 +22,5 @@ export {
   type GhlSession,
   GhlUsageError,
   ghlRequest,
+  rateLimitKey,
 } from "./request.ts";

@@ -38,7 +38,7 @@
   Removes the contact from every campaign it is enrolled in.
 - `contacts.remove-followers-contact` — **Remove Followers** — `DELETE /contacts/{contactId}/followers` (write, location)
 - `contacts.remove-tags` — **Remove Tags** — `DELETE /contacts/{contactId}/tags` (write, location)
-- `contacts.search-contacts-advanced` — **Search Contacts** — `POST /contacts/search` (write, location)
+- `contacts.search-contacts-advanced` — **Search Contacts** — `POST /contacts/search` (read, location)
   Search contacts based on combinations of advanced filters.
 - `contacts.update-contact` — **Update Contact** — `PUT /contacts/{contactId}` (write, location)
   Update a contact using contactId > ⚠️ **When updating additional emails/phones, always include the current primary `email`/`phone` in the same request.

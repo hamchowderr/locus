@@ -20,6 +20,7 @@ export const PRODUCTION_SETTINGS: Record<string, readonly string[]> = {
     "VERCEL_INTEGRATION_CLIENT_ID",
     "VERCEL_INTEGRATION_CLIENT_SECRET",
   ],
+  "site builder": ["LOCUS_SANDBOX_TOKEN", "LOCUS_SANDBOX_TEAM_ID", "LOCUS_SANDBOX_PROJECT_ID"],
 };
 
 const STUB_SWITCHES = ["GHL_MODE", "GITHUB_MODE", "VERCEL_MODE", "EMAIL_MODE"] as const;
