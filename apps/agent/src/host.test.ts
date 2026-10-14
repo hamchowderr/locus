@@ -15,9 +15,11 @@ import {
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
+import type { MastraModelConfig } from "@mastra/core/llm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createHost, PREFIX } from "./host.ts";
+import { SCRIPTED_REPLY, scriptedModel } from "./scripted-model.ts";
 
 const mock = useAimock();
 const now = new Date();
@@ -116,7 +118,7 @@ async function secondAgencyFor(
   return { id: "s3", userId: "owner2", activeOrganizationId: "org2", activeLocationId: "client-b" };
 }
 
-async function hostFor(signedIn: { as: string | null }) {
+async function hostFor(signedIn: { as: string | null }, model?: MastraModelConfig) {
   const { connect, client, sessions } = await agency();
   sessions.owner2 = await secondAgencyFor(connect, client.ghlLocationId);
   const ghl = createFakeGhl({ "*": { body: {} } });
@@ -124,7 +126,7 @@ async function hostFor(signedIn: { as: string | null }) {
     db,
     session: async () => (signedIn.as ? (sessions[signedIn.as] ?? null) : null),
     connect,
-    model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+    model: model ?? { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
     fetch: ghl.fetch,
     origin: "http://locus.test",
   });
@@ -205,6 +207,25 @@ describe("the agent server", () => {
       new Request(`http://agent.test${PREFIX}/agent-controller/locus/modes`),
     );
     expect(res.status).toBe(401);
+  });
+
+  test("the scripted model answers without any AI provider", async () => {
+    const { chat, client } = await hostFor({ as: "owner" }, await scriptedModel());
+    const session = chat.getAgentController("locus").session(`client:${client.ghlLocationId}`);
+    await session.create();
+    await session.createThread("Hello");
+    const events: unknown[] = [];
+    const done = new Promise<void>((resolve) => {
+      void session.subscribe({
+        onEvent: (e) => {
+          events.push(e);
+          if ((e as { type: string }).type === "agent_end") resolve();
+        },
+      });
+    });
+    await session.sendMessage("Hello there");
+    await done;
+    expect(JSON.stringify(events)).toContain(SCRIPTED_REPLY);
   });
 
   test("two agencies holding the same GHL location never share a conversation", async () => {

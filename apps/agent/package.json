@@ -9,6 +9,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@copilotkit/aimock": "1.44.0",
     "@hono/node-server": "1.19.17",
     "@libsql/client": "0.18.0",
     "@locus/agent-api": "workspace:*",
