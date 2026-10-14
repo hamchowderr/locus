@@ -1,8 +1,9 @@
 export {
   createSiteBuilderAgent,
   SITE_BUILDER_INSTRUCTIONS,
+  SITE_BUILDER_MODE,
+  SITE_BUILDER_TOOL_NAMES,
   type SiteBuilderAgentConfig,
-  siteBuilderMode,
 } from "./agent.ts";
 export {
   type GeneratedImage,
@@ -19,10 +20,20 @@ export type {
   ResolveBuilderSession,
   UsageMeter,
 } from "./session.ts";
-export { forgetRuntime, type SyncReport, syncRuntime } from "./sync.ts";
+export { isSandboxMade, type SyncReport, sandboxHashes, syncRuntime } from "./sync.ts";
 export {
   BuilderError,
   createSiteBuilderTools,
+  PublishError,
+  packageCommandRefusal,
   type SiteBuilderToolDeps,
   type SiteBuilderTools,
 } from "./tools.ts";
+export {
+  fenceUntrusted,
+  looksLikeInstructions,
+  screenToolResult,
+  UNTRUSTED_FIELDS,
+  UntrustedOutputProcessor,
+  WITHHELD_LINE,
+} from "./untrusted.ts";

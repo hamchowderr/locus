@@ -36,6 +36,9 @@ describe("normalizeSitePath", () => {
     ".npmrc",
     "app/.git/hooks/pre-commit",
     "packages/x/node_modules/y.js",
+    ".next/server/app.js",
+    ".locus/seeded",
+    "app/.Locus/x",
     "a\0b",
     "",
   ])("refuses %j", (path) => {

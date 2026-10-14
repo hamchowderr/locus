@@ -2,59 +2,79 @@ import { createHash } from "node:crypto";
 import type { SiteRuntime } from "@locus/sandbox";
 import type { SiteFile } from "@locus/studio";
 
-const hashOf = (content: SiteFile["content"]) =>
+/** sha256 of a file's bytes, as `sha256sum` prints it inside the sandbox. */
+export const hashOf = (content: SiteFile["content"]) =>
   createHash("sha256")
-    .update(
-      typeof content === "string" ? `t:${content}` : Buffer.concat([Buffer.from("b:"), content]),
-    )
+    .update(typeof content === "string" ? Buffer.from(content, "utf8") : content)
     .digest("hex");
 
-/** What each live runtime holds, as far as this process knows: path → content hash. */
-const known = new WeakMap<SiteRuntime, Map<string, string>>();
-
 /** Folders the runtime makes itself, never part of the site's source. */
-const GENERATED = ["node_modules", ".next", ".locus", ".git"];
+export const GENERATED_DIRS = ["node_modules", ".next", ".locus", ".git"];
+
+/**
+ * Files the sandbox makes for itself (an install writes the lockfile, `next build` writes
+ * next-env.d.ts). Sync never deletes them; it still overwrites them if the draft has its own.
+ */
+const SANDBOX_MADE = new Set(["pnpm-lock.yaml", "package-lock.json", "yarn.lock", "next-env.d.ts"]);
+
+export function isSandboxMade(path: string): boolean {
+  return SANDBOX_MADE.has(path) || path.endsWith(".tsbuildinfo");
+}
 
 export interface SyncReport {
   written: number;
   deleted: number;
 }
 
+const LINE = /^([0-9a-f]{64}) [ *](.+)$/;
+
 /**
- * Makes the runtime's project match the draft: writes what changed and deletes what the draft
- * no longer has. The first sync of a runtime in this process also lists the project, since a
- * persistent sandbox may still hold files from an earlier session.
+ * What the sandbox holds right now: path → sha256, read with one `find … sha256sum` inside it.
+ * With `paths`, only those files (missing ones are simply absent from the result).
+ *
+ * Nothing about a runtime is cached in this process: a sandbox can be recreated empty behind
+ * the same `SiteRuntime`, another process can sync it, and a command can change its files, so
+ * every sync asks the sandbox itself.
  */
-export async function syncRuntime(runtime: SiteRuntime, files: SiteFile[]): Promise<SyncReport> {
-  let state = known.get(runtime);
-  if (!state) {
-    state = new Map();
-    const listed = await runtime.run("find", [
-      ".",
-      "-type",
-      "f",
-      ...GENERATED.flatMap((dir) => ["-not", "-path", `./${dir}/*`]),
-    ]);
-    if (listed.exitCode === 0) {
-      for (const line of listed.stdout.split("\n")) {
-        const path = line.trim().replace(/^\.\//, "");
-        // Unknown content: the hash never matches, so the file is rewritten if still wanted.
-        if (path) state.set(path, "");
-      }
-    }
-    known.set(runtime, state);
+export async function sandboxHashes(
+  runtime: SiteRuntime,
+  paths?: string[],
+): Promise<Map<string, string>> {
+  const listed = paths
+    ? await runtime.run("sha256sum", ["--", ...paths])
+    : await runtime.run("find", [
+        ".",
+        "-type",
+        "f",
+        ...GENERATED_DIRS.flatMap((dir) => ["-not", "-path", `./${dir}/*`]),
+        "-exec",
+        "sha256sum",
+        "{}",
+        "+",
+      ]);
+  const hashes = new Map<string, string>();
+  // A partial listing (a file vanished mid-run, output cut) still names what it names; a file
+  // it misses only counts as unknown, so it is written again and never deleted.
+  for (const line of listed.stdout.split("\n")) {
+    const match = LINE.exec(line.trim());
+    if (!match?.[1] || !match[2]) continue;
+    const path = match[2].replace(/^\.\//, "");
+    if (path) hashes.set(path, match[1]);
   }
-  const wanted = new Map(files.map((f) => [f.path, f]));
-  const toWrite = files.filter((f) => state.get(f.path) !== hashOf(f.content));
-  const toDelete = [...state.keys()].filter((path) => !wanted.has(path));
-  if (toWrite.length > 0) await runtime.writeFiles(toWrite);
-  if (toDelete.length > 0) await runtime.deleteFiles(toDelete);
-  for (const file of toWrite) state.set(file.path, hashOf(file.content));
-  for (const path of toDelete) state.delete(path);
-  return { written: toWrite.length, deleted: toDelete.length };
+  return hashes;
 }
 
-/** Forgets what a runtime holds, e.g. after it was recreated. */
-export function forgetRuntime(runtime: SiteRuntime): void {
-  known.delete(runtime);
+/**
+ * Makes the runtime's project match the draft: writes what differs and deletes what the draft
+ * no longer has, except the files the sandbox makes for itself (lockfiles, next-env.d.ts).
+ * A recreated (empty) sandbox therefore gets every file again.
+ */
+export async function syncRuntime(runtime: SiteRuntime, files: SiteFile[]): Promise<SyncReport> {
+  const present = await sandboxHashes(runtime);
+  const wanted = new Set(files.map((f) => f.path));
+  const toWrite = files.filter((f) => present.get(f.path) !== hashOf(f.content));
+  const toDelete = [...present.keys()].filter((path) => !wanted.has(path) && !isSandboxMade(path));
+  if (toWrite.length > 0) await runtime.writeFiles(toWrite);
+  if (toDelete.length > 0) await runtime.deleteFiles(toDelete);
+  return { written: toWrite.length, deleted: toDelete.length };
 }
