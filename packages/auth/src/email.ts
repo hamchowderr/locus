@@ -5,15 +5,19 @@ import type { SendEmail } from "./auth.ts";
  * mail provider: `EMAIL_MODE=console` prints the message (and its link) to the server log.
  * `EMAIL_MODE=resend` sends through Resend with `RESEND_API_KEY` and `EMAIL_FROM`.
  *
- * Unset means console outside production and an error in production — a deployment must never
- * silently print verification links to its logs.
+ * Unset means console outside production and an error in production, and `console` is refused in
+ * production too: a deployment must never print sign-in or reset links to its logs.
  */
 export function emailFromEnv(
   env: Record<string, string | undefined> = process.env,
   fetchImpl: typeof fetch = fetch,
 ): SendEmail {
-  const mode = env.EMAIL_MODE ?? (env.NODE_ENV === "production" ? undefined : "console");
-  if (mode === "console") return consoleEmail;
+  const production = env.NODE_ENV === "production";
+  const mode = env.EMAIL_MODE ?? (production ? undefined : "console");
+  if (mode === "console") {
+    if (production) throw new Error("EMAIL_MODE=console is refused in production; use resend");
+    return consoleEmail;
+  }
   if (mode === "resend") {
     const apiKey = env.RESEND_API_KEY;
     const from = env.EMAIL_FROM;
