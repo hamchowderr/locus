@@ -45,7 +45,7 @@ export {
   TEST_TAG_PREFIX,
   type WriteGuard,
 } from "./test-mode.ts";
-export { createLocusTools, type ToolDeps } from "./tools.ts";
+export { createLocusTools, type RunContext, type ToolDeps } from "./tools.ts";
 export {
   isTainted,
   looksLikeInstructions,
