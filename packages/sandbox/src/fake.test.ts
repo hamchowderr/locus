@@ -93,6 +93,23 @@ describe("FakeRuntime", () => {
     ]);
   });
 
+  it("installs again when a lockfile changed", async () => {
+    let installs = 0;
+    const runtime = await new FakeRuntimeProvider({
+      files: { "package.json": "{}", "pnpm-lock.yaml": "v1" },
+      handler: () => {
+        installs++;
+        return undefined;
+      },
+    }).open("s");
+    await runtime.install();
+    await runtime.install();
+    expect(installs).toBe(1);
+    await runtime.writeFiles([{ path: "pnpm-lock.yaml", content: "v2" }]);
+    await runtime.install();
+    expect(installs).toBe(2);
+  });
+
   it("uses npm when there is only a package-lock.json", async () => {
     const seen: string[] = [];
     const runtime = await new FakeRuntimeProvider({

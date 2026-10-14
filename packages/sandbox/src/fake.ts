@@ -45,7 +45,8 @@ export class FakeRuntime implements SiteRuntime {
   previewRunning = false;
   stopped = false;
   private logs = "";
-  private installedPackageJson: string | null = null;
+  /** package.json and lockfiles as of the last successful install. */
+  private installedManifest: string | null = null;
   private readonly maxOutputChars: number;
 
   constructor(key: string, options: FakeRuntimeOptions = {}) {
@@ -107,15 +108,23 @@ export class FakeRuntime implements SiteRuntime {
       this.calls.push({ method: "install", skipped: false });
       return { exitCode: 1, stdout: "", stderr: "package.json not found", timedOut: false };
     }
-    if (packageJson === this.installedPackageJson) {
+    if (this.manifest() === this.installedManifest) {
       this.calls.push({ method: "install", skipped: true });
       return { exitCode: 0, stdout: "dependencies up to date", stderr: "", timedOut: false };
     }
     this.calls.push({ method: "install", skipped: false });
-    const manager = this.files.has("package-lock.json") ? "npm" : "pnpm";
-    const result = await this.exec(manager, ["install"]);
-    if (result.exitCode === 0) this.installedPackageJson = packageJson;
+    const npm = this.files.has("package-lock.json") && !this.files.has("pnpm-lock.yaml");
+    const result = await this.exec(npm ? "npm" : "pnpm", ["install"]);
+    // Taken after the install, which may have written the lockfile (as the real stamp is).
+    if (result.exitCode === 0) this.installedManifest = this.manifest();
     return result;
+  }
+
+  /** What decides whether an install is needed: package.json and the lockfiles. */
+  private manifest(): string {
+    return JSON.stringify(
+      ["package.json", "pnpm-lock.yaml", "package-lock.json"].map((path) => this.readText(path)),
+    );
   }
 
   async startPreview(): Promise<{ url: string }> {
