@@ -6,11 +6,12 @@ import {
   type SessionContext,
 } from "@locus/auth";
 import type { ControlDb } from "@locus/db";
-import { auditLog, hostConnection, site } from "@locus/db/control";
+import { auditLog, site } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
 import { and, eq } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import type { VercelGrant, VercelHttp } from "./vercel.ts";
+import { hostGrant, refused, vercel } from "./vercel-api.ts";
 
 // A client's site and its custom domain, on the agency's own Vercel team. Contracts read from
 // vercel.com/docs on 2026-10-13: `GET /v10/projects`, `GET /v9/projects/{id}`,
@@ -76,61 +77,6 @@ export function normalizeDomain(input: string): string {
     throw new ConnectError("That's already a Vercel address. Enter the client's own domain.");
   }
   return domain;
-}
-
-interface VercelResult<T> {
-  ok: boolean;
-  status: number;
-  body: T & { error?: { code?: string; message?: string } };
-}
-
-async function hostGrant(deps: SiteDeps, organizationId: string): Promise<VercelGrant> {
-  const [host] = await deps.db
-    .select()
-    .from(hostConnection)
-    .where(eq(hostConnection.organizationId, organizationId));
-  if (host?.provider !== "vercel") {
-    throw new ConnectError("Connect your Vercel team on the Connections page first.");
-  }
-  const stored = await deps.secrets.get(host.secretRef);
-  if (!stored) throw new ConnectError("Vercel needs to be connected again.");
-  return JSON.parse(stored) as VercelGrant;
-}
-
-async function vercel<T>(
-  deps: SiteDeps,
-  grant: VercelGrant,
-  method: string,
-  path: string,
-  options: { query?: Record<string, string>; body?: unknown } = {},
-): Promise<VercelResult<T>> {
-  const { fetch: f = fetch, apiBaseUrl = "https://api.vercel.com" } = deps.http ?? {};
-  const url = new URL(path, apiBaseUrl);
-  for (const [key, value] of Object.entries(options.query ?? {})) {
-    url.searchParams.set(key, value);
-  }
-  if (grant.teamId) url.searchParams.set("teamId", grant.teamId);
-  const response = await f(url.toString(), {
-    method,
-    headers: {
-      authorization: `Bearer ${grant.accessToken}`,
-      ...(options.body === undefined ? {} : { "content-type": "application/json" }),
-    },
-    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-  });
-  const body = (await response.json().catch(() => ({}))) as VercelResult<T>["body"];
-  return { ok: response.ok, status: response.status, body };
-}
-
-/** Vercel's own explanation when it has one; its messages are written for people. */
-function refused(result: VercelResult<unknown>, fallback: string): ConnectError {
-  if (result.status === 401 || result.status === 403) {
-    return new ConnectError(
-      "Vercel refused. Reconnect Vercel on the Connections page and allow access to all projects.",
-    );
-  }
-  const message = result.body.error?.message;
-  return new ConnectError(message ? `Vercel: ${message}` : fallback);
 }
 
 /** At most this many pages of 100 projects are listed for the picker. */
@@ -406,7 +352,7 @@ export async function removeSiteDomain(
   });
 }
 
-async function audit(
+export async function audit(
   db: ControlDb,
   ctx: SessionContext,
   client: AuthorizedClient,

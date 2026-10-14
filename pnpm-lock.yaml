@@ -159,6 +159,34 @@ importers:
         specifier: 5.0.3
         version: 5.0.3(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
+  packages/builder:
+    dependencies:
+      '@locus/sandbox':
+        specifier: workspace:*
+        version: link:../sandbox
+      '@locus/studio':
+        specifier: workspace:*
+        version: link:../studio
+      '@mastra/core':
+        specifier: 1.75.0
+        version: 1.75.0(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@locus/db':
+        specifier: workspace:*
+        version: link:../db
+      '@locus/testing':
+        specifier: workspace:*
+        version: link:../testing
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      vitest:
+        specifier: 5.0.3
+        version: 5.0.3(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
+
   packages/connect:
     dependencies:
       '@locus/auth':
