@@ -21,6 +21,7 @@ import {
   PublishError,
   type ResolveBuilderSession,
   SITE_BUILDER_MODE,
+  SITE_BUILDER_OWN_TEXT_TOOLS,
   type SiteBuilderTools,
   UntrustedOutputProcessor,
   type UsageMeter,
@@ -85,6 +86,8 @@ export interface SiteBuilderWiring {
    * and build output on `processToolResult` (an `AgentControllerMode` can't carry processors).
    */
   processors: { output: [UntrustedOutputProcessor] };
+  /** For `createLocusController({ ownTextTools })`: the skill tools, which return Locus's text. */
+  ownTextTools: typeof SITE_BUILDER_OWN_TEXT_TOOLS;
   /** The resolver the tools use; exposed for hosts and tests. */
   resolve: ResolveBuilderSession;
   /** Closes this client's pooled database connection once no call is using it. */
@@ -394,6 +397,7 @@ export function createSiteBuilder(
     modes: [SITE_BUILDER_MODE],
     tools: createSiteBuilderTools({ resolve }),
     processors: { output: [new UntrustedOutputProcessor()] },
+    ownTextTools: SITE_BUILDER_OWN_TEXT_TOOLS,
     resolve,
     close: () => closeClientDbs(bound.location.id),
   };

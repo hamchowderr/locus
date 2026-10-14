@@ -2,7 +2,8 @@ import { type DesignBrief, DesignBrief as DesignBriefSchema } from "../brief.ts"
 import type { SiteFile } from "../workspace.ts";
 import { baseFiles, lit } from "./base.ts";
 
-export { baseFiles, DEFAULT_PALETTE, packageName, SITE_STACK } from "./base.ts";
+export { baseFiles, DEFAULT_PALETTE, packageName, readableOn, SITE_STACK } from "./base.ts";
+export { SHADCN_COMPONENTS } from "./shadcn.ts";
 
 export interface SiteTemplate {
   id: string;
@@ -21,7 +22,12 @@ const leadForm = (button: string): SiteFile[] => [
     path: "components/lead-form.tsx",
     content: `"use client";
 
+import { CheckIcon } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 
 export function LeadForm() {
   const [state, setState] = useState<"idle" | "sending" | "sent" | "failed">("idle");
@@ -39,18 +45,39 @@ export function LeadForm() {
   }
 
   if (state === "sent") {
-    return <p className="rounded-lg bg-primary/10 p-6">Thanks! We'll be in touch shortly.</p>;
+    return (
+      <p role="status" className="flex items-center gap-3 rounded-lg bg-primary/10 p-6">
+        <CheckIcon className="size-5 text-primary" aria-hidden />
+        Thanks! We'll be in touch shortly.
+      </p>
+    );
   }
   return (
-    <form onSubmit={submit} className="grid gap-4">
-      <input name="name" required placeholder="Your name" className="rounded-md border border-black/20 px-4 py-3" />
-      <input name="email" type="email" required placeholder="Email" className="rounded-md border border-black/20 px-4 py-3" />
-      <input name="phone" type="tel" placeholder="Phone (optional)" className="rounded-md border border-black/20 px-4 py-3" />
-      <textarea name="message" rows={4} placeholder="How can we help?" className="rounded-md border border-black/20 px-4 py-3" />
-      <button disabled={state === "sending"} className="rounded-md bg-primary px-6 py-3 font-semibold text-white disabled:opacity-60">
-        {state === "sending" ? "Sending…" : ${lit(button)}}
-      </button>
-      {state === "failed" && <p className="text-sm text-red-700">That didn't send. Please try again.</p>}
+    <form onSubmit={submit}>
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor="lead-name">Name</FieldLabel>
+          <Input id="lead-name" name="name" required autoComplete="name" />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="lead-email">Email</FieldLabel>
+          <Input id="lead-email" name="email" type="email" required autoComplete="email" />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="lead-phone">Phone (optional)</FieldLabel>
+          <Input id="lead-phone" name="phone" type="tel" autoComplete="tel" />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="lead-message">How can we help?</FieldLabel>
+          <Textarea id="lead-message" name="message" rows={4} />
+        </Field>
+        <Field>
+          <Button type="submit" size="lg" disabled={state === "sending"}>
+            {state === "sending" ? "Sending…" : ${lit(button)}}
+          </Button>
+          {state === "failed" && <FieldError>That didn't send. Please try again.</FieldError>}
+        </Field>
+      </FieldGroup>
     </form>
   );
 }
@@ -87,16 +114,45 @@ export const site = {
 `,
 });
 
-const hero = (brief: DesignBrief, cta: { href: string; label: string }) => `
-      <section className="mx-auto max-w-6xl px-6 py-24">
-        <h1 className="max-w-3xl text-4xl font-bold tracking-tight sm:text-6xl">{site.name}</h1>
-        <p className="mt-6 max-w-2xl text-lg opacity-80">
+/** The hero section; pages that use it import Badge, Button and site. */
+const hero = (brief: DesignBrief, eyebrow: string, cta: { href: string; label: string }) => `
+      <section className="mx-auto max-w-6xl px-6 py-24 sm:py-32">
+        <Badge variant="secondary">{${lit(eyebrow)}}</Badge>
+        <h1 className="mt-6 max-w-3xl text-4xl font-bold tracking-tight text-balance sm:text-6xl">
+          {site.name}
+        </h1>
+        <p className="mt-6 max-w-2xl text-lg text-muted-foreground">
           {${lit(brief.goal ?? "Tell visitors what you do and why it matters to them.")}}
         </p>
-        <a href=${lit(cta.href)} className="mt-10 inline-block rounded-md bg-primary px-6 py-3 font-semibold text-white">
-          {${lit(cta.label)}}
-        </a>
+        <div className="mt-10 flex flex-wrap gap-3">
+          <Button asChild size="lg">
+            <a href=${lit(cta.href)}>{${lit(cta.label)}}</a>
+          </Button>
+        </div>
       </section>`;
+
+/** A questions-and-answers section; pages that use it import the Accordion parts. */
+const faq = (items: { q: string; a: string }[]) => `
+      <section className="mx-auto max-w-3xl px-6 py-20">
+        <h2 className="text-3xl font-semibold tracking-tight">Questions</h2>
+        <Accordion type="single" collapsible className="mt-8">
+${items
+  .map(
+    (item, i) => `          <AccordionItem value="q${i + 1}">
+            <AccordionTrigger className="text-base">{${lit(item.q)}}</AccordionTrigger>
+            <AccordionContent className="text-muted-foreground">{${lit(item.a)}}</AccordionContent>
+          </AccordionItem>`,
+  )
+  .join("\n")}
+        </Accordion>
+      </section>`;
+
+const ACCORDION_IMPORT = `import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from "@/components/ui/accordion";`;
 
 export const TEMPLATES: SiteTemplate[] = [
   {
@@ -112,8 +168,8 @@ export const TEMPLATES: SiteTemplate[] = [
 export default function Home() {
   return (
     <section className="mx-auto max-w-6xl px-6 py-24">
-      <h1 className="text-4xl font-bold">{site.name}</h1>
-      <p className="mt-4 opacity-80">{site.description}</p>
+      <h1 className="text-4xl font-bold tracking-tight">{site.name}</h1>
+      <p className="mt-4 text-lg text-muted-foreground">{site.description}</p>
     </section>
   );
 }
@@ -133,6 +189,10 @@ export default function Home() {
       {
         path: "app/page.tsx",
         content: `import { LeadForm } from "@/components/lead-form";
+${ACCORDION_IMPORT}
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { site } from "@/lib/site";
 
 const benefits = [
@@ -143,20 +203,37 @@ const benefits = [
 
 export default function Home() {
   return (
-    <>${hero(brief, { href: "#contact", label: "Get started" })}
-      <section className="bg-primary/5">
-        <div className="mx-auto grid max-w-6xl gap-8 px-6 py-20 sm:grid-cols-3">
+    <>${hero(brief, "New", { href: "#contact", label: "Get started" })}
+      <section className="bg-muted">
+        <div className="mx-auto grid max-w-6xl gap-6 px-6 py-20 sm:grid-cols-3">
           {benefits.map((b) => (
-            <div key={b.title}>
-              <h2 className="text-xl font-semibold">{b.title}</h2>
-              <p className="mt-2 opacity-80">{b.text}</p>
-            </div>
+            <Card key={b.title}>
+              <CardHeader>
+                <CardTitle className="text-xl">
+                  <h2>{b.title}</h2>
+                </CardTitle>
+                <CardDescription className="text-base">{b.text}</CardDescription>
+              </CardHeader>
+            </Card>
           ))}
         </div>
-      </section>
-      <section id="contact" className="mx-auto max-w-xl px-6 py-20">
-        <h2 className="mb-6 text-3xl font-semibold">Get in touch</h2>
-        <LeadForm />
+      </section>${faq([
+        { q: "How do I get started?", a: "Explain the first step in one or two sentences." },
+        { q: "How much does it cost?", a: "Say what it costs, or how pricing works." },
+        { q: "What happens next?", a: "Say what the visitor can expect after they sign up." },
+      ])}
+      <section id="contact" className="mx-auto max-w-xl scroll-mt-20 px-6 pb-24">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-2xl">
+              <h2>Get in touch</h2>
+            </CardTitle>
+            <CardDescription>Leave your details and we'll get back to you.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LeadForm />
+          </CardContent>
+        </Card>
       </section>
     </>
   );
@@ -178,16 +255,52 @@ export default function Home() {
       ]),
       ...leadForm("Send message"),
       {
+        path: "lib/services.ts",
+        content: `/** The services, shared by the home and services pages. */
+export const services = [
+  { name: "Service one", text: "What it is and who it's for." },
+  { name: "Service two", text: "What it is and who it's for." },
+  { name: "Service three", text: "What it is and who it's for." },
+];
+`,
+      },
+      {
         path: "app/page.tsx",
         content: `import Link from "next/link";
+${ACCORDION_IMPORT}
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { services } from "@/lib/services";
 import { site } from "@/lib/site";
 
 export default function Home() {
   return (
-    <>${hero(brief, { href: "/contact", label: "Contact us" })}
-      <section className="mx-auto max-w-6xl px-6 pb-24">
-        <Link href="/services" className="text-primary underline">See our services</Link>
-      </section>
+    <>${hero(brief, "Local and trusted", { href: "/contact", label: "Contact us" })}
+      <section className="bg-muted">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <h2 className="text-3xl font-semibold tracking-tight">What we do</h2>
+          <div className="mt-8 grid gap-6 sm:grid-cols-3">
+            {services.map((s) => (
+              <Card key={s.name}>
+                <CardHeader>
+                  <CardTitle className="text-lg">
+                    <h3>{s.name}</h3>
+                  </CardTitle>
+                  <CardDescription>{s.text}</CardDescription>
+                </CardHeader>
+              </Card>
+            ))}
+          </div>
+          <Button asChild variant="link" className="mt-6 px-0">
+            <Link href="/services">See all services</Link>
+          </Button>
+        </div>
+      </section>${faq([
+        { q: "Which areas do you serve?", a: "List the towns or neighbourhoods you cover." },
+        { q: "How soon can you come out?", a: "Say how quickly you can usually help." },
+        { q: "Do you offer free quotes?", a: "Explain how quotes and pricing work." },
+      ])}
     </>
   );
 }
@@ -196,27 +309,35 @@ export default function Home() {
       {
         path: "app/services/page.tsx",
         content: `import type { Metadata } from "next";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { services } from "@/lib/services";
 
-export const metadata: Metadata = { title: "Services" };
-
-const services = [
-  { name: "Service one", text: "What it is and who it's for." },
-  { name: "Service two", text: "What it is and who it's for." },
-  { name: "Service three", text: "What it is and who it's for." },
-];
+export const metadata: Metadata = {
+  title: "Services",
+  description: "The services we offer and who they're for.",
+};
 
 export default function Services() {
   return (
     <section className="mx-auto max-w-6xl px-6 py-20">
-      <h1 className="text-4xl font-bold">Services</h1>
-      <div className="mt-10 grid gap-8 sm:grid-cols-3">
+      <h1 className="text-4xl font-bold tracking-tight">Services</h1>
+      <div className="mt-10 grid gap-6 sm:grid-cols-3">
         {services.map((s) => (
-          <div key={s.name} className="rounded-lg border border-black/10 p-6">
-            <h2 className="text-xl font-semibold">{s.name}</h2>
-            <p className="mt-2 opacity-80">{s.text}</p>
-          </div>
+          <Card key={s.name}>
+            <CardHeader>
+              <CardTitle className="text-xl">
+                <h2>{s.name}</h2>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="text-muted-foreground">{s.text}</CardContent>
+          </Card>
         ))}
       </div>
+      <Button asChild size="lg" className="mt-12">
+        <Link href="/contact">Ask about a service</Link>
+      </Button>
     </section>
   );
 }
@@ -225,15 +346,22 @@ export default function Services() {
       {
         path: "app/about/page.tsx",
         content: `import type { Metadata } from "next";
+import { Separator } from "@/components/ui/separator";
 import { site } from "@/lib/site";
 
-export const metadata: Metadata = { title: "About" };
+export const metadata: Metadata = {
+  title: "About",
+  description: \`The story of \${site.name} and the people behind it.\`,
+};
 
 export default function About() {
   return (
     <section className="mx-auto max-w-3xl px-6 py-20">
-      <h1 className="text-4xl font-bold">About {site.name}</h1>
-      <p className="mt-6 text-lg opacity-80">Tell the story of the business and the people behind it.</p>
+      <h1 className="text-4xl font-bold tracking-tight">About {site.name}</h1>
+      <Separator className="my-8" />
+      <p className="text-lg text-muted-foreground">
+        Tell the story of the business and the people behind it.
+      </p>
     </section>
   );
 }
@@ -243,14 +371,27 @@ export default function About() {
         path: "app/contact/page.tsx",
         content: `import type { Metadata } from "next";
 import { LeadForm } from "@/components/lead-form";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
-export const metadata: Metadata = { title: "Contact" };
+export const metadata: Metadata = {
+  title: "Contact",
+  description: "Send us a message and we'll get back to you.",
+};
 
 export default function Contact() {
   return (
     <section className="mx-auto max-w-xl px-6 py-20">
-      <h1 className="mb-8 text-4xl font-bold">Contact us</h1>
-      <LeadForm />
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-3xl">
+            <h1>Contact us</h1>
+          </CardTitle>
+          <CardDescription>Send us a message and we'll get back to you.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LeadForm />
+        </CardContent>
+      </Card>
     </section>
   );
 }
@@ -268,19 +409,43 @@ export default function Contact() {
       ...leadForm("Claim it now"),
       {
         path: "app/page.tsx",
-        content: `import { LeadForm } from "@/components/lead-form";
+        content: `import { CheckIcon } from "lucide-react";
+import { LeadForm } from "@/components/lead-form";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { site } from "@/lib/site";
+
+const points = ["The first thing they get", "The second thing they get", "Why it's worth it"];
 
 export default function OptIn() {
   return (
-    <section className="mx-auto grid max-w-6xl gap-12 px-6 py-20 md:grid-cols-2">
+    <section className="mx-auto grid max-w-6xl items-start gap-12 px-6 py-20 md:grid-cols-2">
       <div>
-        <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">{site.name}</h1>
-        <p className="mt-6 text-lg opacity-80">{${lit(brief.goal ?? "Describe the offer in one sentence.")}}</p>
+        <Badge className="bg-highlight text-highlight-foreground">Free</Badge>
+        <h1 className="mt-6 text-4xl font-bold tracking-tight text-balance sm:text-5xl">{site.name}</h1>
+        <p className="mt-6 text-lg text-muted-foreground">
+          {${lit(brief.goal ?? "Describe the offer in one sentence.")}}
+        </p>
+        <ul className="mt-8 grid gap-3">
+          {points.map((point) => (
+            <li key={point} className="flex items-center gap-3">
+              <CheckIcon className="size-5 text-primary" aria-hidden />
+              {point}
+            </li>
+          ))}
+        </ul>
       </div>
-      <div className="rounded-xl border border-black/10 p-8 shadow-sm">
-        <LeadForm />
-      </div>
+      <Card className="shadow-lg">
+        <CardHeader>
+          <CardTitle className="text-2xl">
+            <h2>Get it now</h2>
+          </CardTitle>
+          <CardDescription>Enter your details and we'll send it straight over.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LeadForm />
+        </CardContent>
+      </Card>
     </section>
   );
 }
@@ -289,14 +454,23 @@ export default function OptIn() {
       {
         path: "app/thank-you/page.tsx",
         content: `import type { Metadata } from "next";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
-export const metadata: Metadata = { title: "Thank you", robots: { index: false } };
+export const metadata: Metadata = {
+  title: "Thank you",
+  description: "You're in. Check your inbox for the next step.",
+  robots: { index: false },
+};
 
 export default function ThankYou() {
   return (
     <section className="mx-auto max-w-2xl px-6 py-24 text-center">
-      <h1 className="text-4xl font-bold">You're in!</h1>
-      <p className="mt-4 text-lg opacity-80">Check your inbox for the next step.</p>
+      <h1 className="text-4xl font-bold tracking-tight">You're in!</h1>
+      <p className="mt-4 text-lg text-muted-foreground">Check your inbox for the next step.</p>
+      <Button asChild variant="outline" className="mt-8">
+        <Link href="/">Back to the home page</Link>
+      </Button>
     </section>
   );
 }
@@ -318,23 +492,47 @@ export default function ThankYou() {
       {
         path: "app/page.tsx",
         content: `import { LeadForm } from "@/components/lead-form";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { site } from "@/lib/site";
 
-const work = ["Project one", "Project two", "Project three", "Project four"];
+const work = [
+  { title: "Project one", tag: "Branding", text: "One line on the brief and the result." },
+  { title: "Project two", tag: "Web design", text: "One line on the brief and the result." },
+  { title: "Project three", tag: "Photography", text: "One line on the brief and the result." },
+  { title: "Project four", tag: "Campaign", text: "One line on the brief and the result." },
+];
 
 export default function Home() {
   return (
-    <>${hero(brief, { href: "#work", label: "See the work" })}
-      <section id="work" className="mx-auto grid max-w-6xl gap-6 px-6 pb-20 sm:grid-cols-2">
-        {work.map((title) => (
-          <article key={title} className="aspect-video rounded-xl bg-primary/10 p-6">
-            <h2 className="text-xl font-semibold">{title}</h2>
-          </article>
+    <>${hero(brief, "Portfolio", { href: "#work", label: "See the work" })}
+      <section id="work" className="mx-auto grid max-w-6xl scroll-mt-20 gap-6 px-6 pb-20 sm:grid-cols-2">
+        {work.map((item) => (
+          <Card key={item.title} className="overflow-hidden pt-0">
+            <div className="aspect-video bg-primary/10" aria-hidden />
+            <CardHeader>
+              <Badge variant="outline">{item.tag}</Badge>
+              <CardTitle className="text-xl">
+                <h2>{item.title}</h2>
+              </CardTitle>
+              <CardDescription>{item.text}</CardDescription>
+            </CardHeader>
+          </Card>
         ))}
       </section>
-      <section id="contact" className="mx-auto max-w-xl px-6 py-20">
-        <h2 className="mb-6 text-3xl font-semibold">Work with {site.name}</h2>
-        <LeadForm />
+      <section id="contact" className="mx-auto max-w-xl scroll-mt-20 px-6 py-20">
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-2xl">
+              <h2>Work with {site.name}</h2>
+            </CardTitle>
+            <CardDescription>Tell us about your project.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <LeadForm />
+          </CardContent>
+        </Card>
       </section>
     </>
   );
