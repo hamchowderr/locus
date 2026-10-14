@@ -1,5 +1,6 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /** Where the vendored and Locus-written skills live, one directory per skill. */
 export const SKILLS_DIR = new URL("../../skills/", import.meta.url);
@@ -9,7 +10,7 @@ const NOT_SERVED = /^(LICENSE|NOTICE)(\.[a-z]+)?$/i;
 
 /** Every served text file of every skill: { skill: { "SKILL.md": "...", "rules/x.md": "..." } }. */
 export async function readSkillFiles(
-  dir: string = SKILLS_DIR.pathname,
+  dir: string = fileURLToPath(SKILLS_DIR),
 ): Promise<Record<string, Record<string, string>>> {
   const skills: Record<string, Record<string, string>> = {};
   const entries = await readdir(dir, { withFileTypes: true });

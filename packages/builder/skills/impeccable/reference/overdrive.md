@@ -51,6 +51,7 @@ Organized by what you're trying to achieve, not by technology name.
 - **View Transitions API** (same-document: all browsers; cross-document: no Firefox): shared element morphing between states. A list item expanding into a detail page. A button morphing into a dialog. This is the closest thing to native FLIP animations.
 - **`@starting-style`** (all browsers): animate elements from `display: none` to visible with CSS only, including entry keyframes
 - **Spring physics**: natural motion with mass, tension, and damping instead of cubic-bezier. Libraries: motion, GSAP, or roll your own spring solver.
+  - *Modified by Otaku Solutions for Locus (Apache-2.0 §4(b)): a product name was removed from the libraries listed above.*
 
 ### Tie animation to scroll position
 - **Scroll-driven animations** (`animation-timeline: scroll()`): CSS-only, no JS. Parallax, progress bars, reveal sequences all driven by scroll position. (Chrome/Edge/Safari; Firefox: flag only; always provide a static fallback)

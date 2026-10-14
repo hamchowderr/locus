@@ -29,7 +29,7 @@ const FENCE_CLOSE = "<<<end untrusted>>>";
 export const UNTRUSTED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   fetch_reference: ["page", "error"],
   run_command: ["stdout", "stderr", "error"],
-  add_dependency: ["output", "error", "docs", "theme"],
+  add_dependency: ["output", "error", "docs", "theme", "contents"],
   check_site: ["output"],
   preview: ["recentLogs", "output", "logs"],
 };
@@ -52,8 +52,15 @@ const PATTERNS: RegExp[] = [
   /\b(ai|llm|gpt|claude|language model)\s*(agent|assistant|model|bot)?\b.{0,30}\b(reading|processing|parsing|summari[sz]ing)\b/i,
   /\b(dear|hey|attention|note to( the)?)\s+(ai|assistant|agent|bot|llm)\b/i,
   /^\s*(system|assistant|user)\s*:/i,
-  // The builder's own tools named in outside text have no business being there.
-  /\b(write_file|edit_file|delete_files|save_version|restore_version|add_dependency|run_command)\b/,
+  // The builder's own tools named in outside text have no business being there: the
+  // distinctive names (current and earlier ones), and the general-word tools (files, versions,
+  // brief) when called or given the arguments that change something.
+  /\b(write_file|edit_file|delete_files|save_version|restore_version|add_dependency|run_command|check_site|fetch_reference|generate_image|skill_read)\b/,
+  /\b(files|versions|brief)\s*\(\s*\{/i,
+  /\b(use|call|run|invoke)\s+(the\s+)?(files|versions|brief)\s+tool\b/i,
+  /\bfiles\b.{0,40}\baction\b\W{0,4}(write|edit|delete)\b/i,
+  /\bversions\b.{0,40}\baction\b\W{0,4}(save|restore)\b/i,
+  /\bbrief\b.{0,40}\bchanges\b\s*["']?\s*[:=]/i,
 ];
 
 /** Chat-template and role markers, defanged wherever they appear. */

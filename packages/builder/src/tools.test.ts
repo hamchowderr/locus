@@ -178,6 +178,18 @@ describe("sandbox tools", () => {
         error: expect.stringContaining("add_dependency"),
       });
     }
+    for (const [command, args] of [
+      ["npx", ["shadcn@latest", "add", "dialog"]],
+      ["npx", ["-y", "shadcn", "add", "dialog"]],
+      ["pnpm", ["dlx", "shadcn@latest", "add", "dialog"]],
+      ["pnpm", ["exec", "shadcn", "init"]],
+      ["bunx", ["shadcn", "add", "tabs"]],
+      ["yarn", ["dlx", "shadcn", "add", "tabs"]],
+    ] as const) {
+      expect(await call("run_command", { command, args }), `${command} ${args}`).toMatchObject({
+        error: expect.stringContaining("add_dependency({ component"),
+      });
+    }
     expect(t.runtimes.runtimes.size).toBe(0);
     // A plain install is fine.
     expect(await call("run_command", { command: "npm", args: ["install"] })).toMatchObject({
@@ -583,6 +595,9 @@ describe("add_dependency with a component", () => {
     expect(result).toMatchObject({
       added: ["dialog", "button", "utils"],
       files: ["components/ui/dialog.tsx", "components/ui/button.tsx"],
+      contents: expect.stringContaining(
+        '--- components/ui/dialog.tsx ---\nimport { Button } from "@/components/ui/button"',
+      ),
       kept: ["lib/utils.ts"],
       packages: ["@floating-ui/react@0.27.5"],
       installed: true,
@@ -675,6 +690,105 @@ describe("add_dependency with a component", () => {
     await call("files", { action: "write", path: "package.json", content: "{}" });
     expect(await call("add_dependency", { component: "sneaky" })).toHaveProperty("error");
     expect(await call("add_dependency", { component: "env" })).toHaveProperty("error");
+    expect((await t.session.workspace.listFiles()).map((f) => f.path)).toEqual(["package.json"]);
+  });
+
+  /** An item with one file at `target` (and any extra fields). */
+  const targeted = (name: string, target: string, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      name,
+      files: [{ path: `x/${name}.tsx`, type: "registry:file", target, content: "x" }],
+      ...extra,
+    });
+
+  it.each([
+    ["root-file.ts", "only go under"],
+    ["package.json", "only go under"],
+    ["next.config.mjs", "only go under"],
+    ["middleware.ts", "only go under"],
+    ["components/tsconfig.json", "never be configuration"],
+    ["lib/postcss.config.mjs", "never be configuration"],
+    [".github/workflows/ci.yml", "dot-folders"],
+    ["components/.hidden/x.tsx", "dot-folders"],
+    ["public/evil.js", "only go under"],
+  ])("refuses a registry file targeting %s and writes nothing", async (target, message) => {
+    const { call } = await setup({
+      runtime: registry({
+        [official("card")]: item("card", { registryDependencies: ["bad"] }),
+        [official("bad")]: targeted("bad", target),
+      }),
+    });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { component: "card", overwrite: true })).toEqual({
+      error: expect.stringContaining(message),
+    });
+    // The first item's file was fine, but nothing is written when any part is refused.
+    expect((await t.session.workspace.listFiles()).map((f) => f.path)).toEqual(["package.json"]);
+    expect(await t.session.workspace.readFile("package.json")).toBe("{}");
+  });
+
+  it("writes new files under app/ but never replaces one the site has", async () => {
+    const { call } = await setup({
+      runtime: registry({
+        [official("pricing-page")]: JSON.stringify({
+          name: "pricing-page",
+          files: [
+            { path: "a", type: "registry:page", target: "app/pricing/page.tsx", content: "new" },
+            { path: "b", type: "registry:page", target: "app/layout.tsx", content: "evil" },
+          ],
+        }),
+      }),
+    });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    await call("files", { action: "write", path: "app/layout.tsx", content: "mine" });
+    expect(
+      await call("add_dependency", { component: "pricing-page", overwrite: true }),
+    ).toMatchObject({ files: ["app/pricing/page.tsx"], kept: ["app/layout.tsx"] });
+    expect(await t.session.workspace.readFile("app/layout.tsx")).toBe("mine");
+  });
+
+  it("a URL item's URL dependencies must come from its own registry", async () => {
+    const root = "https://registry.example.com/r/hero.json";
+    const { call } = await setup({
+      runtime: registry({
+        [root]: item("hero", {
+          registryDependencies: ["button", "https://registry.example.com/r/glow.json"],
+        }),
+        [official("button")]: item("button"),
+        "https://registry.example.com/r/glow.json": item("glow"),
+        "https://registry.example.com/r/bad.json": item("bad", {
+          registryDependencies: ["https://elsewhere.example/r/x.json"],
+        }),
+      }),
+    });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { component: root })).toMatchObject({
+      added: ["hero", "button", "glow"],
+    });
+    expect(
+      await call("add_dependency", { component: "https://registry.example.com/r/bad.json" }),
+    ).toEqual({ error: expect.stringContaining("isn't on https://registry.example.com") });
+    expect(await t.session.workspace.readFile("components/ui/bad.tsx")).toBeNull();
+  });
+
+  it("leaves the draft untouched when a package can't be resolved or there are too many items", async () => {
+    const chain: Record<string, string> = {};
+    for (let i = 0; i < 14; i++) {
+      chain[official(`c${i}`)] = item(`c${i}`, { registryDependencies: [`c${i + 1}`] });
+    }
+    const { call } = await setup({
+      runtime: registry({
+        ...chain,
+        [official("needs-pkg")]: item("needs-pkg", { dependencies: ["no-such-pkg"] }),
+      }),
+    });
+    await call("files", { action: "write", path: "package.json", content: "{}" });
+    expect(await call("add_dependency", { component: "needs-pkg" })).toEqual({
+      error: expect.stringContaining("npm has no package called no-such-pkg"),
+    });
+    expect(await call("add_dependency", { component: "c0" })).toEqual({
+      error: expect.stringContaining("more than 12 components"),
+    });
     expect((await t.session.workspace.listFiles()).map((f) => f.path)).toEqual(["package.json"]);
   });
 });

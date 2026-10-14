@@ -51,6 +51,20 @@ export interface LocusAgentConfig extends ToolDeps {
 }
 
 /**
+ * Throws when a name in `ownTextTools` is one of the harness's own tools: those read GHL data
+ * (or the person's words), and naming one would let it past the GHL screen and into memory.
+ */
+export function refuseOwnTextCollisions(
+  ownTextTools: readonly string[],
+  reserved: readonly string[],
+) {
+  const clash = ownTextTools.filter((name) => reserved.includes(name));
+  if (clash.length > 0) {
+    throw new Error(`ownTextTools can't name the harness's own tools: ${clash.join(", ")}`);
+  }
+}
+
+/**
  * The Locus agent, bound to one client's session. Each run keeps its own taint on its request
  * context (see `untrusted.ts`), so the same agent can serve many runs.
  */
@@ -62,8 +76,9 @@ export function createLocusAgent({
   ownTextTools = [],
   ...deps
 }: LocusAgentConfig): Agent {
-  const untrusted = new UntrustedContentProcessor(ownTextTools);
   const tools = createLocusTools(deps);
+  refuseOwnTextCollisions(ownTextTools, Object.keys(tools));
+  const untrusted = new UntrustedContentProcessor(ownTextTools);
   const agent = new Agent({
     id: "locus",
     name: "Locus",

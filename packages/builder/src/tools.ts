@@ -12,10 +12,12 @@ import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import { ImageError, type ImageShape } from "./images.ts";
 import {
+  dependencyUrl,
   MAX_REGISTRY_ITEMS,
   packageOf,
   REGISTRY_FETCH_SCRIPT,
   RegistryItem,
+  registryTargetRefusal,
   registryUrl,
   rewriteImports,
   siteTarget,
@@ -65,6 +67,28 @@ const tail = (text: string, max = MAX_OUTPUT_CHARS) =>
   text.length > max ? `…(earlier output cut)\n${text.slice(-max)}` : text;
 
 const BriefChanges = DesignBrief.partial();
+
+/** Characters of written component code the model sees, per file and in all. */
+const MAX_CONTENT_PER_FILE = 4_000;
+const MAX_CONTENTS_CHARS = 16_000;
+
+/** The files a component wrote, as one text for the model (screened as registry text). */
+function writtenContents(writes: Map<string, string>): string {
+  let out = "";
+  for (const [path, content] of writes) {
+    const body =
+      content.length > MAX_CONTENT_PER_FILE
+        ? `${content.slice(0, MAX_CONTENT_PER_FILE)}\n…(rest cut; read it with files read)`
+        : content;
+    const part = `--- ${path} ---\n${body}\n`;
+    if (out.length + part.length > MAX_CONTENTS_CHARS) {
+      out += `…(more files cut; read them with files read)\n`;
+      break;
+    }
+    out += part;
+  }
+  return out;
+}
 
 const IMAGE_EXT = /\.(png)$/i;
 
@@ -145,18 +169,20 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
   };
 
   /**
-   * Pins each package at its current exact version in the draft's package.json (packages it
-   * already has are left alone), then installs once. Names must already have passed
-   * PACKAGE_NAME.
+   * Looks up the current exact version of each package package.json doesn't have yet, without
+   * changing anything. Names must already have passed PACKAGE_NAME.
    */
-  const addPackages = async (session: BuilderSession, wanted: { name: string; dev: boolean }[]) => {
-    const runtime = await ready(session);
+  const resolvePackages = async (
+    session: BuilderSession,
+    runtime: SiteRuntime,
+    wanted: { name: string; dev: boolean }[],
+  ) => {
     const pkg = await readPackageJson(session);
     const has = (name: string) =>
       pkg.dependencies?.[name] !== undefined || pkg.devDependencies?.[name] !== undefined;
-    const added: string[] = [];
+    const pins: { name: string; dev: boolean; version: string }[] = [];
     for (const { name, dev } of wanted) {
-      if (has(name)) continue;
+      if (has(name) || pins.some((p) => p.name === name)) continue;
       // `--` so a name can never be read as an option, whatever the schema let through.
       const view = await runtime.run("npm", ["view", "--", name, "version"], {
         timeoutMs: 60_000,
@@ -165,15 +191,26 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       if (view.exitCode !== 0 || !/^\d+\.\d+\.\d+/.test(version)) {
         throw new BuilderError(`npm has no package called ${name}.`);
       }
+      pins.push({ name, dev, version });
+    }
+    return { pkg, pins };
+  };
+
+  /** Writes resolved pins into the draft's package.json, then installs once. */
+  const writePackages = async (
+    session: BuilderSession,
+    { pkg, pins }: Awaited<ReturnType<typeof resolvePackages>>,
+  ) => {
+    const added = pins.map(({ name, version }) => `${name}@${version}`);
+    if (pins.length === 0) return { added, installed: true as boolean, output: undefined };
+    for (const { name, dev, version } of pins) {
       const field = dev ? "devDependencies" : "dependencies";
       pkg[field] = Object.fromEntries(
         Object.entries({ ...(pkg[field] ?? {}), [name]: version }).sort(([a], [b]) =>
           a.localeCompare(b),
         ),
       );
-      added.push(`${name}@${version}`);
     }
-    if (added.length === 0) return { added, installed: true as boolean, output: undefined };
     await session.workspace.writeFile("package.json", `${JSON.stringify(pkg, null, 2)}\n`);
     const installed = await (await ready(session)).install();
     return {
@@ -182,6 +219,13 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       output: installed.exitCode === 0 ? undefined : tail(installed.stderr || installed.stdout),
     };
   };
+
+  /**
+   * Pins each package at its current exact version in the draft's package.json (packages it
+   * already has are left alone), then installs once.
+   */
+  const addPackages = async (session: BuilderSession, wanted: { name: string; dev: boolean }[]) =>
+    writePackages(session, await resolvePackages(session, await ready(session), wanted));
 
   /** Reads one registry item from inside the sandbox. */
   const fetchRegistryItem = async (runtime: SiteRuntime, url: string) => {
@@ -206,7 +250,10 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     return item.data;
   };
 
-  /** A shadcn/ui component and the components it depends on, written into the draft. */
+  /**
+   * A shadcn/ui component and the components it depends on, written into the draft. Every item,
+   * file and package is fetched and checked first, so a refusal leaves the draft untouched.
+   */
   const addComponent = async (session: BuilderSession, ref: string, overwrite: boolean) => {
     const first = registryUrl(ref);
     if (typeof first !== "string") throw new BuilderError(first.error);
@@ -214,7 +261,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     const existing = new Set((await session.workspace.listFiles()).map((f) => f.path));
     const queue: { url: string; root: boolean }[] = [{ url: first, root: true }];
     const seen = new Set<string>();
-    const written: string[] = [];
+    const writes = new Map<string, string>();
     const kept: string[] = [];
     const items: string[] = [];
     const packages: { name: string; dev: boolean }[] = [];
@@ -234,15 +281,17 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         const target = siteTarget(file, item.type);
         if (!target) continue;
         const path = normalizeSitePath(target);
+        const refusal = registryTargetRefusal(path);
+        if (refusal) throw new BuilderError(refusal);
         // A component the site already has stays as it is (it may have been changed on
-        // purpose); only the component asked for is replaced, and only when asked.
-        if (existing.has(path) && !(next.root && overwrite)) {
+        // purpose); only the component asked for is replaced, and only when asked. A page or
+        // layout under app/ the site already has is never replaced.
+        const exists = existing.has(path) || writes.has(path);
+        if (exists && (!(next.root && overwrite) || path.startsWith("app/"))) {
           kept.push(path);
           continue;
         }
-        await session.workspace.writeFile(path, rewriteImports(file.content));
-        existing.add(path);
-        written.push(path);
+        writes.set(path, rewriteImports(file.content));
       }
       for (const spec of item.dependencies ?? [])
         packages.push({ name: packageOf(spec), dev: false });
@@ -252,9 +301,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       if (item.css) theme[`${item.name}.css`] = item.css;
       if (item.docs) docs.push(item.docs);
       for (const dep of item.registryDependencies ?? []) {
-        const url = registryUrl(dep);
+        const url = dependencyUrl(dep, first);
         if (typeof url !== "string") throw new BuilderError(url.error);
-        // Official names resolve against the official registry; a URL stays as given.
         if (!seen.has(url)) queue.push({ url, root: false });
       }
     }
@@ -263,10 +311,14 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         throw new BuilderError(`The component needs "${name}", which isn't an npm package name.`);
       }
     }
-    const installed = await addPackages(session, packages);
+    const resolved = await resolvePackages(session, runtime, packages);
+    // Everything checked: now write.
+    for (const [path, content] of writes) await session.workspace.writeFile(path, content);
+    const installed = await writePackages(session, resolved);
     return {
       added: items,
-      files: written,
+      files: [...writes.keys()],
+      ...(writes.size > 0 ? { contents: writtenContents(writes) } : {}),
       ...(kept.length > 0 ? { kept } : {}),
       packages: installed.added,
       installed: installed.installed,
@@ -736,6 +788,16 @@ export type SiteBuilderTools = ReturnType<typeof createSiteBuilderTools>;
 const PACKAGE_NAME = /^(@[a-z0-9~][a-z0-9._~-]*\/)?[a-z0-9~][a-z0-9._~-]*$/;
 
 const PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+/** Programs that run a package's CLI, alone or with a verb. */
+const RUNNERS = new Set(["npx", "bunx", "pnpx"]);
+const RUNNER_VERBS = new Set([
+  "pnpm dlx",
+  "pnpm exec",
+  "yarn dlx",
+  "yarn exec",
+  "npm exec",
+  "bun x",
+]);
 const ADDS = new Set(["install", "i", "add", "isntall", "in", "ins", "inst", "insta", "instal"]);
 const CHANGES = new Set([
   "uninstall",
@@ -759,8 +821,20 @@ const CHANGES = new Set([
  */
 export function packageCommandRefusal(command: string, args: string[]): string | null {
   const program = command.split("/").at(-1) ?? command;
-  if (!PACKAGE_MANAGERS.has(program)) return null;
   const words = args.filter((a) => !a.startsWith("-"));
+  // The shadcn CLI writes components and packages behind the draft's back.
+  const runs = RUNNERS.has(program)
+    ? words[0]
+    : RUNNER_VERBS.has(`${program} ${words[0]}`)
+      ? words[1]
+      : undefined;
+  if (runs && /^shadcn(-ui)?(@|$)/.test(runs)) {
+    return (
+      "run_command doesn't run the shadcn CLI. Add a component with " +
+      'add_dependency({ component: "dialog" }) (a name, or a registry item\'s https URL).'
+    );
+  }
+  if (!PACKAGE_MANAGERS.has(program)) return null;
   const [verb, ...rest] = words;
   if (!verb) return null;
   if ((ADDS.has(verb) && rest.length > 0) || CHANGES.has(verb)) {
