@@ -79,6 +79,8 @@ export const site = sqliteTable(
     index("site_location_idx").on(t.locationId),
     // A host project is one site, whichever agency or client links it.
     unique("site_host_project_unique").on(t.hostProjectId),
+    // Each save replaces the whole repository, so a repository is one site.
+    unique("site_repo_full_name_unique").on(t.repoFullName),
   ],
 );
 
