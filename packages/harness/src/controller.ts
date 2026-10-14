@@ -31,7 +31,7 @@ import {
   type BuiltinToolId,
 } from "@mastra/core/agent-controller";
 import type { MastraModelConfig } from "@mastra/core/llm";
-import { createLocusAgent, type LocusAgentConfig } from "./agent.ts";
+import { createLocusAgent, type LocusAgentConfig, refuseOwnTextCollisions } from "./agent.ts";
 import { type ConversationStore, clientResource } from "./conversation.ts";
 import type { RunContext, ToolDeps } from "./tools.ts";
 
@@ -63,6 +63,17 @@ export const LOCUS_MODES: AgentControllerMode[] = [
  * the GHL agent has neither. Hosts that add them can turn them back on.
  */
 const DISABLED_BUILTINS: BuiltinToolId[] = ["submit_plan", "subagent"];
+
+/** The controller's built-in tools, which `ownTextTools` may never name either. */
+const CONTROLLER_BUILTINS: BuiltinToolId[] = [
+  "ask_user",
+  "submit_plan",
+  "task_write",
+  "task_update",
+  "task_complete",
+  "task_check",
+  "subagent",
+];
 
 export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   model: MastraModelConfig;
@@ -99,6 +110,7 @@ export async function createLocusController({
   ownTextTools,
   ...deps
 }: LocusControllerConfig): Promise<AgentController> {
+  refuseOwnTextCollisions(ownTextTools ?? [], CONTROLLER_BUILTINS);
   const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
   const checkedSession = async (requestContext?: RunContext) => {
     const current = await session(requestContext);

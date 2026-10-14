@@ -319,6 +319,12 @@ describe("tools added by a feature", () => {
     expect(last).not.toContain(TAINT_MARK);
   });
 
+  test("ownTextTools can't name a harness or controller tool", async () => {
+    for (const name of ["query_data", "perform_action", "ask_user"]) {
+      await expect(featureController(["read_guide", name])).rejects.toThrow(name);
+    }
+  });
+
   test("any other added tool still goes through the GHL screen", async () => {
     script("guide-2", /read the guide, screened/i);
     const session = await featureController();

@@ -2,6 +2,7 @@ import {
   createSkill,
   type InlineSkill,
   resolveAgentSkills,
+  validateSkillContent,
   type WorkspaceSkills,
 } from "@mastra/core/skills";
 import { createTool } from "@mastra/core/tools";
@@ -19,38 +20,34 @@ import { SKILL_FILES } from "./bundle.generated.ts";
  * read with `skill_read` by the path the skill gives.
  */
 
-/** The SKILL.md frontmatter fields Mastra reads; anything else goes into `metadata`. */
+/**
+ * A skill from its files. The SKILL.md frontmatter (YAML, folded and multi-line values
+ * included) is parsed and checked by Mastra's own `validateSkillContent`, the rules it applies
+ * when it loads skills; fields outside the Agent Skills spec are not kept.
+ */
 function parseSkill(name: string, files: Record<string, string>): InlineSkill {
   const raw = files["SKILL.md"];
   if (raw === undefined) throw new Error(`skill ${name} has no SKILL.md`);
-  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(raw);
-  if (!match) throw new Error(`skill ${name}'s SKILL.md has no frontmatter`);
-  const fields: Record<string, string> = {};
-  for (const line of (match[1] ?? "").split(/\r?\n/)) {
-    const field = /^([A-Za-z][\w-]*):\s*(.*)$/.exec(line);
-    if (field?.[1]) fields[field[1]] = unquote(field[2] ?? "");
+  const parsed = validateSkillContent({ content: raw, directoryName: name });
+  if (!parsed.valid || !parsed.metadata || parsed.instructions === undefined) {
+    throw new Error(`skill ${name}'s SKILL.md is invalid: ${parsed.errors.join("; ")}`);
   }
-  const { name: declared, description, license, "user-invocable": invocable, ...rest } = fields;
-  if (declared !== name) throw new Error(`skill directory ${name} declares name ${declared}`);
-  if (!description) throw new Error(`skill ${name} has no description`);
+  const { description, license, "user-invocable": invocable, metadata } = parsed.metadata;
   const references = Object.fromEntries(
     Object.entries(files).filter(([path]) => path !== "SKILL.md"),
   );
   return createSkill({
     name,
-    description,
-    instructions: raw.slice(match[0].length),
-    ...(license ? { license } : {}),
-    ...(invocable ? { "user-invocable": invocable === "true" } : {}),
-    ...(Object.keys(rest).length > 0 ? { metadata: rest } : {}),
+    description: String(description).trim(),
+    instructions: parsed.instructions,
+    ...(typeof license === "string" ? { license } : {}),
+    ...(typeof invocable === "boolean" ? { "user-invocable": invocable } : {}),
+    ...(metadata && typeof metadata === "object"
+      ? { metadata: metadata as Record<string, unknown> }
+      : {}),
     references,
   });
 }
-
-const unquote = (value: string) => {
-  const v = value.trim();
-  return v.length >= 2 && (v[0] === '"' || v[0] === "'") && v.at(-1) === v[0] ? v.slice(1, -1) : v;
-};
 
 let skills: InlineSkill[] | undefined;
 
@@ -67,11 +64,8 @@ export const SITE_BUILDER_SKILL_NAMES = Object.keys(SKILL_FILES);
  * One line per skill (name: description), for the builder's instructions. Static, so the
  * instructions still cache.
  */
-export const SKILL_CATALOG = Object.entries(SKILL_FILES)
-  .map(([name, files]) => {
-    const description = /\ndescription:\s*(.*)\n/.exec(files["SKILL.md"] ?? "")?.[1] ?? "";
-    return `- ${name}: ${unquote(description)}`;
-  })
+export const SKILL_CATALOG = siteBuilderSkills()
+  .map((skill) => `- ${skill.name}: ${skill.description}`)
   .join("\n");
 
 let store: WorkspaceSkills | undefined;

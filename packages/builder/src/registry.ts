@@ -80,6 +80,50 @@ export function siteTarget(file: z.infer<typeof RegistryFile>, itemType?: string
   }
 }
 
+/** Top-level folders a registry item's files may go in. */
+const ALLOWED_ROOTS = new Set(["components", "lib", "hooks", "app"]);
+
+/** Build, runtime and tooling configuration, never written from a registry. */
+const CONFIG_FILE =
+  /^(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|components\.json|vercel\.json|(tsconfig|jsconfig)(\..*)?\.json|(next|postcss|tailwind|eslint|prettier|vite|vitest|biome)\.config\..*|(middleware|instrumentation|instrumentation-client|proxy)\.[cm]?[jt]sx?)$/i;
+
+/**
+ * Why a registry item's file may not be written at `path` (already normalized), or null. A
+ * third-party registry's files land in the deployed site, so they go only into the component,
+ * lib, hook and app folders, never into configuration or a dot-folder. (An app/ file the site
+ * already has is never replaced either: add_dependency keeps it.)
+ */
+export function registryTargetRefusal(path: string): string | null {
+  const segments = path.split("/");
+  if (segments.some((s) => s.startsWith("."))) {
+    return `A registry item can't write ${path}: dot-files and dot-folders are off limits.`;
+  }
+  const name = segments.at(-1) ?? "";
+  if (segments.length < 2 || !ALLOWED_ROOTS.has(segments[0] ?? "") || CONFIG_FILE.test(name)) {
+    return (
+      `A registry item can't write ${path}: its files may only go under components/, lib/, ` +
+      "hooks/ or app/, and never be configuration."
+    );
+  }
+  return null;
+}
+
+/**
+ * The URL of an item's registry dependency, or why it can't be used: official names resolve to
+ * the official registry, and a URL must be on the same origin as the item first asked for, so
+ * one registry can't pull in another's files.
+ */
+export function dependencyUrl(dep: string, rootUrl: string): string | { error: string } {
+  const url = registryUrl(dep);
+  if (typeof url !== "string" || COMPONENT_NAME.test(dep.trim())) return url;
+  if (new URL(url).origin !== new URL(rootUrl).origin) {
+    return {
+      error: `The component depends on ${url}, which isn't on ${new URL(rootUrl).origin}, the registry it came from.`,
+    };
+  }
+  return url;
+}
+
 /** Registry-internal imports, rewritten to the site's aliases (as the CLI does). */
 export function rewriteImports(content: string): string {
   return content.replace(
