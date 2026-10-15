@@ -280,8 +280,13 @@ export default async function Sites({
             <select
               name="projectId"
               required
+              defaultValue=""
               className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
             >
+              {/* Nothing chosen to start with, so no project gets linked by accident. */}
+              <option value="" disabled>
+                Choose a project
+              </option>
               {linkable.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
