@@ -1,4 +1,5 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
+import { SITE_BUILDER_MODE_ID } from "@locus/builder";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { MinimalChat } from "@/components/chat-minimal/minimal-chat";
@@ -6,6 +7,15 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { Notice } from "../ui";
+
+/**
+ * The modes the agent server's controller has for every client: Locus's default "act"
+ * mode and the site builder, which works on the site chosen on the Sites page.
+ */
+const CHAT_MODES = [
+  { id: "act", name: "Chat" },
+  { id: SITE_BUILDER_MODE_ID, name: "Site builder" },
+] as const;
 
 export default async function ChatPage() {
   const current = await currentSession();
@@ -29,7 +39,7 @@ export default async function ChatPage() {
         // The chat kit's conversation. Its requests go through this site's
         // /api/agent-controller routes, which the agent server checks against the sign-in.
         <TooltipProvider>
-          <MinimalChat className="mt-4 min-h-0 flex-1" />
+          <MinimalChat className="mt-4 min-h-0 flex-1" modes={CHAT_MODES} />
         </TooltipProvider>
       ) : (
         <div className="mt-6">
