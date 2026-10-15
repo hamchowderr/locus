@@ -448,7 +448,10 @@ export function createSiteBuilder(
   const resolve: ResolveBuilderSession = async (requestContext) => {
     const siteId = contextValue(requestContext, SITE_ID_KEY);
     if (typeof siteId !== "string" || !siteId) {
-      throw new ClientAccessDenied("no site in the request context");
+      // Not a refusal: nobody has chosen a site for this chat yet. Say what to do.
+      throw new BuilderError(
+        "No site is chosen for this chat. Choose one on the Sites page, then try again.",
+      );
     }
     const given = input.requester
       ? await input.requester(requestContext)

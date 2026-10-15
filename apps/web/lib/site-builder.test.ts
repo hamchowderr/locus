@@ -280,8 +280,12 @@ describe("resolving the builder session", () => {
     await expect(
       builder.resolve(context({ [SITE_ID_KEY]: "no-such-site" })),
     ).rejects.toBeInstanceOf(ClientAccessDenied);
-    await expect(builder.resolve(context({}))).rejects.toBeInstanceOf(ClientAccessDenied);
-    await expect(builder.resolve(undefined)).rejects.toBeInstanceOf(ClientAccessDenied);
+    // No site chosen yet is not a refusal: the person is told to choose one.
+    await expect(builder.resolve(context({}))).rejects.toThrow(/Choose one on the Sites page/);
+    await expect(builder.resolve(undefined)).rejects.toBeInstanceOf(BuilderError);
+    expect(await call(builder.tools, "files", { action: "list" }, context({}))).toEqual({
+      error: "No site is chosen for this chat. Choose one on the Sites page, then try again.",
+    });
     expect(opened).toEqual([]);
     expect(runtimes.runtimes.size).toBe(0);
   });
