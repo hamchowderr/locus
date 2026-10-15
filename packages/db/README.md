@@ -31,6 +31,9 @@ indexed, and a test enforces that: Turso bills rows scanned.
   It stores the full applied hash set per client, so a migration skipped in the middle is
   detected and repaired — Drizzle's migrator only checks the newest and would miss it. One
   client failing is recorded in `location_schema_version.last_error` and never stops the rest.
+  `db:migrate` runs it before every Production and staging deploy. Each run adds only the hashes
+  it applied, re-reading the list in a transaction, so deploys running at once never erase
+  each other's record.
 
 `TenantProvisioner` creates, grants and deletes a client's database
 (`provisionerFromEnv`, `LOCUS_PROVISIONER=local|turso`):

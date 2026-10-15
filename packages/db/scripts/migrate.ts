@@ -29,6 +29,16 @@ try {
   await migrateControlDb(db);
   console.log(`control database migrated: ${url}`);
 
+  // Client databases are migrated only by deploys of reviewed code: Production, or the
+  // staging branch's Preview. Other Preview builds share staging's databases and must not
+  // apply a branch's unmerged migrations to its clients.
+  const vercelEnv = process.env.VERCEL_ENV;
+  const branch = process.env.VERCEL_GIT_COMMIT_REF;
+  if (vercelEnv === "preview" && branch !== "staging") {
+    console.log(`client databases skipped: preview of ${branch ?? "a branch"}, not staging`);
+    process.exit();
+  }
+
   // A remote control database lists Turso clients, whatever NODE_ENV the build step has; the
   // local file lists clients in the same .data folder the app uses.
   const env = local ? process.env : { ...process.env, LOCUS_PROVISIONER: "turso" };
