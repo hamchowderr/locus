@@ -19,6 +19,21 @@ export const SCRIPTED_REPLY =
 export const SANDBOX_CHECK = "sandbox check";
 export const SANDBOX_CHECK_REPLY = "Sandbox check done: see the tool result above.";
 
+/**
+ * Three messages that let a person try each kind of tool call on staging without an AI model:
+ * a read that runs unasked, a question that reaches them straight away, and a deletion that
+ * waits for their approval. The deletion names a tag that cannot exist, so approving it only
+ * gets GoHighLevel's "not found" back.
+ */
+export const SHOW_TAGS = "show my tags";
+export const SHOW_TAGS_REPLY = "Those are this sub-account's tags: see the tool result above.";
+export const ASK_ME = "ask me something";
+export const ASK_ME_REPLY = "Thanks, I got your answer: see it above.";
+export const DELETE_TAG = "delete a tag";
+export const DELETE_TAG_REPLY =
+  "The delete test is finished: the tool result above shows what happened.";
+export const MISSING_TAG_ID = "locus-test-tag-that-does-not-exist";
+
 /** Starts the scripted model on a local port and returns its model config. */
 export async function scriptedModel(): Promise<MastraModelConfig> {
   const mock = new LLMock({ host: "127.0.0.1", port: 0, journalMaxEntries: 50 });
@@ -35,7 +50,29 @@ export async function scriptedModel(): Promise<MastraModelConfig> {
     },
   );
   mock.on({ toolCallId: "scripted-sandbox-check" }, { content: SANDBOX_CHECK_REPLY });
+  script(mock, SHOW_TAGS, SHOW_TAGS_REPLY, "query_data", {
+    sources: [{ as: "tags", operation: "locations.get-location-tags" }],
+    sql: "select name from tags order by name limit 20",
+  });
+  script(mock, ASK_ME, ASK_ME_REPLY, "ask_user", {
+    question: "Which colour do you like best?",
+    options: [{ label: "Red" }, { label: "Blue" }, { label: "Green" }],
+  });
+  script(mock, DELETE_TAG, DELETE_TAG_REPLY, "perform_action", {
+    operation: "locations.delete-tag",
+    params: { path: { tagId: MISSING_TAG_ID } },
+  });
   mock.onMessage(/^/, { content: SCRIPTED_REPLY });
   await mock.start();
   return { id: "anthropic/locus-scripted", url: `${mock.url}/v1`, apiKey: SCRIPTED };
+}
+
+/** Answers `message` with one call of `tool`, then answers that call's result with `reply`. */
+function script(mock: LLMock, message: string, reply: string, tool: string, args: object) {
+  const id = `scripted-${message.replaceAll(" ", "-")}`;
+  mock.on(
+    { userMessage: new RegExp(`^\\s*${message}\\s*$`, "i"), hasToolResult: false },
+    { toolCalls: [{ id, name: tool, arguments: JSON.stringify(args) }] },
+  );
+  mock.on({ toolCallId: id }, { content: reply });
 }

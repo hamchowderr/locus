@@ -391,11 +391,9 @@ describe("the chat kit's routes", () => {
     const { api } = apiFor(createFakeGhl({}));
 
     const asking = kitEvents(await kit(api, "stream", { text: "Tidy up my tags" }));
-    // Locus doesn't yet exempt `ask_user` from approval (bead locus-8c0.16), so the question
-    // itself waits for a yes first.
-    await asking.until((e) => e.type === "tool_approval_required");
-    await kit(api, "approve", { decision: "approve", toolCallId: "k3-ask" });
+    // The question reaches the person straight away: asking needs no approval first.
     await asking.until((e) => e.type === "__done__");
+    expect(asking.events.some((e) => e.type === "tool_approval_required")).toBe(false);
     expect(asking.events.some((e) => e.type === "tool_suspended")).toBe(true);
 
     const answer = { answer: "The old ones", toolCallId: "k3-ask" };

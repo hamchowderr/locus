@@ -396,11 +396,18 @@ export async function createSite(form: FormData) {
   const ctx = sessionContext(current);
   try {
     const client = await resolveActiveClient(locus().db, ctx);
-    await createClientSite(siteBuilderDeps(), ctx, client, {
+    const { siteId } = await createClientSite(siteBuilderDeps(), ctx, client, {
       name: text(form, "name"),
       kind: text(form, "kind"),
       templateId: text(form, "templateId"),
     });
+    // The site just made is the one the person means to build next, in the chat too. The site
+    // exists either way, so failing to choose it doesn't fail the creation.
+    try {
+      await rememberActiveSite(await chooseActiveSite(locus().db, ctx, client, siteId));
+    } catch (error) {
+      console.error("createSite: could not choose the new site", error);
+    }
   } catch (error) {
     if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
       back("/sites", error);
@@ -431,6 +438,12 @@ export async function chooseSite(form: FormData) {
     if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
     throw error;
   }
+  await rememberActiveSite(siteId);
+  redirect("/sites?chosen=1");
+}
+
+/** Names the chosen site in this browser's cookie (the session column is the source of truth). */
+async function rememberActiveSite(siteId: string) {
   (await cookies()).set(ACTIVE_SITE_COOKIE, siteId, {
     httpOnly: true,
     sameSite: "lax",
@@ -438,7 +451,6 @@ export async function chooseSite(form: FormData) {
     path: "/",
     maxAge: 60 * 60 * 24 * 30,
   });
-  redirect("/sites?chosen=1");
 }
 
 /** Takes a linked Vercel project off the active client. */

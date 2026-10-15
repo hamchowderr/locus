@@ -148,6 +148,9 @@ export async function createLocusController({
     resourceId,
     modes: [...LOCUS_MODES, ...modes],
     defaultModeId: "act",
+    // The agent's own question changes nothing, so it reaches the person without a yes first.
+    // GHL tools keep their own approval rule (`requireApproval` on each tool).
+    initialState: { permissionRules: { categories: {}, tools: { ask_user: "allow" } } },
     disableBuiltinTools,
     ...(tools ? { tools } : {}),
   });
