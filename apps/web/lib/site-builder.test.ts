@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type AuthorizedClient,
+  agentToWebKey,
   authorizeClient,
   ClientAccessDenied,
   creditsFor,
+  mintAgentToWebToken,
   type SessionContext,
   selectClient,
 } from "@locus/auth";
@@ -54,6 +56,7 @@ import {
   storeGithubAppKey,
   stubGithubApp,
 } from "./github-app.ts";
+import { publishRpcHandler } from "./publish-rpc.ts";
 import {
   ACTIVE_SITE_COOKIE,
   activeSiteIdFor,
@@ -69,6 +72,7 @@ import {
   openClientDb,
   pooledUsers,
   publishMessage,
+  remotePublish,
   remoteSiteRuntimes,
   runtimesFromEnv,
   SITE_ID_KEY,
@@ -461,6 +465,125 @@ describe("publishing saved versions", () => {
     );
     await expect(saving).rejects.toBeInstanceOf(PublishError);
     await expect(saving).rejects.toThrow(/Connect GitHub/);
+  });
+
+  describe("through the web app, from a host without the GitHub App", () => {
+    const SECRET = "test-auth-secret";
+    const sent: Request[] = [];
+    const handler = () =>
+      publishRpcHandler({
+        db,
+        openClientDb: (client) => openClientDb(provisioner, client),
+        publish: publishDeps,
+        authSecret: SECRET,
+        locusUrl: "https://locus.test",
+      });
+    // The agent server's side, calling the web app's handler in process.
+    const remote = () =>
+      remotePublish({
+        url: "https://locus.test/",
+        authSecret: SECRET,
+        vercelBypass: "bypass-123",
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          sent.push(request.clone());
+          return handler()(request);
+        },
+      });
+    const agentDeps = () => deps({ publish: null, publishVersion: remote() });
+
+    beforeEach(() => {
+      sent.length = 0;
+    });
+
+    it("commits a version saved in the chat, reading its files on the web app", async () => {
+      const { client, siteId } = await startedSite();
+      const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
+        siteId,
+        name: "a-site",
+      });
+      const builder = createSiteBuilder(agentDeps(), { client });
+      const rc = context({ [SITE_ID_KEY]: siteId });
+      await call(
+        builder.tools,
+        "files",
+        { action: "write", path: "app/about/page.tsx", content: "about" },
+        rc,
+      );
+      const saved = await call(
+        builder.tools,
+        "versions",
+        { action: "save", message: "Add about" },
+        rc,
+      );
+      expect(saved).toMatchObject({ saved: true, version: 2, commitUrl: expect.any(String) });
+      expect(saved.publishError).toBeUndefined();
+      const pushed = github.repoFiles(repoFullName as string);
+      expect(pushed?.["app/about/page.tsx"]).toBe("about");
+      expect(pushed?.["lib/locus.ts"]).toContain(`"https://locus.test/api/sites/${siteId}/leads"`);
+      const session = await builder.resolve(rc);
+      expect((await session.workspace.latestVersion())?.commitSha).toMatch(/\w+/);
+
+      // Only ids travel, with a token and the bypass header; no file content.
+      expect(sent).toHaveLength(1);
+      const request = sent[0] as Request;
+      expect(request.url).toBe("https://locus.test/api/internal/publish");
+      expect(request.headers.get("authorization")).toMatch(/^Bearer \S+$/);
+      expect(request.headers.get("x-vercel-protection-bypass")).toBe("bypass-123");
+      expect(Object.keys(await request.json()).sort()).toEqual(["siteId", "versionId"]);
+    });
+
+    it("passes on a refusal written for the person as a PublishError", async () => {
+      const { client, siteId } = await startedSite();
+      await ensureSiteRepo(publishDeps(), ctx("owner"), client, { siteId, name: "a-site" });
+      await db.delete(githubInstallation);
+      const builder = createSiteBuilder(agentDeps(), { client });
+      const session = await builder.resolve(context({ [SITE_ID_KEY]: siteId }));
+      const version = await session.workspace.latestVersion();
+      const saving = session.onVersionSaved?.(version as NonNullable<typeof version>, []);
+      await expect(saving).rejects.toBeInstanceOf(PublishError);
+      await expect(saving).rejects.toThrow(/Connect GitHub/);
+    });
+
+    it("refuses a bad token, another client's site, and another site's version", async () => {
+      const { client, siteId } = await startedSite();
+      await ensureSiteRepo(publishDeps(), ctx("owner"), client, { siteId, name: "a-site" });
+      const owner = await authorized("owner", clientB);
+      const other = await createClientSite(deps(), ctx("owner"), owner, {
+        name: "B",
+        kind: "website",
+        templateId: "blank",
+      });
+      const session = await createSiteBuilder(deps(), { client }).resolve(
+        context({ [SITE_ID_KEY]: siteId }),
+      );
+      const versionId = (await session.workspace.latestVersion())?.id as string;
+      const post = (token: string, body: unknown) =>
+        handler()(
+          new Request("https://locus.test/api/internal/publish", {
+            method: "POST",
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        );
+      const tokenFor = (memberId: string, locationId: string) =>
+        mintAgentToWebToken(agentToWebKey(SECRET), {
+          memberId,
+          locationId,
+          organizationId: "agency-a",
+        });
+
+      expect((await post("not-a-token", { siteId, versionId })).status).toBe(404);
+      // Staff may work on client A only.
+      const staffB = tokenFor("staff@agency-a", clientB);
+      expect((await post(staffB, { siteId: other.siteId, versionId })).status).toBe(403);
+      // A site of client B named under a client A token.
+      const staffA = tokenFor("staff@agency-a", clientA);
+      expect((await post(staffA, { siteId: other.siteId, versionId })).status).toBe(403);
+      // Client A's site with a version id from nowhere.
+      expect((await post(staffA, { siteId, versionId: "v-unknown" })).status).toBe(404);
+      expect((await post(staffA, { siteId })).status).toBe(400);
+    });
   });
 });
 
