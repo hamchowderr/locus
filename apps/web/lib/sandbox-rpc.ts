@@ -1,5 +1,6 @@
 import {
   type AgentToWebClaims,
+  type AuthorizedClient,
   agentToWebKey,
   authorizeClient,
   ClientAccessDenied,
@@ -31,12 +32,16 @@ export interface SandboxRpcDeps {
   now?: () => number;
 }
 
-/** The sandbox key for `siteId` if the token's member may work on it now; null if refused. */
-export async function sandboxKeyFor(
+/**
+ * The token's member as an `AuthorizedClient` for its client, if they may work on `siteId` now;
+ * null if refused. The member is loaded and must belong to the token's agency, the staff check
+ * runs again (`authorizeClient`), and the site must be that client's.
+ */
+export async function siteClientFor(
   db: ControlDb,
   claims: AgentToWebClaims,
   siteId: string,
-): Promise<string | null> {
+): Promise<AuthorizedClient | null> {
   try {
     const [row] = await db
       .select({ userId: member.userId, organizationId: member.organizationId })
@@ -50,11 +55,21 @@ export async function sandboxKeyFor(
     );
     if (client.memberId !== claims.memberId) return null;
     await clientSite(db, client, siteId);
-    return siteRuntimeKey(client, siteId);
+    return client;
   } catch (error) {
     if (error instanceof ClientAccessDenied) return null;
     throw error;
   }
+}
+
+/** The sandbox key for `siteId` if the token's member may work on it now; null if refused. */
+export async function sandboxKeyFor(
+  db: ControlDb,
+  claims: AgentToWebClaims,
+  siteId: string,
+): Promise<string | null> {
+  const client = await siteClientFor(db, claims, siteId);
+  return client ? siteRuntimeKey(client, siteId) : null;
 }
 
 export function sandboxRpcHandler(deps: SandboxRpcDeps): (request: Request) => Promise<Response> {
