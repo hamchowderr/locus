@@ -154,7 +154,12 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
     siteBuilder: {
       openClientDb: (client) => openClientDb(provisioner, client),
       runtimes: NO_LOCAL_SANDBOXES,
-      openRuntime: remoteSiteRuntimes({ url: config.authUrl, authSecret: config.authSecret }),
+      openRuntime: remoteSiteRuntimes({
+        url: config.authUrl,
+        authSecret: config.authSecret,
+        // Staging's web app is a protected Vercel preview; production's domain isn't.
+        ...(env.LOCUS_WEB_VERCEL_BYPASS ? { vercelBypass: env.LOCUS_WEB_VERCEL_BYPASS } : {}),
+      }),
       images: imagesFromEnv(env),
       // Publishing needs the GitHub App, which only the web app holds: versions saved here
       // are published from the Sites page.
