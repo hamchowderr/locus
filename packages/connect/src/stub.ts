@@ -98,6 +98,9 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
         }
         return Response.json({ new: true, contact: { id: `stub-contact-${++issued}` } });
       }
+      if (own && method === "PUT" && /^\/contacts\/stub-contact-\d+$/.test(url.pathname)) {
+        return Response.json({ succeeded: true, contact: { id: url.pathname.split("/")[2] } });
+      }
       if (own && method === "POST" && /^\/contacts\/stub-contact-\d+\/tags$/.test(url.pathname)) {
         return Response.json({ tags: [] }, { status: 201 });
       }
