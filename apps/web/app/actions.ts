@@ -30,7 +30,7 @@ import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } 
 import { safeNext } from "@/lib/next-path";
 import {
   ACTIVE_SITE_COOKIE,
-  clientSite,
+  chooseActiveSite,
   createClientSite,
   SiteInputError,
 } from "@/lib/site-builder";
@@ -425,7 +425,7 @@ export async function chooseSite(form: FormData) {
   let siteId = "";
   try {
     const client = await resolveActiveClient(locus().db, ctx);
-    siteId = (await clientSite(locus().db, client, text(form, "siteId"))).id;
+    siteId = await chooseActiveSite(locus().db, ctx, client, text(form, "siteId"));
   } catch (error) {
     if (error instanceof ClientAccessDenied) back("/sites", error);
     if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));

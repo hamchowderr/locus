@@ -9,6 +9,7 @@ import {
   ClientAccessDenied,
   creditsFor,
   type SessionContext,
+  selectClient,
 } from "@locus/auth";
 import { BuilderError, PublishError } from "@locus/builder";
 import {
@@ -35,6 +36,7 @@ import {
   member,
   memberLocation,
   organization,
+  session,
   site,
   subscription,
   usageEvent,
@@ -55,7 +57,9 @@ import {
 import {
   ACTIVE_SITE_COOKIE,
   activeSiteIdFor,
+  activeSiteIdForSession,
   CLIENT_KEY,
+  chooseActiveSite,
   closeClientDbs,
   cookieValue,
   createClientSite,
@@ -65,6 +69,7 @@ import {
   openClientDb,
   pooledUsers,
   publishMessage,
+  remoteSiteRuntimes,
   runtimesFromEnv,
   SITE_ID_KEY,
   type SiteBuilderDeps,
@@ -482,6 +487,38 @@ describe("the active site for the chat API", () => {
     );
   });
 
+  it("keeps the chosen site on the session for the agent server, re-checked on every read", async () => {
+    const a = await authorized("owner", clientA);
+    const b = await authorized("owner", clientB);
+    const { siteId: siteA } = await createClientSite(deps(), ctx("owner"), a, {
+      name: "A",
+      kind: "website",
+    });
+    const { siteId: siteB } = await createClientSite(deps(), ctx("owner"), b, {
+      name: "B",
+      kind: "website",
+    });
+    await db.insert(session).values({
+      id: "s-owner",
+      token: "t-owner",
+      userId: "owner",
+      expiresAt: new Date(Date.now() + 3_600_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(await activeSiteIdForSession(db, ctx("owner"), a)).toBeNull();
+    await expect(chooseActiveSite(db, ctx("owner"), a, siteB)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    expect(await chooseActiveSite(db, ctx("owner"), a, siteA)).toBe(siteA);
+    expect(await activeSiteIdForSession(db, ctx("owner"), a)).toBe(siteA);
+    // Read for another client, the same session's choice is nobody's.
+    expect(await activeSiteIdForSession(db, ctx("owner"), b)).toBeNull();
+    // Switching client forgets it.
+    await selectClient(db, ctx("owner"), clientB);
+    expect(await activeSiteIdForSession(db, ctx("owner"), a)).toBeNull();
+  });
+
   it("reads one cookie from a header", () => {
     expect(cookieValue("a=1; locus_site=x%2Fy", "locus_site")).toBe("x/y");
     expect(cookieValue("locus_site_other=1", "locus_site")).toBeNull();
@@ -638,6 +675,31 @@ describe("what reaches the model from a publishing refusal", () => {
     ]) {
       expect(publishMessage(new ConnectError(message))).toBe(message);
     }
+  });
+});
+
+describe("sandboxes through the web app", () => {
+  it("send the Vercel bypass only when given, beside the route's own token", async () => {
+    const client = await authorized("owner", clientA);
+    const seen: Headers[] = [];
+    const fetchWeb: typeof fetch = async (_input, init) => {
+      // A redirect would carry the bypass (and the token) elsewhere.
+      expect(init?.redirect).toBe("error");
+      seen.push(new Headers(init?.headers));
+      return Response.json({ ok: true, result: {} });
+    };
+    const open = (vercelBypass?: string) =>
+      remoteSiteRuntimes({
+        url: "https://staging.example/",
+        authSecret: "secret",
+        fetch: fetchWeb,
+        ...(vercelBypass ? { vercelBypass } : {}),
+      })(client, "site-1");
+    await open("bypass-value");
+    await open();
+    expect(seen[0]?.get("x-vercel-protection-bypass")).toBe("bypass-value");
+    expect(seen[0]?.get("authorization")).toMatch(/^Bearer /);
+    expect(seen[1]?.has("x-vercel-protection-bypass")).toBe(false);
   });
 });
 

@@ -18,6 +18,15 @@ import {
   resolveActiveClient,
   type SessionContext,
 } from "@locus/auth";
+import { imagesFromEnv } from "@locus/builder";
+import {
+  activeSiteIdForSession,
+  createSiteBuilder,
+  openClientDb,
+  remoteSiteRuntimes,
+  SITE_ID_KEY,
+  type SiteBuilderDeps,
+} from "@locus/builder/host";
 import { type ConnectDeps, clientGhlSession } from "@locus/connect";
 import { type ControlDb, DbSecretStore, openControlDb, provisionerFromEnv } from "@locus/db";
 import * as schema from "@locus/db/control";
@@ -87,7 +96,22 @@ export interface HostDeps {
   origin: string;
   /** How often an open event stream re-checks access; tests shorten it. */
   streamCheckMs?: number;
+  /** Where a request the agent failed is reported; the process's error log by default. */
+  logError?: (message: string, error?: unknown) => void;
+  /**
+   * The site builder's mode and tools, added to every client's controller. Its sandboxes are
+   * driven through the web app (`remoteSiteRuntimes`), which can reach Vercel Sandbox. Null
+   * leaves the builder out.
+   */
+  siteBuilder?: Omit<SiteBuilderDeps, "db"> | null;
 }
+
+/** The agent holds no sandbox credentials: every sandbox goes through the web app. */
+const NO_LOCAL_SANDBOXES: SiteBuilderDeps["runtimes"] = () => ({
+  open: async () => {
+    throw new Error("the agent server opens sandboxes only through the web app");
+  },
+});
 
 export function hostDepsFromEnv(env: Env = process.env): HostDeps {
   const config = configFromEnv(env);
@@ -103,6 +127,7 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
     },
   });
   const kitSession = sessionFromKitToken(db, chatKitKey(config.authSecret));
+  const provisioner = provisionerFromEnv(".data/tenants", env);
   return {
     db,
     session: async (headers) => {
@@ -120,12 +145,27 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
         { localFile: ".data/secrets.json", encrypted: (cipher) => new DbSecretStore(db, cipher) },
         env,
       ),
-      provisioner: provisionerFromEnv(".data/tenants", env),
+      provisioner,
       // The agent never runs the OAuth flow, so the redirect and scopes are never sent.
       ghl: { ...config.ghl, redirectUri: `${config.authUrl}/api/connect/crm/callback`, scopes: [] },
     },
     model: config.model,
     origin: new URL(config.authUrl).origin,
+    siteBuilder: {
+      openClientDb: (client) => openClientDb(provisioner, client),
+      runtimes: NO_LOCAL_SANDBOXES,
+      openRuntime: remoteSiteRuntimes({
+        url: config.authUrl,
+        authSecret: config.authSecret,
+        // Staging's web app is a protected Vercel preview; production's domain isn't.
+        ...(env.LOCUS_WEB_VERCEL_BYPASS ? { vercelBypass: env.LOCUS_WEB_VERCEL_BYPASS } : {}),
+      }),
+      images: imagesFromEnv(env),
+      // Publishing needs the GitHub App, which only the web app holds: versions saved here
+      // are published from the Sites page.
+      publish: null,
+      locusUrl: config.authUrl,
+    },
   };
 }
 
@@ -175,6 +215,9 @@ export function createHost({
   fetch,
   origin,
   streamCheckMs = STREAM_CHECK_MS,
+  logError = (message, error) =>
+    error === undefined ? console.error(message) : console.error(message, error),
+  siteBuilder = null,
 }: HostDeps) {
   // Per client, the sessions that opened it, newest last: its database token is the client's,
   // not one run's, so any of them still allowed in will do.
@@ -231,8 +274,24 @@ export function createHost({
     // Each run carries the session it acts for, so its GHL calls are checked against that
     // member, not whoever used the client last.
     requestContext: async (request) => {
-      const ctx = opened.get(request)?.ctx;
-      return ctx ? { [RUN_SESSION_KEY]: ctx } : {};
+      const run = opened.get(request);
+      if (!run) return {};
+      const context: Record<string, unknown> = { [RUN_SESSION_KEY]: run.ctx };
+      if (siteBuilder) {
+        // The site the member chose on the Sites page, if it is still this client's. The
+        // builder checks it again on every tool call.
+        try {
+          const client = await authorizedFor(run.ctx, run.clientId);
+          const siteId = await activeSiteIdForSession(db, run.ctx, client);
+          if (siteId) context[SITE_ID_KEY] = siteId;
+        } catch (error) {
+          // Without a site the builder refuses its tools; other requests carry on.
+          if (!(error instanceof ClientAccessDenied)) {
+            console.error("Reading the active site failed:", error);
+          }
+        }
+      }
+      return context;
     },
     controllerFor: async ({ clientId, locationId }) => {
       const { location } = await anyAuthorized(clientId);
@@ -259,16 +318,37 @@ export function createHost({
           // runtime but not under exactOptionalPropertyTypes.
         ) as unknown as StoreClient,
       });
+      /** The staff check for the session a run acts for. */
+      const runClient = async (requestContext?: { get: (key: string) => unknown }) => {
+        const ctx = requestContext?.get(RUN_SESSION_KEY) as SessionContext | undefined;
+        if (!ctx?.id) throw new ClientAccessDenied("run has no session");
+        return authorizedFor(ctx, clientId);
+      };
+      const builder = siteBuilder
+        ? createSiteBuilder(
+            { ...siteBuilder, db },
+            {
+              client: await anyAuthorized(clientId),
+              requester: (requestContext) =>
+                runClient(requestContext as { get: (key: string) => unknown } | undefined),
+            },
+          )
+        : null;
       return createLocusController({
         model,
         locationId,
-        session: async (requestContext) => {
-          const ctx = requestContext?.get(RUN_SESSION_KEY) as SessionContext | undefined;
-          if (!ctx?.id) throw new ClientAccessDenied("run has no session");
-          return clientGhlSession(connect, await authorizedFor(ctx, clientId));
-        },
+        session: async (requestContext) =>
+          clientGhlSession(connect, await runClient(requestContext)),
         storage,
         ...(fetch ? { fetch } : {}),
+        ...(builder
+          ? {
+              modes: builder.modes,
+              tools: builder.tools,
+              processors: builder.processors,
+              ownTextTools: builder.ownTextTools,
+            }
+          : {}),
       });
     },
   });
@@ -290,34 +370,86 @@ export function createHost({
     );
   };
 
+  const serve = async (request: Request): Promise<Response> => {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/health") return new Response("ok");
+    if (request.method === "GET" || request.method === "HEAD") {
+      return guardStream(request, await api.fetch(request));
+    }
+    // The session cookie authenticates these, so only the web app's pages may send them, and
+    // a body only as JSON: a cross-site form or text/plain post can't.
+    const from = request.headers.get("origin");
+    if (from && from !== origin) return Response.json({ error: "wrong origin" }, { status: 403 });
+    const max = pathname === KIT_STREAM_PATH ? KIT_STREAM_BODY_LIMIT : MAX_BODY_BYTES;
+    const body = request.body ? await readCapped(request.body, max) : Buffer.alloc(0);
+    if (!body) return Response.json({ error: "too large" }, { status: 413 });
+    if (body.length > 0 && !request.headers.get("content-type")?.startsWith("application/json")) {
+      return Response.json({ error: "send JSON" }, { status: 415 });
+    }
+    // Aborting the request is how a run streamed on its response is stopped.
+    const cut = new AbortController();
+    const forwarded = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      signal: AbortSignal.any([request.signal, cut.signal]),
+      ...(body.length > 0 ? { body } : {}),
+    });
+    return guardStream(forwarded, await api.fetch(forwarded), () => cut.abort());
+  };
+
   return {
+    /**
+     * Serves a request. A failure is logged with its cause (Mastra's own logger is off), and
+     * the caller gets only a generic error.
+     */
     async fetch(request: Request): Promise<Response> {
-      const { pathname } = new URL(request.url);
-      if (pathname === "/health") return new Response("ok");
-      if (request.method === "GET" || request.method === "HEAD") {
-        return guardStream(request, await api.fetch(request));
+      const what = `${request.method} ${new URL(request.url).pathname}`;
+      let response: Response;
+      try {
+        response = await serve(request);
+      } catch (error) {
+        logError(`Agent request failed: ${what}`, error);
+        return Response.json({ error: "something went wrong" }, { status: 500 });
       }
-      // The session cookie authenticates these, so only the web app's pages may send them, and
-      // a body only as JSON: a cross-site form or text/plain post can't.
-      const from = request.headers.get("origin");
-      if (from && from !== origin) return Response.json({ error: "wrong origin" }, { status: 403 });
-      const max = pathname === KIT_STREAM_PATH ? KIT_STREAM_BODY_LIMIT : MAX_BODY_BYTES;
-      const body = request.body ? await readCapped(request.body, max) : Buffer.alloc(0);
-      if (!body) return Response.json({ error: "too large" }, { status: 413 });
-      if (body.length > 0 && !request.headers.get("content-type")?.startsWith("application/json")) {
-        return Response.json({ error: "send JSON" }, { status: 415 });
-      }
-      // Aborting the request is how a run streamed on its response is stopped.
-      const cut = new AbortController();
-      const forwarded = new Request(request.url, {
-        method: request.method,
-        headers: request.headers,
-        signal: AbortSignal.any([request.signal, cut.signal]),
-        ...(body.length > 0 ? { body } : {}),
-      });
-      return guardStream(forwarded, await api.fetch(forwarded), () => cut.abort());
+      return reportFailure(response, what, logError);
     },
   };
+}
+
+/** How much of a failed response's body is logged. */
+const MAX_LOGGED_BODY = 2_000;
+
+/**
+ * The response, unless it is a server error: then its cause (the first part of its body) is
+ * logged and the caller gets a generic error in its place. Event streams pass through as is.
+ */
+export async function reportFailure(
+  response: Response,
+  what: string,
+  logError: (message: string, error?: unknown) => void,
+): Promise<Response> {
+  if (
+    response.status < 500 ||
+    response.headers.get("content-type")?.startsWith("text/event-stream")
+  ) {
+    return response;
+  }
+  let cause = "";
+  try {
+    const reader = response.body?.getReader();
+    while (reader && cause.length < MAX_LOGGED_BODY) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      cause += new TextDecoder().decode(value, { stream: true });
+    }
+    await reader?.cancel();
+  } catch (error) {
+    cause = `(body unreadable: ${error})`;
+  }
+  logError(
+    `Agent request failed: ${what} answered ${response.status}: ${cause.slice(0, MAX_LOGGED_BODY)}`,
+  );
+  return Response.json({ error: "something went wrong" }, { status: response.status });
 }
 
 /**
