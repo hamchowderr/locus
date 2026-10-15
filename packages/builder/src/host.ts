@@ -23,6 +23,7 @@ import {
   siteBlob,
   siteBrief,
   siteDraftFile,
+  siteLeadDay,
   siteVersion,
   siteVersionFile,
 } from "@locus/db/tenant";
@@ -44,7 +45,7 @@ import {
   WorkspaceError,
   withLocusSettings,
 } from "@locus/studio";
-import { and, count, eq, gte, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, notInArray, sum } from "drizzle-orm";
 import {
   BuilderError,
   type BuilderSession,
@@ -857,6 +858,7 @@ export async function deleteClientSite(
         tenant.delete(siteDraftFile).where(eq(siteDraftFile.siteId, siteId)),
         tenant.delete(siteBrief).where(eq(siteBrief.siteId, siteId)),
         tenant.delete(generationRun).where(eq(generationRun.siteId, siteId)),
+        tenant.delete(siteLeadDay).where(eq(siteLeadDay.siteId, siteId)),
         tenant
           .delete(siteBlob)
           .where(
@@ -921,6 +923,40 @@ async function whenNotBusy<T>(work: () => Promise<T>, retries = 6): Promise<T> {
       await new Promise((r) => setTimeout(r, 25 * 2 ** attempt + Math.random() * 25));
     }
   }
+}
+
+/** The days `siteLeadTotals` adds up, today included. */
+export const LEAD_TOTAL_DAYS = 30;
+
+/**
+ * Leads each site's forms sent to the CRM, and leads that failed, over the last
+ * `LEAD_TOTAL_DAYS` days (UTC). Sites with none are left out.
+ */
+export async function siteLeadTotals(
+  deps: Pick<SiteBuilderDeps, "openClientDb">,
+  client: AuthorizedClient,
+  siteIds: string[],
+  now = Date.now(),
+): Promise<Map<string, { delivered: number; failed: number }>> {
+  const totals = new Map<string, { delivered: number; failed: number }>();
+  if (siteIds.length === 0) return totals;
+  const since = new Date(now - (LEAD_TOTAL_DAYS - 1) * 86_400_000).toISOString().slice(0, 10);
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    const rows = await tenant
+      .select({
+        siteId: siteLeadDay.siteId,
+        delivered: sum(siteLeadDay.delivered).mapWith(Number),
+        failed: sum(siteLeadDay.failed).mapWith(Number),
+      })
+      .from(siteLeadDay)
+      .where(and(inArray(siteLeadDay.siteId, siteIds), gte(siteLeadDay.day, since)))
+      .groupBy(siteLeadDay.siteId);
+    for (const { siteId, delivered, failed } of rows) totals.set(siteId, { delivered, failed });
+  } finally {
+    release();
+  }
+  return totals;
 }
 
 /** The sites' names from their briefs in the client's database, by site id. */

@@ -16,6 +16,7 @@ import {
 import { BuilderError, PublishError } from "@locus/builder";
 import {
   ConnectError,
+  countSiteLead,
   createStubGithub,
   ensureSiteRepo,
   InstallationTokenCache,
@@ -79,6 +80,7 @@ import {
   SITE_ID_KEY,
   type SiteBuilderDeps,
   SiteInputError,
+  siteLeadTotals,
   siteRuntimeKey,
   toMeasurement,
   usageMeter,
@@ -651,6 +653,7 @@ describe("deleting a site", () => {
         versions: await n("select count(*) from site_version where site_id = ?"),
         drafts: await n("select count(*) from site_draft_file where site_id = ?"),
         briefs: await n("select count(*) from site_brief where site_id = ?"),
+        leadDays: await n("select count(*) from site_lead_day where site_id = ?"),
         versionFiles: await n("select count(*) from site_version_file", []),
         blobs: await n("select count(*) from site_blob", []),
       };
@@ -675,6 +678,13 @@ describe("deleting a site", () => {
       updatedAt: now,
     });
     await chooseActiveSite(db, ctx("owner"), client, siteId);
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      await countSiteLead(tenant, siteId, "delivered");
+      await countSiteLead(tenant, kept.siteId, "delivered");
+    } finally {
+      tenant.$client.close();
+    }
     const before = await tenantCounts(client, kept.siteId);
 
     await deleteClientSite(deps(), ctx("owner"), client, siteId);
@@ -682,10 +692,15 @@ describe("deleting a site", () => {
     expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
     expect(await activeSiteIdForSession(db, ctx("owner"), client)).toBeNull();
     const after = await tenantCounts(client, siteId);
-    expect(after).toMatchObject({ versions: 0, drafts: 0, briefs: 0 });
+    expect(after).toMatchObject({ versions: 0, drafts: 0, briefs: 0, leadDays: 0 });
     // The other site is untouched; only contents nothing uses any more are gone.
     const keptAfter = await tenantCounts(client, kept.siteId);
-    expect(keptAfter).toMatchObject({ versions: 1, briefs: 1, drafts: before.drafts });
+    expect(keptAfter).toMatchObject({
+      versions: 1,
+      briefs: 1,
+      leadDays: 1,
+      drafts: before.drafts,
+    });
     expect(keptAfter.blobs).toBeLessThan(before.blobs);
     expect(keptAfter.blobs).toBeGreaterThan(0);
     expect(await db.select().from(site).where(eq(site.id, kept.siteId))).toHaveLength(1);
@@ -730,6 +745,27 @@ describe("deleting a site", () => {
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
+  });
+});
+
+describe("form lead totals for the Sites page", () => {
+  it("adds up the last 30 days per site, for the session's client only", async () => {
+    const client = await authorized("owner", clientA);
+    const day = Date.parse("2026-10-14T12:00:00Z");
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      await countSiteLead(tenant, "site-1", "delivered", day);
+      await countSiteLead(tenant, "site-1", "delivered", day - 86_400_000);
+      await countSiteLead(tenant, "site-1", "failed", day - 29 * 86_400_000);
+      // Thirty days before today is outside the window.
+      await countSiteLead(tenant, "site-1", "delivered", day - 30 * 86_400_000);
+      await countSiteLead(tenant, "site-2", "failed", day);
+    } finally {
+      tenant.$client.close();
+    }
+    const totals = await siteLeadTotals(deps(), client, ["site-1", "site-3"], day);
+    expect([...totals]).toEqual([["site-1", { delivered: 2, failed: 1 }]]);
+    expect((await siteLeadTotals(deps(), client, [], day)).size).toBe(0);
   });
 });
 

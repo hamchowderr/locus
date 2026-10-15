@@ -104,6 +104,7 @@ describe("provisioning", () => {
       "site_blob",
       "site_brief",
       "site_draft_file",
+      "site_lead_day",
       "site_version",
       "site_version_file",
     ]);
