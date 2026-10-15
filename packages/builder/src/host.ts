@@ -11,13 +11,21 @@ import {
   mintClientDbToken,
   monthOf,
   recordUsage,
+  requireAgencyManager,
   type SessionContext,
   type UsageMeasurement,
 } from "@locus/auth";
 import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
 import { auditLog, member, session, site } from "@locus/db/control";
-import { siteBrief, siteDraftFile, siteVersion, siteVersionFile } from "@locus/db/tenant";
+import {
+  generationRun,
+  siteBlob,
+  siteBrief,
+  siteDraftFile,
+  siteVersion,
+  siteVersionFile,
+} from "@locus/db/tenant";
 import {
   FakeRuntimeProvider,
   RemoteRuntimeProvider,
@@ -36,7 +44,7 @@ import {
   WorkspaceError,
   withLocusSettings,
 } from "@locus/studio";
-import { and, count, eq, gte, inArray } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, notInArray } from "drizzle-orm";
 import {
   BuilderError,
   type BuilderSession,
@@ -806,6 +814,112 @@ export async function createClientSite(
     throw error;
   } finally {
     release?.();
+  }
+}
+
+/**
+ * Deletes a draft site of the session's client (the client from `client`, never the form):
+ * its files, versions, brief and runs in the client's own database, then its control row, with
+ * an audit entry; any session that had chosen it forgets it. Owners and admins only.
+ *
+ * A site with a repository or a Vercel project is refused: its published copy would keep
+ * sending leads to a site Locus no longer knows, and Locus never deletes anything on the
+ * agency's GitHub or Vercel. The site's `site.create` entry stays, so deleting doesn't give
+ * back plan allowance. The site's sandbox is not removed yet: no one can reach it once the row
+ * is gone, and Vercel stops it when its timeout ends.
+ */
+export async function deleteClientSite(
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb">,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<void> {
+  assertAuthorizedClient(client);
+  await requireAgencyManager(deps.db, ctx);
+  const row = await clientSite(deps.db, client, siteId);
+  if (row.repoFullName || row.hostProjectId || row.customDomain) {
+    throw new SiteInputError(
+      "This site is saved to GitHub or published on Vercel, so it can't be deleted here.",
+    );
+  }
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    const versions = tenant
+      .select({ id: siteVersion.id })
+      .from(siteVersion)
+      .where(eq(siteVersion.siteId, siteId));
+    // One transaction, so a write to another site can't land between the deletes and the
+    // sweep of contents no file uses any more. Another writer holding the lock is waited out.
+    await whenNotBusy(() =>
+      tenant.batch([
+        tenant.delete(siteVersionFile).where(inArray(siteVersionFile.versionId, versions)),
+        tenant.delete(siteVersion).where(eq(siteVersion.siteId, siteId)),
+        tenant.delete(siteDraftFile).where(eq(siteDraftFile.siteId, siteId)),
+        tenant.delete(siteBrief).where(eq(siteBrief.siteId, siteId)),
+        tenant.delete(generationRun).where(eq(generationRun.siteId, siteId)),
+        tenant
+          .delete(siteBlob)
+          .where(
+            and(
+              notInArray(
+                siteBlob.hash,
+                tenant.select({ hash: siteDraftFile.blobHash }).from(siteDraftFile),
+              ),
+              notInArray(
+                siteBlob.hash,
+                tenant.select({ hash: siteVersionFile.blobHash }).from(siteVersionFile),
+              ),
+            ),
+          ),
+      ]),
+    );
+  } finally {
+    release();
+  }
+  // The row goes only if it is still an unpublished draft of this client: a repository or
+  // project linked while the files were being deleted keeps it.
+  const [, removed] = await deps.db.batch([
+    deps.db.update(session).set({ activeSiteId: null }).where(eq(session.activeSiteId, siteId)),
+    deps.db
+      .delete(site)
+      .where(
+        and(
+          eq(site.id, siteId),
+          eq(site.locationId, client.location.id),
+          isNull(site.repoFullName),
+          isNull(site.hostProjectId),
+          isNull(site.customDomain),
+        ),
+      )
+      .returning({ id: site.id }),
+  ]);
+  if (removed.length === 0) {
+    throw new SiteInputError(
+      "The site was saved to GitHub or published while it was being deleted. Reload the page.",
+    );
+  }
+  await deps.db.insert(auditLog).values({
+    id: randomUUID(),
+    organizationId: client.location.organizationId,
+    actorUserId: ctx.userId,
+    locationId: client.location.id,
+    action: "site.delete",
+    detail: { siteId },
+  });
+}
+
+const isBusy = (error: unknown) =>
+  /SQLITE_BUSY|database is locked/i.test(`${error} ${(error as { cause?: unknown })?.cause ?? ""}`);
+
+/** Runs `work`, waiting out another writer holding the database lock with a short backoff. */
+async function whenNotBusy<T>(work: () => Promise<T>, retries = 6): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await work();
+    } catch (error) {
+      if (!isBusy(error) || attempt >= retries) throw error;
+      await new Promise((r) => setTimeout(r, 25 * 2 ** attempt + Math.random() * 25));
+    }
   }
 }
 
