@@ -258,33 +258,34 @@ describe("the agent server", () => {
     await session.create();
     await session.createThread("Tries");
     let events: { type: string; toolCallId?: string }[] = [];
+    let approve = true;
+    let ends = 0;
+    let wanted = 1;
     let ended: () => void = () => {};
     void session.subscribe({
       onEvent: (event) => {
         const e = event as { type: string; toolCallId?: string };
         events.push(e);
         if (e.type === "tool_approval_required" && e.toolCallId) {
-          void session.approveTool(e.toolCallId, true);
+          void session.approveTool(e.toolCallId, approve);
         }
         if (e.type === "tool_suspended" && e.toolCallId) {
+          // A question resumes in a second run, which must end too.
+          wanted = 2;
           void session.respondToToolSuspension(e.toolCallId, "Blue");
         }
-        if (e.type === "agent_end") ended();
+        if (e.type === "agent_end" && ++ends >= wanted) ended();
       },
     });
     const send = async (text: string) => {
       events = [];
+      ends = 0;
+      wanted = 1;
       const done = new Promise<void>((resolve) => {
         ended = resolve;
       });
       await session.sendMessage(text);
       await done;
-      // A question resumes in a second run; wait for it to end too.
-      if (events.some((e) => e.type === "tool_suspended")) {
-        await new Promise<void>((resolve) => {
-          ended = resolve;
-        });
-      }
       return { types: events.map((e) => e.type), text: JSON.stringify(events) };
     };
     const calls = () => ghl.requests.map((r) => `${r.method} ${r.url.pathname}`);
@@ -297,7 +298,15 @@ describe("the agent server", () => {
     const asked = await send(ASK_ME);
     expect(asked.types).not.toContain("tool_approval_required");
     expect(asked.types).toContain("tool_suspended");
+    expect(asked.text).toContain("User answered: Blue");
     expect(asked.text).toContain(ASK_ME_REPLY);
+
+    approve = false;
+    const declined = await send(DELETE_TAG);
+    expect(declined.types).toContain("tool_approval_required");
+    expect(calls()).toHaveLength(1);
+
+    approve = true;
 
     const deleted = await send(DELETE_TAG);
     expect(deleted.types).toContain("tool_approval_required");
