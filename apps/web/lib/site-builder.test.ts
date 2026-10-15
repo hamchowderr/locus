@@ -689,6 +689,13 @@ describe("deleting a site", () => {
     expect(keptAfter.blobs).toBeLessThan(before.blobs);
     expect(keptAfter.blobs).toBeGreaterThan(0);
     expect(await db.select().from(site).where(eq(site.id, kept.siteId))).toHaveLength(1);
+    // Contents both sites shared still resolve for the kept one.
+    const keptSession = await builder.resolve(context({ [SITE_ID_KEY]: kept.siteId }));
+    const keptVersion = await keptSession.workspace.latestVersion();
+    expect(await keptSession.workspace.snapshot()).not.toHaveLength(0);
+    expect(
+      await keptSession.workspace.versionFiles((keptVersion as NonNullable<typeof keptVersion>).id),
+    ).not.toHaveLength(0);
     const audit = await db.select().from(auditLog).where(eq(auditLog.action, "site.delete"));
     expect(audit).toMatchObject([{ actorUserId: "owner", detail: { siteId } }]);
   });
@@ -711,9 +718,13 @@ describe("deleting a site", () => {
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
   });
 
-  it("refuses a site saved to GitHub, and leaves it as it was", async () => {
+  it.each([
+    { repoFullName: "agency/a-site" },
+    { hostProjectId: "prj_1" },
+    { customDomain: "www.example.com" },
+  ])("refuses a published site (%o), and leaves it as it was", async (published) => {
     const { client, siteId } = await draft();
-    await db.update(site).set({ repoFullName: "agency/a-site" }).where(eq(site.id, siteId));
+    await db.update(site).set(published).where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
       /can't be deleted here/,
     );
