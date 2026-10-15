@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
+import {
+  type ControlDb,
+  LocalProvisioner,
+  migrateControlDb,
+  migrateTenant,
+  openControlDb,
+  openTenantDb,
+} from "@locus/db";
 import {
   agencyGhlConnection,
   authRateLimit,
@@ -10,6 +17,7 @@ import {
   organization,
   site,
 } from "@locus/db/control";
+import { siteLeadDay } from "@locus/db/tenant";
 import { createRateLimiter } from "@locus/ghl";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, type FakeGhl, type FakeRoutes } from "@locus/testing";
@@ -18,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
 import type { GhlAppConfig } from "./ghl-oauth.ts";
 import {
+  countSiteLead,
   hashVisitorIp,
   MAX_LEAD_BODY_BYTES,
   readLeadBody,
@@ -644,6 +653,95 @@ describe("a published site's lead form", () => {
       expect(text).not.toContain("location-token");
       expect(text).not.toContain("dana@example.test");
     }
+  });
+});
+
+describe("counting a site's leads in the client's own database", () => {
+  async function withClientDb() {
+    const provisioner = new LocalProvisioner(join(dir, "tenants"));
+    const { dbName, hostname } = await provisioner.create("sunrise");
+    await db
+      .update(location)
+      .set({ tursoDbName: dbName, tursoDbHostname: hostname })
+      .where(eq(location.id, "sunrise"));
+    await migrateTenant({ control: db, provisioner, locationId: "sunrise" });
+    const read = async () => {
+      const tenant = openTenantDb(provisioner.url(hostname));
+      try {
+        return await tenant
+          .select({
+            siteId: siteLeadDay.siteId,
+            day: siteLeadDay.day,
+            delivered: siteLeadDay.delivered,
+            failed: siteLeadDay.failed,
+          })
+          .from(siteLeadDay);
+      } finally {
+        tenant.$client.close();
+      }
+    };
+    return { provisioner, read };
+  }
+
+  it("counts delivered and failed leads per site and day, and nothing about the visitor", async () => {
+    const { provisioner, read } = await withClientDb();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await submit(deps(okRoutes, { provisioner }), lead)).status).toBe(200);
+    expect((await submit(deps(okRoutes, { provisioner }), lead)).status).toBe(200);
+    const failing = { ...okRoutes, "POST /contacts/upsert": { status: 500, body: {} } };
+    expect((await submit(deps(failing, { provisioner }), lead)).status).toBe(502);
+    // 01:00 the next day (UTC), while the agency's token is still good.
+    clock += 13 * 3_600_000;
+    expect((await submit(deps(okRoutes, { provisioner }), lead)).status).toBe(200);
+
+    expect(await read()).toEqual([
+      { siteId: "site-live", day: "2026-10-14", delivered: 2, failed: 1 },
+      { siteId: "site-live", day: "2026-10-15", delivered: 1, failed: 0 },
+    ]);
+  });
+
+  it("counts no spam: honeypot, too fast or rate limited", async () => {
+    const { provisioner, read } = await withClientDb();
+    const d = deps(okRoutes, { provisioner, limits: { perIp: { max: 1, windowMs: 60_000 } } });
+    await submit(d, { ...lead, fax: "bot" });
+    await submit(d, { ...lead, elapsedMs: 100 });
+    expect((await submit(d, lead)).status).toBe(200);
+    expect((await submit(d, lead)).status).toBe(429);
+    expect(await read()).toEqual([
+      { siteId: "site-live", day: "2026-10-14", delivered: 1, failed: 0 },
+    ]);
+  });
+
+  it("still answers the visitor when the count can't be written", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const provisioner = new LocalProvisioner(join(dir, "missing"));
+    // The client's database was never created or migrated: the write fails.
+    await db
+      .update(location)
+      .set({ tursoDbName: "loc-sunrise", tursoDbHostname: "loc-sunrise.local" })
+      .where(eq(location.id, "sunrise"));
+    expect(await submit(deps(okRoutes, { provisioner }), lead)).toEqual({
+      status: 200,
+      body: { ok: true },
+    });
+    const logged = errors.mock.calls.flat().join("\n");
+    expect(logged).toContain("Counting a lead for site site-live failed");
+    expect(logged).not.toMatch(/dana|example\.test/i);
+  });
+
+  it("adds to an existing day's row", async () => {
+    const { provisioner, read } = await withClientDb();
+    const tenant = openTenantDb(provisioner.url("loc-sunrise.local"));
+    try {
+      await countSiteLead(tenant, "site-x", "failed", CLOCK);
+      await countSiteLead(tenant, "site-x", "failed", CLOCK + 1);
+      await countSiteLead(tenant, "site-x", "delivered", CLOCK + 2);
+    } finally {
+      tenant.$client.close();
+    }
+    expect(await read()).toEqual([
+      { siteId: "site-x", day: "2026-10-14", delivered: 1, failed: 2 },
+    ]);
   });
 });
 

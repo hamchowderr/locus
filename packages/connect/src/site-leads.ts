@@ -1,7 +1,9 @@
 import { createHmac } from "node:crypto";
 import { isIP } from "node:net";
 import { consumeAttempt } from "@locus/auth";
+import { openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
 import { location, site } from "@locus/db/control";
+import { siteLeadDay } from "@locus/db/tenant";
 import {
   GhlError,
   type GhlOperation,
@@ -11,7 +13,7 @@ import {
   sharedRateLimiter,
 } from "@locus/ghl";
 import { operationById } from "@locus/skills";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { agencyToken, type ConnectDeps } from "./agency.ts";
 import { mintLocationToken } from "./ghl-oauth.ts";
 
@@ -36,17 +38,24 @@ import { mintLocationToken } from "./ghl-oauth.ts";
 // anything), so the per-site limits are kept high enough that spoofed IPs can't easily switch a
 // site's forms off. A captcha (Turnstile, bead locus-ptq.15) is the real fix for that; it would
 // be checked here, before the limits.
+//
+// What reached GHL, or failed to, is counted per site and day in the client's own database
+// (`countSiteLead`), so the Sites page can show forms working.
 
-export type SiteLeadDeps = Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now"> & {
-  /** GHL's per-client burst budget; defaults to the process-wide one. */
-  rateLimiter?: GhlRateLimiter;
-  limits?: Partial<SiteLeadLimits>;
-  /**
-   * The server-side key visitor IPs are hashed with (HMAC-SHA256), so a stored counter key can't
-   * be turned back into an address by hashing every IP. Never logged or sent anywhere.
-   */
-  ipHashKey: Uint8Array;
-};
+export type SiteLeadDeps = Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now"> &
+  Partial<Pick<ConnectDeps, "provisioner">> & {
+    /** GHL's per-client burst budget; defaults to the process-wide one. */
+    rateLimiter?: GhlRateLimiter;
+    limits?: Partial<SiteLeadLimits>;
+    /**
+     * The server-side key visitor IPs are hashed with (HMAC-SHA256), so a stored counter key can't
+     * be turned back into an address by hashing every IP. Never logged or sent anywhere.
+     */
+    ipHashKey: Uint8Array;
+  };
+
+/** What happened to a lead that got past the spam checks and limits. */
+export type SiteLeadOutcome = "delivered" | "failed";
 
 export interface SiteLeadLimits {
   /** Submissions one site accepts per window, from anyone: a high ceiling, logged when hit. */
@@ -222,9 +231,11 @@ export async function submitSiteLead(
     return tooMany(perSite.retryAfterSeconds);
   }
 
+  let outcome: SiteLeadOutcome = "delivered";
   try {
     await sendToGhl(deps, row.location, lead);
   } catch (error) {
+    outcome = "failed";
     // Logged without the visitor's details or GHL's text, which may echo them.
     const { name, status, operationId } = error as {
       name?: string;
@@ -234,9 +245,62 @@ export async function submitSiteLead(
     console.error(
       `Site lead for site ${row.site.id} failed: ${name ?? "Error"}${operationId ? ` ${operationId}` : ""}${status ? ` ${status}` : ""}`,
     );
-    return refuse(502, NOT_SENT);
   }
-  return ACCEPTED;
+  if (deps.provisioner) {
+    try {
+      await recordOutcome(deps.provisioner, row.location, row.site.id, outcome, now);
+    } catch (error) {
+      console.error(
+        `Counting a lead for site ${row.site.id} failed: ${(error as Error)?.name ?? "Error"}`,
+      );
+    }
+  }
+  return outcome === "delivered" ? ACCEPTED : refuse(502, NOT_SENT);
+}
+
+/**
+ * Counts the lead in the client's own database. There is no member on this path (a visitor sent
+ * the form), so the token is minted for the client the site's registry row names and nothing
+ * else, lives five minutes, and is used for one write.
+ */
+async function recordOutcome(
+  provisioner: TenantProvisioner,
+  client: typeof location.$inferSelect,
+  siteId: string,
+  outcome: SiteLeadOutcome,
+  now: number,
+): Promise<void> {
+  const token = await provisioner.mintToken(client.tursoDbName, { ttl: "5m" });
+  const tenant = openTenantDb(provisioner.url(client.tursoDbHostname), token);
+  try {
+    await countSiteLead(tenant, siteId, outcome, now);
+  } finally {
+    tenant.$client.close();
+  }
+}
+
+/** Adds one lead to the site's count for the day (UTC) in the client's database. */
+export async function countSiteLead(
+  tenant: TenantDb,
+  siteId: string,
+  outcome: SiteLeadOutcome,
+  now = Date.now(),
+): Promise<void> {
+  const column = outcome === "delivered" ? siteLeadDay.delivered : siteLeadDay.failed;
+  const updatedAt = new Date(now);
+  await tenant
+    .insert(siteLeadDay)
+    .values({
+      siteId,
+      day: updatedAt.toISOString().slice(0, 10),
+      delivered: outcome === "delivered" ? 1 : 0,
+      failed: outcome === "failed" ? 1 : 0,
+      updatedAt,
+    })
+    .onConflictDoUpdate({
+      target: [siteLeadDay.siteId, siteLeadDay.day],
+      set: { [outcome]: sql`${column} + 1`, updatedAt },
+    });
 }
 
 /** A visitor IP as kept in a counter key: HMAC-SHA256 under the server's key, shortened. */

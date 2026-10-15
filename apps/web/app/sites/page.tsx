@@ -16,7 +16,12 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
-import { activeSiteIdForSession, siteNames } from "@/lib/site-builder";
+import {
+  activeSiteIdForSession,
+  LEAD_TOTAL_DAYS,
+  siteLeadTotals,
+  siteNames,
+} from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-publish";
 import {
@@ -112,6 +117,10 @@ export default async function Sites({
     ),
   );
   const briefNames = isProblem(briefs) ? new Map<string, string>() : briefs;
+  // What each published site's forms sent to the CRM lately, counted in the client's database.
+  const published = sites.filter((s) => s.status !== "draft").map((s) => s.id);
+  const leads = await softly(() => siteLeadTotals(siteBuilderDeps(), client, published));
+  const leadTotals = isProblem(leads) ? undefined : leads;
   // Publishing: a site started in Locus gets a repository, then a Vercel project that builds it.
   const needsRepo = (s: (typeof sites)[number]) => !s.repoFullName && !s.hostProjectId;
   const repos: InstallationRepo[] | { problem: string } =
@@ -207,6 +216,7 @@ export default async function Sites({
             ) : (
               <p className="text-sm text-neutral-600">No domain yet.</p>
             )}
+            {s.status !== "draft" && leadTotals && <FormLeads totals={leadTotals.get(s.id)} />}
             {manager && needsRepo(s) && (
               <RepoForm
                 siteId={s.id}
@@ -475,5 +485,23 @@ function RemoveDomain({ siteId }: { siteId: string }) {
         Remove domain
       </button>
     </form>
+  );
+}
+
+/** What the site's forms sent to the CRM over the last days, and what didn't get there. */
+function FormLeads({ totals }: { totals: { delivered: number; failed: number } | undefined }) {
+  const delivered = totals?.delivered ?? 0;
+  const failed = totals?.failed ?? 0;
+  const leads = (n: number) => `${n} ${n === 1 ? "lead" : "leads"}`;
+  return (
+    <p className="text-sm text-neutral-600">
+      Forms: {leads(delivered)} sent to the CRM in the last {LEAD_TOTAL_DAYS} days
+      {failed > 0 && (
+        <span className="text-red-700">
+          , {leads(failed)} that couldn't be sent. Check the client's CRM connection.
+        </span>
+      )}
+      {failed === 0 && "."}
+    </p>
   );
 }
