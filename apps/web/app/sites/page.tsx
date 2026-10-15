@@ -12,12 +12,11 @@ import {
   siteDomainStatus,
 } from "@locus/connect";
 import { SITE_KINDS, TEMPLATES } from "@locus/studio";
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
-import { ACTIVE_SITE_COOKIE, siteNames } from "@/lib/site-builder";
+import { activeSiteIdForSession, siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-publish";
 import {
@@ -73,13 +72,14 @@ export default async function Sites({
   if (!current) redirect("/sign-in?next=%2Fsites");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
   const { error, created, chosen } = await searchParams;
-  const activeSite = (await cookies()).get(ACTIVE_SITE_COOKIE)?.value;
   const ctx = sessionContext(current);
   const client = await resolveActiveClient(locus().db, ctx).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
     throw e;
   });
   if (!client) redirect("/clients");
+  // The same choice the chat's builder reads (`session.active_site_id`).
+  const activeSite = await activeSiteIdForSession(locus().db, ctx, client);
 
   const manager = await requireAgencyManager(locus().db, ctx).then(
     () => true,
@@ -280,8 +280,13 @@ export default async function Sites({
             <select
               name="projectId"
               required
+              defaultValue=""
               className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
             >
+              {/* Nothing chosen to start with, so no project gets linked by accident. */}
+              <option value="" disabled>
+                Choose a project
+              </option>
               {linkable.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}

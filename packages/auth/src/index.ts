@@ -1,3 +1,9 @@
+export {
+  type AgentToWebClaims,
+  agentToWebKey,
+  mintAgentToWebToken,
+  verifyAgentToWebToken,
+} from "./agent-to-web.ts";
 export { createAuth, type LocusAuth, type LocusAuthConfig, type SendEmail } from "./auth.ts";
 export {
   agencyEntitlement,

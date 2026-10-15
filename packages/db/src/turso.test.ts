@@ -91,6 +91,23 @@ describe("TursoProvisioner", () => {
     await expect(provisioner.destroy("loc-abc")).rejects.toBeInstanceOf(TursoError);
   });
 
+  it("checks its settings by reading its group", async () => {
+    let status = 200;
+    const { calls, provisioner } = fakeTurso(() => ({
+      status,
+      json: status === 200 ? { group: { name: "locus" } } : { error: "refused" },
+    }));
+    await provisioner.check();
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url.pathname).toBe("/v1/organizations/hamchowderr/groups/locus");
+    for (const refused of [401, 404]) {
+      status = refused;
+      const error = await provisioner.check().catch((e: unknown) => e);
+      expect((error as TursoError).status).toBe(refused);
+      expect(String(error)).not.toContain(API_TOKEN);
+    }
+  });
+
   it("reports Turso's error without the Platform token", async () => {
     const { provisioner } = fakeTurso(() => ({
       status: 409,

@@ -31,14 +31,21 @@ import { cn } from '@/lib/utils';
 export function MinimalChat({
   className,
   approvalViews,
+  modes,
 }: {
   className?: string;
   /** What approval cards say, per tool name (components/chat/approval-view.tsx). */
   approvalViews?: ApprovalViews;
+  /**
+   * Controller modes the person can pick, first one selected. Each turn names the chosen
+   * mode and the server switches to it if it differs. Fewer than two shows no picker.
+   */
+  modes?: ReadonlyArray<{ id: string; name: string }>;
 }) {
   const controller = useAgentControllerChat();
   const { transcript, status, sendMessage, answerQuestion, pendingSuspension } = controller;
   const [input, setInput] = useState('');
+  const [mode, setMode] = useState(modes?.[0]?.id);
 
   const busy = status === 'streaming';
 
@@ -47,7 +54,7 @@ export function MinimalChat({
     const text = input.trim();
     if (!text || busy) return;
     setInput('');
-    void sendMessage(text);
+    void sendMessage(text, { mode });
   };
 
   return (
@@ -102,6 +109,20 @@ export function MinimalChat({
       </Conversation>
 
       <form onSubmit={onSubmit} className="mx-auto flex w-full max-w-2xl gap-2 p-3">
+        {modes && modes.length > 1 && (
+          <select
+            value={mode}
+            onChange={(e) => setMode(e.target.value)}
+            aria-label="Mode"
+            className="h-10 rounded-lg border border-border bg-background px-2 text-sm outline-none focus:border-ring"
+          >
+            {modes.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        )}
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
