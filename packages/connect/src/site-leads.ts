@@ -52,7 +52,12 @@ export type SiteLeadDeps = Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" |
      * be turned back into an address by hashing every IP. Never logged or sent anywhere.
      */
     ipHashKey: Uint8Array;
+    /** How long the visitor waits for a lead to be counted; `COUNT_TIMEOUT_MS` by default. */
+    countTimeoutMs?: number;
   };
+
+/** The longest a lead's count may hold up the visitor's answer. */
+export const COUNT_TIMEOUT_MS = 2_000;
 
 /** What happened to a lead that got past the spam checks and limits. */
 export type SiteLeadOutcome = "delivered" | "failed";
@@ -247,12 +252,26 @@ export async function submitSiteLead(
     );
   }
   if (deps.provisioner) {
+    // The visitor waits for the count, so it gets a short deadline; a slow token service or
+    // database costs the count, never the visitor's answer.
+    let timer: NodeJS.Timeout | undefined;
     try {
-      await recordOutcome(deps.provisioner, row.location, row.site.id, outcome, now);
+      await Promise.race([
+        recordOutcome(deps.provisioner, row.location, row.site.id, outcome, now),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            const late = new Error("took too long");
+            late.name = "Timeout";
+            reject(late);
+          }, deps.countTimeoutMs ?? COUNT_TIMEOUT_MS);
+        }),
+      ]);
     } catch (error) {
       console.error(
         `Counting a lead for site ${row.site.id} failed: ${(error as Error)?.name ?? "Error"}`,
       );
+    } finally {
+      clearTimeout(timer);
     }
   }
   return outcome === "delivered" ? ACCEPTED : refuse(502, NOT_SENT);
@@ -270,6 +289,7 @@ async function recordOutcome(
   outcome: SiteLeadOutcome,
   now: number,
 ): Promise<void> {
+  // Not read-only: this path writes the count.
   const token = await provisioner.mintToken(client.tursoDbName, { ttl: "5m" });
   const tenant = openTenantDb(provisioner.url(client.tursoDbHostname), token);
   try {
