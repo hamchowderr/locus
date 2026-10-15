@@ -21,6 +21,7 @@ import {
   PublishError,
   type ResolveBuilderSession,
   SITE_BUILDER_MODE,
+  SITE_BUILDER_OWN_TEXT_TOOLS,
   type SiteBuilderTools,
   UntrustedOutputProcessor,
   type UsageMeter,
@@ -38,6 +39,7 @@ import {
   templateById,
   type VersionInfo,
   WorkspaceError,
+  withLocusSettings,
 } from "@locus/studio";
 import { and, count, eq, gte, inArray } from "drizzle-orm";
 
@@ -71,6 +73,11 @@ export interface SiteBuilderDeps {
    * reported to the person after the version is saved.
    */
   publish?: (() => PublishDeps) | null;
+  /**
+   * This deployment's public address. Each published version gets `lib/locus.ts` pointing the
+   * site's form route at `<locusUrl>/api/sites/<siteId>/leads` (`withLocusSettings`).
+   */
+  locusUrl: string;
   /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
   billing?: boolean;
 }
@@ -85,6 +92,8 @@ export interface SiteBuilderWiring {
    * and build output on `processToolResult` (an `AgentControllerMode` can't carry processors).
    */
   processors: { output: [UntrustedOutputProcessor] };
+  /** For `createLocusController({ ownTextTools })`: the skill tools, which return Locus's text. */
+  ownTextTools: typeof SITE_BUILDER_OWN_TEXT_TOOLS;
   /** The resolver the tools use; exposed for hosts and tests. */
   resolve: ResolveBuilderSession;
   /** Closes this client's pooled database connection once no call is using it. */
@@ -228,6 +237,7 @@ export function publishHook(
   publish: () => PublishDeps,
   client: AuthorizedClient,
   siteId: string,
+  locusUrl: string,
 ): NonNullable<BuilderSession["onVersionSaved"]> {
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
@@ -236,7 +246,11 @@ export function publishHook(
       const { commitSha, url } = await commitSiteVersion(publish(), client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
-        files: files.map(({ path, content }) => ({ path, content })),
+        // The version's files, with this site's form endpoint in `lib/locus.ts`.
+        files: withLocusSettings(
+          files.map(({ path, content }) => ({ path, content })),
+          { siteId, locusUrl },
+        ),
       });
       return { commitSha, url };
     } catch (error) {
@@ -326,7 +340,8 @@ export const pooledUsers = (locationId: string) => pool.get(locationId)?.users ?
 
 /**
  * Site sandboxes from the environment: Vercel Sandbox with `LOCUS_SANDBOX_TOKEN`,
- * `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`; otherwise the in-memory fake outside
+ * `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`, or on a Vercel deployment with its own
+ * OIDC token (see `sandboxFromEnv`); otherwise the in-memory fake outside
  * production (commands succeed and run nothing, like the other stubs). In production without
  * them, sandbox tools answer that previews aren't set up; the setting names go to the log only.
  */
@@ -339,7 +354,7 @@ export function runtimesFromEnv(
   return {
     async open() {
       console.error(
-        "Locus is not configured: LOCUS_SANDBOX_TOKEN, LOCUS_SANDBOX_TEAM_ID or LOCUS_SANDBOX_PROJECT_ID is not set",
+        "Locus is not configured: no Vercel OIDC token, and LOCUS_SANDBOX_TOKEN, LOCUS_SANDBOX_TEAM_ID or LOCUS_SANDBOX_PROJECT_ID is not set",
       );
       throw new BuilderError("Site previews aren't set up on this deployment.");
     },
@@ -385,7 +400,7 @@ export function createSiteBuilder(
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
       ...(deps.publish
-        ? { onVersionSaved: publishHook(deps.db, deps.publish, client, siteId) }
+        ? { onVersionSaved: publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl) }
         : {}),
     };
   };
@@ -394,6 +409,7 @@ export function createSiteBuilder(
     modes: [SITE_BUILDER_MODE],
     tools: createSiteBuilderTools({ resolve }),
     processors: { output: [new UntrustedOutputProcessor()] },
+    ownTextTools: SITE_BUILDER_OWN_TEXT_TOOLS,
     resolve,
     close: () => closeClientDbs(bound.location.id),
   };

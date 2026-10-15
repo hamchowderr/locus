@@ -24,13 +24,16 @@
  * permission rules, rebinding the resource, listing other resources or every active run,
  * cloning or deleting threads, goals, notifications and workspace routes.
  *
+ * The chat kit's own routes (`kit.ts`) are served under `${prefix}/kit/agent-controller/`,
+ * behind the same `authorize`, on the same controller.
+ *
  * The host caps request body size (the guard reads JSON bodies before Mastra does).
  *
  * The controller keeps live sessions and approval gates in memory, and a message's reply
  * arrives on the session's event stream, so the host must be one long-running process.
  */
 
-import { CONTROLLER_ID, clientResource } from "@locus/harness";
+import { CONTROLLER_ID, clientResource, controllerStorage } from "@locus/harness";
 import { Mastra } from "@mastra/core";
 import type { AgentController } from "@mastra/core/agent-controller";
 import { MastraServer } from "@mastra/hono";
@@ -53,8 +56,12 @@ import {
   SWITCH_AGENT_CONTROLLER_THREAD_ROUTE,
 } from "@mastra/server/handlers/agent-controller";
 import { Hono } from "hono";
+import { asCaller, isKitRoute, type KitCaller, kitRoutes } from "./kit.ts";
 
 /** The Mastra routes the chat needs. Anything else answers 404. */
+/** The largest body the chat kit's stream route takes (a message with its attachments). */
+export { STREAM_BODY_LIMIT as KIT_STREAM_BODY_LIMIT } from "./mastra/routes/stream-body.ts";
+
 export const SERVED_ROUTES = [
   CREATE_AGENT_CONTROLLER_SESSION_ROUTE,
   GET_AGENT_CONTROLLER_SESSION_STATE_ROUTE,
@@ -121,18 +128,103 @@ export function createAgentApi({
   requestContext,
 }: AgentApiConfig) {
   const base = `${prefix}/agent-controller/${CONTROLLER_ID}`;
+  const kitBase = `${prefix}/kit/agent-controller`;
+  const controllers = new Map<string, Promise<Mastra>>();
   const apps = new Map<string, Promise<Hono>>();
+  const kitApps = new Map<string, Promise<Hono>>();
+
+  /**
+   * One controller per client, hosted by one Mastra that both Mastra's routes and the kit's
+   * use. The Mastra gets the controller's own store: the controller reads threads and messages
+   * through it, and a Mastra without one would fall back to an in-memory store.
+   */
+  const mastraOf = (member: AgentApiMember) => {
+    const { clientId } = member;
+    let mastra = controllers.get(clientId);
+    if (!mastra) {
+      mastra = controllerFor(member).then(
+        (controller) =>
+          new Mastra({
+            agentControllers: { [CONTROLLER_ID]: controller },
+            storage: controllerStorage(controller),
+            server: { apiRoutes: kitRoutes(controller) },
+            logger: false,
+          }),
+      );
+      mastra.catch(() => controllers.delete(clientId));
+      controllers.set(clientId, mastra);
+    }
+    return mastra;
+  };
+
+  const kitAppFor = (member: AgentApiMember) => {
+    const { clientId } = member;
+    let app = kitApps.get(clientId);
+    if (!app) {
+      app = (async () => {
+        const mastra = await mastraOf(member);
+        const hono = new Hono();
+        const server = new MastraServer({ app: hono, mastra });
+        server.registerContextMiddleware();
+        await server.registerCustomApiRoutes();
+        return hono;
+      })();
+      app.catch(() => kitApps.delete(clientId));
+      kitApps.set(clientId, app);
+    }
+    return app;
+  };
+
+  /** A request for the chat kit's routes (`kit.ts`), behind the same checks. */
+  const kitFetch = async (request: Request, url: URL): Promise<Response> => {
+    const member = await authorize(request);
+    if (!member) return deny(401, "sign in first");
+    const segments = decodeSegments(url.pathname.slice(kitBase.length));
+    if (!segments) return deny(400, "bad path");
+    if (!isKitRoute(request.method, segments)) return deny(404, "not found");
+    let body: string | undefined;
+    if (BODY_METHODS.has(request.method)) {
+      const sent = await readJson(request);
+      if (sent === undefined) return deny(400, "bad request");
+      // "Always allow" would let every later call of that kind run unasked.
+      if (segments[0] === "approve" && sent.decision === "always_allow_category") {
+        return deny(403, "decide each change");
+      }
+      // The host sets a run's request context; none of it comes from the browser.
+      const { requestContext: _ignored, ...rest } = sent;
+      body = JSON.stringify(rest);
+    }
+    const forwarded = new URL(url);
+    forwarded.searchParams.delete("requestContext");
+    forwarded.pathname = ["/agent-controller", ...segments.map(encodeURIComponent)].join("/");
+    const headers = new Headers(request.headers);
+    if (body !== undefined) {
+      headers.set("content-type", "application/json");
+      headers.delete("content-length");
+    }
+    const who: KitCaller = {
+      memberId: member.memberId,
+      context: (await requestContext?.(request, member)) ?? {},
+    };
+    const app = await kitAppFor(member);
+    return asCaller(who, () =>
+      app.fetch(
+        new Request(forwarded, {
+          method: request.method,
+          headers,
+          ...(body !== undefined ? { body } : {}),
+          signal: request.signal,
+        }),
+      ),
+    );
+  };
 
   const appFor = (member: AgentApiMember) => {
     const { clientId } = member;
     let app = apps.get(clientId);
     if (!app) {
       app = (async () => {
-        const controller = await controllerFor(member);
-        const mastra = new Mastra({
-          agentControllers: { [CONTROLLER_ID]: controller },
-          logger: false,
-        });
+        const mastra = await mastraOf(member);
         const hono = new Hono();
         const server = new MastraServer({ app: hono, mastra, prefix });
         server.registerContextMiddleware();
@@ -152,6 +244,7 @@ export function createAgentApi({
   return {
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
+      if (url.pathname.startsWith(`${kitBase}/`)) return kitFetch(request, url);
       if (!url.pathname.startsWith(`${base}/`)) {
         return deny(404, "not found");
       }

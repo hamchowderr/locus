@@ -3,7 +3,12 @@ import { dirname } from "node:path";
 
 import { SecretCipher } from "./cipher.ts";
 
-export { generateSecretsKey, SecretCipher, SecretUnreadable } from "./cipher.ts";
+export {
+  deriveSecretsSubkey,
+  generateSecretsKey,
+  SecretCipher,
+  SecretUnreadable,
+} from "./cipher.ts";
 
 /**
  * Where credentials live, addressed by path (`secretRef`, e.g. `/locus/ghl/<organizationId>`).

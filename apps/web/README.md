@@ -41,7 +41,7 @@ Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hos
 | `LOCUS_OPERATORS` | your own email, to try `/operator` | the deployment's operators, comma-separated emails (verified accounts only). They see every agency at `/operator` and can comp one; unset means none |
 | `STRIPE_SECRET_KEY` | a **test-mode** key, to try billing | Stripe's secret key. Unset means billing is off and nothing is limited |
 | `STRIPE_WEBHOOK_SECRET` | from `stripe listen` | the signing secret of the webhook endpoint `https://<host>/api/auth/stripe/webhook` |
-| `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID`, `LOCUS_SANDBOX_PROJECT_ID` | unset: the site builder uses the in-memory fake sandbox (commands succeed and run nothing) | Otaku's own Vercel team, for site sandboxes. Required for the site builder's sandbox tools |
+| `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID`, `LOCUS_SANDBOX_PROJECT_ID` | unset: the site builder uses the in-memory fake sandbox (commands succeed and run nothing) | Otaku's own Vercel team, for site sandboxes. Not needed on Vercel, where the deployment's OIDC token is used; `LOCUS_SANDBOX=off` turns sandboxes off |
 | `LOCUS_IMAGE_API_KEY` (+ optional `LOCUS_IMAGE_BASE_URL`, `LOCUS_IMAGE_MODEL`) | — | the site builder's image API. Unset means no image generation |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
@@ -109,6 +109,13 @@ Vercel project, which stay an owner's or admin's step (`ensureSiteRepo`, `ensure
 Only Locus's own refusal messages reach the model; GitHub's raw text is logged instead.
 The GitHub App's private key comes from the secret store (`github-app-key` script), never the
 environment. With `GITHUB_MODE=stub` the stub GitHub and a throwaway key are used.
+
+Each published copy gets `lib/locus.ts` pointing the site's form route at this deployment's
+`/api/sites/<siteId>/leads` (`withLocusSettings`, using `BETTER_AUTH_URL`, or the branch URL on
+a Vercel preview). That route (`app/api/sites/[siteId]/leads`) takes JSON only, sends no CORS
+headers (so only the site's server reaches it, never a browser on another origin) and hands the
+body to `submitSiteLead` in `@locus/connect`, which finds the client from the site's row and
+writes the lead to its GHL sub-account. See `packages/connect/README.md`.
 
 ## Billing
 
