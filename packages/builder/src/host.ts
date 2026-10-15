@@ -438,6 +438,9 @@ export function createSiteBuilder(
     const given = input.requester
       ? await input.requester(requestContext)
       : (contextValue(requestContext, CLIENT_KEY) as AuthorizedClient | undefined);
+    // A host that names the run's member must always name one: never fall back to `bound`,
+    // which may be another member of the client.
+    if (input.requester && !given) throw new ClientAccessDenied("run has no member");
     const requester = given ?? bound;
     assertAuthorizedClient(requester);
     if (requester.location.id !== bound.location.id) {

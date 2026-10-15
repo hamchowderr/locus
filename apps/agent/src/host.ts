@@ -276,7 +276,10 @@ export function createHost({
           const siteId = await activeSiteIdForSession(db, run.ctx, client);
           if (siteId) context[SITE_ID_KEY] = siteId;
         } catch (error) {
-          if (!(error instanceof ClientAccessDenied)) throw error;
+          // Without a site the builder refuses its tools; other requests carry on.
+          if (!(error instanceof ClientAccessDenied)) {
+            console.error("Reading the active site failed:", error);
+          }
         }
       }
       return context;
