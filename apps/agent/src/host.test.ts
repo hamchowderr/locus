@@ -32,9 +32,16 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createHost, PREFIX, reportFailure, sessionFromKitToken } from "./host.ts";
 import {
+  ASK_ME,
+  ASK_ME_REPLY,
+  DELETE_TAG,
+  DELETE_TAG_REPLY,
+  MISSING_TAG_ID,
   SANDBOX_CHECK,
   SANDBOX_CHECK_REPLY,
   SCRIPTED_REPLY,
+  SHOW_TAGS,
+  SHOW_TAGS_REPLY,
   scriptedModel,
 } from "./scripted-model.ts";
 
@@ -243,6 +250,68 @@ describe("the agent server", () => {
     await session.sendMessage("Hello there");
     await done;
     expect(JSON.stringify(events)).toContain(SCRIPTED_REPLY);
+  });
+
+  test("the scripted model's test messages read unasked, ask straight away, and delete only on a yes", async () => {
+    const { chat, client, ghl } = await hostFor({ as: "owner" }, await scriptedModel());
+    const session = chat.getAgentController("locus").session(`client:${client.ghlLocationId}`);
+    await session.create();
+    await session.createThread("Tries");
+    let events: { type: string; toolCallId?: string }[] = [];
+    let approve = true;
+    let ends = 0;
+    let wanted = 1;
+    let ended: () => void = () => {};
+    void session.subscribe({
+      onEvent: (event) => {
+        const e = event as { type: string; toolCallId?: string };
+        events.push(e);
+        if (e.type === "tool_approval_required" && e.toolCallId) {
+          void session.approveTool(e.toolCallId, approve);
+        }
+        if (e.type === "tool_suspended" && e.toolCallId) {
+          // A question resumes in a second run, which must end too.
+          wanted = 2;
+          void session.respondToToolSuspension(e.toolCallId, "Blue");
+        }
+        if (e.type === "agent_end" && ++ends >= wanted) ended();
+      },
+    });
+    const send = async (text: string) => {
+      events = [];
+      ends = 0;
+      wanted = 1;
+      const done = new Promise<void>((resolve) => {
+        ended = resolve;
+      });
+      await session.sendMessage(text);
+      await done;
+      return { types: events.map((e) => e.type), text: JSON.stringify(events) };
+    };
+    const calls = () => ghl.requests.map((r) => `${r.method} ${r.url.pathname}`);
+
+    const read = await send(SHOW_TAGS);
+    expect(read.types).not.toContain("tool_approval_required");
+    expect(read.text).toContain(SHOW_TAGS_REPLY);
+    expect(calls()).toEqual([`GET /locations/${client.ghlLocationId}/tags`]);
+
+    const asked = await send(ASK_ME);
+    expect(asked.types).not.toContain("tool_approval_required");
+    expect(asked.types).toContain("tool_suspended");
+    expect(asked.text).toContain("User answered: Blue");
+    expect(asked.text).toContain(ASK_ME_REPLY);
+
+    approve = false;
+    const declined = await send(DELETE_TAG);
+    expect(declined.types).toContain("tool_approval_required");
+    expect(calls()).toHaveLength(1);
+
+    approve = true;
+
+    const deleted = await send(DELETE_TAG);
+    expect(deleted.types).toContain("tool_approval_required");
+    expect(deleted.text).toContain(DELETE_TAG_REPLY);
+    expect(calls().at(-1)).toBe(`DELETE /locations/${client.ghlLocationId}/tags/${MISSING_TAG_ID}`);
   });
 
   test("two agencies holding the same GHL location never share a conversation", async () => {
