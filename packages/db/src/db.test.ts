@@ -258,6 +258,35 @@ describe("tenant migration runner", () => {
       .from(locationSchemaVersion)
       .where(eq(locationSchemaVersion.locationId, bad.id));
     expect(version?.lastError).toBe("Turso refused");
+
+    // The next run succeeds and clears the old error.
+    await migrateTenants({ control, provisioner, migrations: [m("a")] });
+    const [fixed] = await control
+      .select()
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, bad.id));
+    expect(fixed?.appliedHashes).toContain("hash-a");
+    expect(fixed?.lastError).toBeNull();
+  });
+
+  it("clears a stale error when a client is already up to date", async () => {
+    const { id } = await provisionLocation(
+      { control, provisioner, migrations: [m("a")] },
+      { organizationId: "org-1", ghlLocationId: "ghl-1", name: "One" },
+    );
+    await control
+      .update(locationSchemaVersion)
+      .set({ lastError: "an old failure" })
+      .where(eq(locationSchemaVersion.locationId, id));
+
+    const [report] = await migrateTenants({ control, provisioner, migrations: [m("a")] });
+    expect(report?.applied).toEqual([]);
+    expect(report?.error).toBeUndefined();
+    const [version] = await control
+      .select()
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, id));
+    expect(version?.lastError).toBeNull();
   });
 
   it("never erases hashes another deploy recorded while it ran", async () => {

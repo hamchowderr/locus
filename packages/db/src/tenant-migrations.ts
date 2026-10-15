@@ -96,9 +96,17 @@ export async function migrateTenant(
     repaired: [],
     unknown: plan.unknown,
   };
-  // Nothing to apply: write nothing, so a build with an older migration set can't overwrite
-  // what a newer one recorded meanwhile.
-  if (plan.pending.length === 0) return report;
+  // Nothing to apply: leave the hashes alone, so a build with an older migration set can't
+  // overwrite what a newer one recorded meanwhile. Only an old error is cleared.
+  if (plan.pending.length === 0) {
+    if (version?.lastError) {
+      await control
+        .update(locationSchemaVersion)
+        .set({ lastError: null, lastMigratedAt: new Date() })
+        .where(eq(locationSchemaVersion.locationId, locationId));
+    }
+    return report;
+  }
 
   const done: string[] = [];
   let error: string | null = null;
@@ -120,7 +128,10 @@ export async function migrateTenant(
   } finally {
     client?.close();
   }
-  await record(control, locationId, done, error);
+  const covered = await record(control, locationId, done, error, migrations);
+  // Another deploy applied the same migrations while this one ran (the batch then fails on
+  // "already exists"): the client is up to date, so this is not a failure.
+  if (covered) delete report.error;
   return report;
 }
 
@@ -133,19 +144,22 @@ async function record(
   control: ControlDb,
   locationId: string,
   applied: string[],
-  lastError: string | null,
-) {
-  await control.transaction(async (tx) => {
+  error: string | null,
+  migrations: TenantMigration[],
+): Promise<boolean> {
+  return control.transaction(async (tx) => {
     const [current] = await tx
       .select({ appliedHashes: locationSchemaVersion.appliedHashes })
       .from(locationSchemaVersion)
       .where(eq(locationSchemaVersion.locationId, locationId));
     const have = current?.appliedHashes ?? [];
     const appliedHashes = [...have, ...applied.filter((h) => !have.includes(h))];
-    const values = { appliedHashes, lastMigratedAt: new Date(), lastError };
+    const covered = migrations.every((m) => appliedHashes.includes(m.hash));
+    const values = { appliedHashes, lastMigratedAt: new Date(), lastError: covered ? null : error };
     await tx
       .insert(locationSchemaVersion)
       .values({ locationId, ...values })
       .onConflictDoUpdate({ target: locationSchemaVersion.locationId, set: values });
+    return covered;
   });
 }
