@@ -10,7 +10,7 @@ process.on("unhandledRejection", (reason) => {
 const deps = hostDepsFromEnv();
 if (deps.model === SCRIPTED) {
   deps.model = await scriptedModel();
-  console.info("Locus agent is using the scripted model: every message gets a fixed reply");
+  console.info("Locus agent is using the scripted model: fixed replies, no AI provider");
 }
 const host = createHost(deps);
 const port = Number(process.env.PORT ?? 3000);

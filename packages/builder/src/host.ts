@@ -386,10 +386,25 @@ export function remoteSiteRuntimes(options: {
   url: string;
   /** `BETTER_AUTH_SECRET`, shared with the web app. */
   authSecret: string;
+  /**
+   * The Vercel project's automation bypass, for a web app behind Vercel's deployment
+   * protection (previews, staging). Sent as `x-vercel-protection-bypass`; it only gets past
+   * Vercel's login wall, and the route's own token check still runs.
+   */
+  vercelBypass?: string;
   fetch?: typeof fetch;
 }): (client: AuthorizedClient, siteId: string) => Promise<SiteRuntime> {
   const key = agentToWebKey(options.authSecret);
   const url = `${options.url.replace(/\/+$/, "")}${SANDBOX_RPC_PATH}`;
+  const send = options.fetch ?? fetch;
+  const bypass = options.vercelBypass;
+  const fetchWeb: typeof fetch = bypass
+    ? (input, init) => {
+        const headers = new Headers(init?.headers);
+        headers.set("x-vercel-protection-bypass", bypass);
+        return send(input, { ...init, headers });
+      }
+    : send;
   return (client, siteId) => {
     assertAuthorizedClient(client);
     return new RemoteRuntimeProvider({
@@ -400,7 +415,7 @@ export function remoteSiteRuntimes(options: {
           locationId: client.location.id,
           organizationId: client.location.organizationId,
         }),
-      ...(options.fetch ? { fetch: options.fetch } : {}),
+      fetch: fetchWeb,
     }).open(siteId);
   };
 }
