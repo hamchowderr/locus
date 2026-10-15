@@ -401,8 +401,13 @@ export async function createSite(form: FormData) {
       kind: text(form, "kind"),
       templateId: text(form, "templateId"),
     });
-    // The site just made is the one the person means to build next, in the chat too.
-    await rememberActiveSite(await chooseActiveSite(locus().db, ctx, client, siteId));
+    // The site just made is the one the person means to build next, in the chat too. The site
+    // exists either way, so failing to choose it doesn't fail the creation.
+    try {
+      await rememberActiveSite(await chooseActiveSite(locus().db, ctx, client, siteId));
+    } catch (error) {
+      console.error("createSite: could not choose the new site", error);
+    }
   } catch (error) {
     if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
       back("/sites", error);

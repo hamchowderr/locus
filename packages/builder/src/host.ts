@@ -450,7 +450,7 @@ export function createSiteBuilder(
     if (typeof siteId !== "string" || !siteId) {
       // Not a refusal: nobody has chosen a site for this chat yet. Say what to do.
       throw new BuilderError(
-        "No site is chosen for this chat. Choose one on the Sites page, then try again.",
+        "No site is available for this chat. Choose one on the Sites page, then try again.",
       );
     }
     const given = input.requester
