@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node src/server.ts",
+    "start": "node --import ./src/extensionless.ts src/server.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
