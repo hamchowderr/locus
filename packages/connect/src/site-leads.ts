@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { consumeAttempt } from "@locus/auth";
 import { location, site } from "@locus/db/control";
 import {
+  GhlError,
   type GhlOperation,
   type GhlRateLimiter,
   type GhlSession,
@@ -349,6 +350,38 @@ function operation(id: string): GhlOperation {
 /** The tag every website lead gets, and the per-form one. */
 export const leadTags = (form: string) => ["website lead", `website form: ${form}`];
 
+/** A contact as GHL returns it from an upsert; only the fields a form can fill. */
+interface GhlContact {
+  id?: string;
+  name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  companyName?: string | null;
+  source?: string | null;
+}
+
+const blank = (value: string | null | undefined) => !value?.trim();
+
+/** Whether what the visitor typed says the same as the contact's value, give or take format. */
+function sameAs(key: string, typed: string, existing: string | null | undefined): boolean {
+  if (blank(existing)) return false;
+  const norm = (v: string) =>
+    key === "phone" ? v.replace(/\D/g, "") : v.trim().replace(/\s+/g, " ").toLowerCase();
+  return norm(typed) === norm(existing as string);
+}
+
+const NOTE_LABELS = {
+  name: "Name",
+  firstName: "First name",
+  lastName: "Last name",
+  email: "Email",
+  phone: "Phone",
+  companyName: "Company",
+} as const;
+const FILLABLE = Object.keys(NOTE_LABELS) as (keyof typeof NOTE_LABELS)[];
+
 async function sendToGhl(
   deps: SiteLeadDeps,
   client: typeof location.$inferSelect,
@@ -366,24 +399,66 @@ async function sendToGhl(
   const { fields, extras } = lead;
   const form = fields.form ?? "contact";
 
-  const contact: Record<string, unknown> = { source: `Website form (${form})` };
-  for (const key of ["name", "firstName", "lastName", "email", "phone", "companyName"] as const) {
-    if (fields[key]) contact[key] = fields[key];
-  }
-  // An upsert matches an existing contact by email or phone and updates the name, phone and
-  // company it is sent: kept on purpose (the visitor's latest details), documented in the
-  // site-forms skill. Bead locus-ptq.18 tracks only filling blanks instead.
+  // Anyone can type a customer's email into a form, so a form never changes a detail the CRM
+  // already has (bead locus-ptq.18). The upsert sends only the one detail it matches on, so it
+  // finds or creates the contact without changing it; then only the contact's blank fields are
+  // filled, on that contact by id, and whatever else the visitor typed goes in the note.
   // No step is retried within a request, so each request adds at most one note. A visitor who
   // resends after a 502 whose note did land (a lost response) gets a second, identical note.
   // `tags` on upsert would replace the contact's tags, so they're added separately.
-  const upserted = await ghlRequest<{ contact?: { id?: string } }>(
+  const match = fields.email ? "email" : "phone";
+  const upserted = await ghlRequest<{ new?: boolean; contact?: GhlContact }>(
     operation("contacts.upsert-contact"),
     session,
-    { body: contact },
+    { body: { [match]: fields[match] } },
     options,
   );
-  const contactId = upserted.contact?.id;
+  const existing = upserted.contact ?? {};
+  const contactId = existing.id;
   if (!contactId) throw new Error("GoHighLevel's upsert response had no contact id");
+  const created = upserted.new === true;
+
+  // A name is filled only when the contact has none at all, so it's never half one person's.
+  const unnamed = blank(existing.name) && blank(existing.firstName) && blank(existing.lastName);
+  const fill: Record<string, string> = {};
+  const unused: (keyof typeof NOTE_LABELS)[] = [];
+  for (const key of FILLABLE) {
+    const typed = fields[key];
+    if (!typed || key === match) continue;
+    const isName = key === "name" || key === "firstName" || key === "lastName";
+    if (isName ? unnamed : blank(existing[key])) fill[key] = typed;
+    else if (!sameAs(key, typed, existing[key])) unused.push(key);
+  }
+
+  // The company goes through the upsert (Update Contact doesn't take one), matched as before;
+  // the rest by id, so a second email or phone can't steer it to another contact.
+  const { companyName, ...byId } = fill;
+  if (created || blank(existing.source)) {
+    byId.source = `Website form (${form})`;
+  }
+  if (Object.keys(byId).length > 0) {
+    try {
+      await ghlRequest(
+        operation("contacts.update-contact"),
+        session,
+        { path: { contactId }, body: byId },
+        options,
+      );
+    } catch (error) {
+      // GHL refuses an email or phone another contact already has (when the sub-account keeps
+      // them unique). The lead still counts: what didn't fit goes in the note.
+      if (!(error instanceof GhlError) || error.status !== 400) throw error;
+      unused.push(...FILLABLE.filter((key) => key in byId));
+    }
+  }
+  if (companyName) {
+    await ghlRequest(
+      operation("contacts.upsert-contact"),
+      session,
+      { body: { [match]: fields[match], companyName } },
+      options,
+    );
+  }
 
   await ghlRequest(
     operation("contacts.add-tags"),
@@ -394,6 +469,11 @@ async function sendToGhl(
 
   const lines: string[] = [];
   if (fields.message) lines.push(fields.message, "");
+  if (unused.length > 0) {
+    lines.push("Also on the form (kept here, not changed on the contact):");
+    for (const key of unused) lines.push(`${NOTE_LABELS[key]}: ${fields[key]}`);
+    lines.push("");
+  }
   for (const [key, value] of extras) lines.push(`${key}: ${value}`);
   if (fields.page) lines.push(`Page: ${fields.page}`);
   if (lines.length > 0) {

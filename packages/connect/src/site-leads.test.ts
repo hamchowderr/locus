@@ -56,6 +56,7 @@ const okRoutes: FakeRoutes = {
     },
   }),
   "POST /contacts/upsert": { body: { new: true, contact: { id: "contact-1" } } },
+  "PUT /contacts/contact-1": { body: { succeeded: true, contact: { id: "contact-1" } } },
   "POST /contacts/contact-1/tags": { status: 201, body: { tags: ["website lead"] } },
   "POST /contacts/contact-1/notes": { status: 201, body: { note: { id: "note-1" } } },
 };
@@ -150,26 +151,28 @@ afterEach(async () => {
 const paths = () => fake.requests.map((r) => `${r.method} ${r.url.pathname}`);
 
 describe("a published site's lead form", () => {
-  it("upserts the contact in the site's own sub-account, tags it and notes the message", async () => {
+  it("creates the contact in the site's own sub-account, tags it and notes the message", async () => {
     const d = deps();
     expect(await submit(d, lead)).toEqual({ status: 200, body: { ok: true } });
 
     expect(paths()).toEqual([
       "POST /oauth/location-token",
       "POST /contacts/upsert",
+      "PUT /contacts/contact-1",
       "POST /contacts/contact-1/tags",
       "POST /contacts/contact-1/notes",
     ]);
-    const [mint, upsert, tags, note] = fake.requests;
+    const [mint, upsert, update, tags, note] = fake.requests;
     // The sub-account comes from the site's registry row, minted with the agency token.
     expect(mint?.body).toMatchObject({ locationId: GHL_LOCATION, companyId: "company-1" });
     expect(mint?.headers.authorization).toBe("Bearer agency-token");
     expect(upsert?.headers.authorization).toBe(`Bearer location-token-${GHL_LOCATION}`);
     expect(upsert?.headers.version).toBe("v3");
-    expect(upsert?.body).toEqual({
-      locationId: GHL_LOCATION,
+    // The upsert carries only the detail it matches on; the new contact is filled in by id.
+    expect(upsert?.body).toEqual({ locationId: GHL_LOCATION, email: "dana@example.test" });
+    expect(update?.headers.version).toBe("v3");
+    expect(update?.body).toEqual({
       name: "Dana Visitor",
-      email: "dana@example.test",
       phone: "+1 555 010 0199",
       source: "Website form (contact)",
     });
@@ -177,6 +180,133 @@ describe("a published site's lead form", () => {
     expect(note?.body).toEqual({
       title: "Website form: contact",
       body: "Do you take new patients?\n\nPage: /contact",
+    });
+  });
+
+  it("never changes a detail an existing contact already has, and notes what the visitor typed", async () => {
+    const d = deps({
+      ...okRoutes,
+      "POST /contacts/upsert": {
+        body: {
+          new: false,
+          contact: {
+            id: "contact-1",
+            name: "Dana Customer",
+            firstName: "Dana",
+            lastName: "Customer",
+            email: "dana@example.test",
+            phone: "+1 555 010 0100",
+            companyName: "Sunrise Dental",
+            source: "Referral",
+          },
+        },
+      },
+    });
+    const result = await submit(d, { ...lead, companyName: "Mallory Ltd" });
+    expect(result.status).toBe(200);
+
+    // Nothing is sent that would change the contact: no update, no company upsert.
+    expect(paths()).toEqual([
+      "POST /oauth/location-token",
+      "POST /contacts/upsert",
+      "POST /contacts/contact-1/tags",
+      "POST /contacts/contact-1/notes",
+    ]);
+    expect(fake.requests[1]?.body).toEqual({
+      locationId: GHL_LOCATION,
+      email: "dana@example.test",
+    });
+    expect(fake.requests[3]?.body).toEqual({
+      title: "Website form: contact",
+      body: [
+        "Do you take new patients?",
+        "",
+        "Also on the form (kept here, not changed on the contact):",
+        "Name: Dana Visitor",
+        "Phone: +1 555 010 0199",
+        "Company: Mallory Ltd",
+        "",
+        "Page: /contact",
+      ].join("\n"),
+    });
+  });
+
+  it("fills only an existing contact's blank fields", async () => {
+    const d = deps({
+      ...okRoutes,
+      "POST /contacts/upsert": {
+        body: {
+          new: false,
+          contact: {
+            id: "contact-1",
+            email: "dana@example.test",
+            phone: "+15550100199",
+            source: "",
+          },
+        },
+      },
+    });
+    await submit(d, { ...lead, companyName: "Sunrise Dental" });
+
+    expect(paths()).toEqual([
+      "POST /oauth/location-token",
+      "POST /contacts/upsert",
+      "PUT /contacts/contact-1",
+      "POST /contacts/upsert",
+      "POST /contacts/contact-1/tags",
+      "POST /contacts/contact-1/notes",
+    ]);
+    const [, , update, company, , note] = fake.requests;
+    // The phone matches what the CRM has (formatted differently), so it's neither sent nor noted.
+    expect(update?.body).toEqual({ name: "Dana Visitor", source: "Website form (contact)" });
+    // GHL's Update Contact takes no company, so it goes through the upsert, matched the same way.
+    expect(company?.body).toEqual({
+      locationId: GHL_LOCATION,
+      email: "dana@example.test",
+      companyName: "Sunrise Dental",
+    });
+    expect(note?.body).toEqual({
+      title: "Website form: contact",
+      body: "Do you take new patients?\n\nPage: /contact",
+    });
+  });
+
+  it("leaves a contact's name alone when it has any part of one", async () => {
+    const d = deps({
+      ...okRoutes,
+      "POST /contacts/upsert": {
+        body: { new: false, contact: { id: "contact-1", firstName: "Dana", source: "Referral" } },
+      },
+    });
+    await submit(d, { ...lead, name: undefined, firstName: "Mallory", lastName: "Visitor" });
+    const update = fake.requests.find((r) => r.method === "PUT");
+    expect(update?.body).toEqual({ phone: "+1 555 010 0199" });
+    const note = fake.requests.find((r) => r.url.pathname.endsWith("/notes"));
+    expect(note?.body).toMatchObject({
+      body: expect.stringContaining("First name: Mallory\nLast name: Visitor"),
+    });
+  });
+
+  it("matches on the phone when there's no email, and never sends it as a change", async () => {
+    const d = deps();
+    await submit(d, { ...lead, email: undefined });
+    expect(fake.requests[1]?.body).toEqual({ locationId: GHL_LOCATION, phone: "+1 555 010 0199" });
+    const update = fake.requests.find((r) => r.method === "PUT");
+    expect(update?.body).toEqual({ name: "Dana Visitor", source: "Website form (contact)" });
+  });
+
+  it("still takes the lead when GHL refuses a detail another contact already has", async () => {
+    const d = deps({
+      ...okRoutes,
+      "PUT /contacts/contact-1": {
+        status: 400,
+        body: { statusCode: 400, message: "This phone already belongs to another contact" },
+      },
+    });
+    expect((await submit(d, lead)).status).toBe(200);
+    const note = fake.requests.find((r) => r.url.pathname.endsWith("/notes"));
+    expect(note?.body).toMatchObject({
+      body: expect.stringContaining("Name: Dana Visitor\nPhone: +1 555 010 0199"),
     });
   });
 
@@ -195,8 +325,7 @@ describe("a published site's lead form", () => {
       service: "Whitening",
     });
     expect(result.status).toBe(200);
-    const upsert = fake.requests.find((r) => r.url.pathname === "/contacts/upsert");
-    expect(upsert?.body).not.toHaveProperty("service");
+    for (const r of fake.requests) expect(r.body).not.toHaveProperty("service");
     const note = fake.requests.find((r) => r.url.pathname.endsWith("/notes"));
     expect(note?.body).toEqual({
       title: "Website form: quote-request",
@@ -380,8 +509,8 @@ describe("a published site's lead form", () => {
   it("strips control characters and keeps a message's line breaks", async () => {
     const d = deps();
     await submit(d, { ...lead, name: "Dana\u0000 Visitor\u001b", message: "Line 1\r\nLine 2" });
-    const upsert = fake.requests.find((r) => r.url.pathname === "/contacts/upsert");
-    expect(upsert?.body).toMatchObject({ name: "Dana Visitor" });
+    const update = fake.requests.find((r) => r.method === "PUT");
+    expect(update?.body).toMatchObject({ name: "Dana Visitor" });
     const note = fake.requests.find((r) => r.url.pathname.endsWith("/notes"));
     expect(note?.body).toMatchObject({ body: "Line 1\nLine 2\n\nPage: /contact" });
   });
@@ -392,12 +521,14 @@ describe("a published site's lead form", () => {
     for (const failing of [
       { "POST /contacts/upsert": { status: 422, body: { statusCode: 422, message: secret } } },
       { "POST /contacts/contact-1/tags": { status: 500, body: { message: secret } } },
+      { "PUT /contacts/contact-1": { status: 500, body: { message: secret } } },
       { "POST /contacts/contact-1/notes": { status: 401, body: { message: secret } } },
       { "POST /oauth/location-token": { status: 400, body: { message: secret } } },
       { "POST /contacts/upsert": { body: { contact: {} } } },
     ] as FakeRoutes[]) {
       const d = deps({ ...okRoutes, ...failing });
-      const result = await submit(d, lead);
+      // No visitor IP, so the cases don't use up one visitor's allowance.
+      const result = await submit(d, lead, { visitorIp: null });
       expect(result).toEqual({
         status: 502,
         body: { error: "We couldn't send that just now. Please try again." },
