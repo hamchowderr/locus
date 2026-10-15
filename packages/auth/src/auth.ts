@@ -53,6 +53,9 @@ export function createAuth(config: LocusAuthConfig) {
         // The client this session works on. Only `selectClient` sets it, after the access
         // check; every use re-checks it (`resolveActiveClient`). Never settable from a request.
         activeLocationId: { type: "string", required: false, input: false },
+        // The site the site builder works on, chosen on the Sites page (`chooseSite`, after
+        // checking it is the active client's). Every use re-checks it against the client.
+        activeSiteId: { type: "string", required: false, input: false },
       },
     },
     // A new session starts in the agency the user joined first, so signing in (again, or after
