@@ -127,7 +127,11 @@ export async function selectClient(
   locationId: string,
 ): Promise<AuthorizedClient> {
   const authorized = await authorizeClient(db, ctx, locationId);
-  await db.update(session).set({ activeLocationId: locationId }).where(eq(session.id, ctx.id));
+  // A site chosen for the previous client is not this one's.
+  await db
+    .update(session)
+    .set({ activeLocationId: locationId, activeSiteId: null })
+    .where(eq(session.id, ctx.id));
   return authorized;
 }
 

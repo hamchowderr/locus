@@ -14,6 +14,13 @@ every 5 seconds and ends when the check fails, so a member removed from a client
 up to about 5 seconds of its live chat. Each client's conversations live in that client's own
 database, reached with a token that names only it and is renewed while the server runs.
 
+Every client's chat has the site builder as a mode (`@locus/builder/host`). It works on the site
+the member chose on the Sites page (kept on their session, re-checked on every tool call). The
+agent holds no sandbox credentials: each sandbox call goes to the web app's
+`/api/internal/sandbox` with a five-minute token naming the member and client, and the web app
+runs the staff check itself (see `packages/sandbox/README.md`). Versions saved from the chat are
+published from the Sites page, since only the web app holds the GitHub App.
+
 ## Run
 
 ```
@@ -29,6 +36,7 @@ docker build -f apps/agent/Dockerfile -t locus-agent .
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | Renew agencies' GoHighLevel grants |
 | `LOCUS_AGENT_MODEL` | The model, as a Mastra model id, e.g. `anthropic/claude-sonnet-5-5`; or `scripted` for a fixed reply with no AI provider (for staging: no key, no cost) |
 | The model provider's key | e.g. `ANTHROPIC_API_KEY`; not needed with `scripted` |
+| `LOCUS_IMAGE_API_KEY` | Optional: image generation for the site builder, as the web app's |
 | `PORT` | Defaults to 3000 |
 
 `GET /health` answers `ok`.

@@ -9,6 +9,7 @@ import {
   ClientAccessDenied,
   creditsFor,
   type SessionContext,
+  selectClient,
 } from "@locus/auth";
 import { BuilderError, PublishError } from "@locus/builder";
 import {
@@ -35,6 +36,7 @@ import {
   member,
   memberLocation,
   organization,
+  session,
   site,
   subscription,
   usageEvent,
@@ -55,7 +57,9 @@ import {
 import {
   ACTIVE_SITE_COOKIE,
   activeSiteIdFor,
+  activeSiteIdForSession,
   CLIENT_KEY,
+  chooseActiveSite,
   closeClientDbs,
   cookieValue,
   createClientSite,
@@ -480,6 +484,38 @@ describe("the active site for the chat API", () => {
     await expect(activeSiteIdFor(db, chose(siteA), forged)).rejects.toBeInstanceOf(
       ClientAccessDenied,
     );
+  });
+
+  it("keeps the chosen site on the session for the agent server, re-checked on every read", async () => {
+    const a = await authorized("owner", clientA);
+    const b = await authorized("owner", clientB);
+    const { siteId: siteA } = await createClientSite(deps(), ctx("owner"), a, {
+      name: "A",
+      kind: "website",
+    });
+    const { siteId: siteB } = await createClientSite(deps(), ctx("owner"), b, {
+      name: "B",
+      kind: "website",
+    });
+    await db.insert(session).values({
+      id: "s-owner",
+      token: "t-owner",
+      userId: "owner",
+      expiresAt: new Date(Date.now() + 3_600_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    expect(await activeSiteIdForSession(db, ctx("owner"), a)).toBeNull();
+    await expect(chooseActiveSite(db, ctx("owner"), a, siteB)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    expect(await chooseActiveSite(db, ctx("owner"), a, siteA)).toBe(siteA);
+    expect(await activeSiteIdForSession(db, ctx("owner"), a)).toBe(siteA);
+    // Read for another client, the same session's choice is nobody's.
+    expect(await activeSiteIdForSession(db, ctx("owner"), b)).toBeNull();
+    // Switching client forgets it.
+    await selectClient(db, ctx("owner"), clientB);
+    expect(await activeSiteIdForSession(db, ctx("owner"), a)).toBeNull();
   });
 
   it("reads one cookie from a header", () => {
