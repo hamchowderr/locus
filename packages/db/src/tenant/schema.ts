@@ -93,3 +93,21 @@ export const generationRun = sqliteTable(
   },
   (t) => [index("generation_run_site_idx").on(t.siteId, t.startedAt)],
 );
+
+/**
+ * How many leads a published site's forms sent to the CRM each day (UTC), and how many failed.
+ * Counts only: no visitor details and no GHL ids — GHL is the system of record. Spam that the
+ * honeypot, timing or rate limits drop isn't counted, so junk never costs a write.
+ */
+export const siteLeadDay = sqliteTable(
+  "site_lead_day",
+  {
+    siteId: text("site_id").notNull(),
+    /** `YYYY-MM-DD`, UTC. */
+    day: text("day").notNull(),
+    delivered: integer("delivered").notNull().default(0),
+    failed: integer("failed").notNull().default(0),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.siteId, t.day] })],
+);

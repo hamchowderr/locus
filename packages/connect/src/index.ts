@@ -52,6 +52,7 @@ export {
   type SiteFile,
 } from "./publish.ts";
 export {
+  countSiteLead,
   hashVisitorIp,
   LEAD_ELAPSED_FIELD,
   LEAD_HONEYPOT_FIELD,
@@ -63,6 +64,7 @@ export {
   type SiteLeadDeps,
   type SiteLeadInput,
   type SiteLeadLimits,
+  type SiteLeadOutcome,
   type SiteLeadResult,
   submitSiteLead,
 } from "./site-leads.ts";
