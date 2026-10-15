@@ -78,6 +78,15 @@ export class TursoProvisioner implements TenantProvisioner {
     return body.jwt;
   }
 
+  /**
+   * Proves the token, organisation and group work together by listing the group's databases.
+   * Throws the `TursoError` a bad setting causes; a wrong token answers 401.
+   */
+  async check() {
+    const query = new URLSearchParams({ group: this.config.group });
+    await this.call("GET", `/databases?${query}`);
+  }
+
   /** Safe to repeat: a database that is already gone counts as deleted. */
   async destroy(dbName: string) {
     try {

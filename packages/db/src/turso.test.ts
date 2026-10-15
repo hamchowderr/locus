@@ -91,6 +91,22 @@ describe("TursoProvisioner", () => {
     await expect(provisioner.destroy("loc-abc")).rejects.toBeInstanceOf(TursoError);
   });
 
+  it("checks its settings by listing the group's databases", async () => {
+    let status = 200;
+    const { calls, provisioner } = fakeTurso(() => ({
+      status,
+      json: status === 200 ? { databases: [] } : { error: "illegal base64 data at input byte 0" },
+    }));
+    await provisioner.check();
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url.pathname).toBe("/v1/organizations/hamchowderr/databases");
+    expect(calls[0]?.url.searchParams.get("group")).toBe("locus");
+    status = 401;
+    const error = await provisioner.check().catch((e: unknown) => e);
+    expect((error as TursoError).status).toBe(401);
+    expect(String(error)).not.toContain(API_TOKEN);
+  });
+
   it("reports Turso's error without the Platform token", async () => {
     const { provisioner } = fakeTurso(() => ({
       status: 409,
