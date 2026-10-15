@@ -38,6 +38,7 @@ export const session = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     activeOrganizationId: text("active_organization_id"),
     activeLocationId: text("active_location_id"),
+    activeSiteId: text("active_site_id"),
   },
   (table) => [index("session_userId_idx").on(table.userId)],
 );

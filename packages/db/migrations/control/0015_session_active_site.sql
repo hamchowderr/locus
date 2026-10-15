@@ -1,0 +1,1 @@
+ALTER TABLE `session` ADD `active_site_id` text;
