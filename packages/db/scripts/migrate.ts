@@ -36,23 +36,22 @@ try {
   const branch = process.env.VERCEL_GIT_COMMIT_REF;
   if (vercelEnv === "preview" && branch !== "staging") {
     console.log(`client databases skipped: preview of ${branch ?? "a branch"}, not staging`);
-    process.exit();
+  } else {
+    // A remote control database lists Turso clients, whatever NODE_ENV the build step has; the
+    // local file lists clients in the same .data folder the app uses.
+    const env = local ? process.env : { ...process.env, LOCUS_PROVISIONER: "turso" };
+    const provisioner = provisionerFromEnv(".data/tenants", env);
+    const reports = await migrateTenants({ control: db, provisioner });
+    const failed = reports.filter((r) => r.error);
+    for (const r of reports) {
+      if (r.applied.length > 0) console.log(`client ${r.locationId}: applied ${r.applied.length}`);
+      if (r.unknown.length > 0)
+        console.warn(`client ${r.locationId}: unknown ${r.unknown.join(", ")}`);
+      if (r.error) console.error(`client ${r.locationId}: ${r.error}`);
+    }
+    console.log(`client databases checked: ${reports.length}, failed: ${failed.length}`);
+    if (failed.length > 0) process.exitCode = 1;
   }
-
-  // A remote control database lists Turso clients, whatever NODE_ENV the build step has; the
-  // local file lists clients in the same .data folder the app uses.
-  const env = local ? process.env : { ...process.env, LOCUS_PROVISIONER: "turso" };
-  const provisioner = provisionerFromEnv(".data/tenants", env);
-  const reports = await migrateTenants({ control: db, provisioner });
-  const failed = reports.filter((r) => r.error);
-  for (const r of reports) {
-    if (r.applied.length > 0) console.log(`client ${r.locationId}: applied ${r.applied.length}`);
-    if (r.unknown.length > 0)
-      console.warn(`client ${r.locationId}: unknown ${r.unknown.join(", ")}`);
-    if (r.error) console.error(`client ${r.locationId}: ${r.error}`);
-  }
-  console.log(`client databases checked: ${reports.length}, failed: ${failed.length}`);
-  if (failed.length > 0) process.exitCode = 1;
 } finally {
   db.$client.close();
 }
