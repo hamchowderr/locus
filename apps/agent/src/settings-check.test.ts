@@ -4,12 +4,16 @@ import { describe, expect, it } from "vitest";
 import { settingsProblems, unresolvedSettings } from "./settings-check.ts";
 
 const TOKEN = "turso-platform-token-never-logged";
+// `${path}` as text: what Coolify passed through unfilled.
+const ref = (path: string) => `$${"{"}${path}}`;
 
-function turso(status: number) {
+function turso(status: number | "hang") {
   const fetch = (async () =>
-    new Response(JSON.stringify(status === 200 ? { databases: [] } : { error: "bad token" }), {
-      status,
-    })) as unknown as typeof globalThis.fetch;
+    status === "hang"
+      ? new Promise<Response>(() => {})
+      : new Response(JSON.stringify(status === 200 ? { group: {} } : { error: "bad token" }), {
+          status,
+        })) as unknown as typeof globalThis.fetch;
   return new TursoProvisioner({
     org: "hamchowderr",
     group: "locus",
@@ -25,10 +29,10 @@ const local = () => new LocalProvisioner(".data/test-tenants");
 describe("the agent's settings check", () => {
   it("names settings left as unfilled references, and never their values", () => {
     const env = {
-      TURSO_API_TOKEN: "${dev.shared.TURSO_API_TOKEN}",
+      TURSO_API_TOKEN: ref("dev.shared.TURSO_API_TOKEN"),
       GHL_APP_ID: "{{team.GHL_APP_ID}}",
       TURSO_ORG: "hamchowderr",
-      UNRELATED: "${not.ours}",
+      UNRELATED: ref("not.ours"),
     };
     expect(unresolvedSettings(env)).toEqual(["GHL_APP_ID", "TURSO_API_TOKEN"]);
   });
@@ -46,7 +50,7 @@ describe("the agent's settings check", () => {
 
   it("reports a token Turso refuses without the token itself", async () => {
     const problems = await settingsProblems({
-      env: { TURSO_API_TOKEN: "${dev.shared.TURSO_API_TOKEN}" },
+      env: { TURSO_API_TOKEN: ref("dev.shared.TURSO_API_TOKEN") },
       db: goodDb(),
       provisioner: turso(401),
     });
@@ -65,5 +69,15 @@ describe("the agent's settings check", () => {
     const db = Object.assign(goodDb(), { $client: client });
     const problems = await settingsProblems({ env: {}, db, provisioner: local() });
     expect(problems).toEqual([expect.stringMatching(/^the control database cannot be queried: /)]);
+  });
+
+  it("reports a probe that never answers, so a verdict is always logged", async () => {
+    const problems = await settingsProblems({
+      env: {},
+      db: goodDb(),
+      provisioner: turso("hang"),
+      timeoutMs: 20,
+    });
+    expect(problems).toEqual([expect.stringMatching(/Turso refused .*no answer in 20 ms/)]);
   });
 });

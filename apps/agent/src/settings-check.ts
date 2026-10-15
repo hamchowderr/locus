@@ -17,6 +17,11 @@ export const AGENT_SETTINGS = [
   "TURSO_API_TOKEN",
   "LOCUS_AGENT_MODEL",
   "LOCUS_WEB_VERCEL_BYPASS",
+  "LOCUS_PROVISIONER",
+  "LOCUS_OPERATORS",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
 ] as const;
 
 // A reference some other tool was meant to fill in (`${dev.shared.X}`, `{{team.X}}`), passed
@@ -29,6 +34,16 @@ export function unresolvedSettings(env: Env): string[] {
 }
 
 const MAX_CAUSE = 200;
+/** A probe that has not answered by then is reported, so the check always logs a verdict. */
+export const PROBE_TIMEOUT_MS = 10_000;
+
+async function probe(run: (signal: AbortSignal) => Promise<unknown>, timeoutMs: number) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const timedOut = new Promise<never>((_, reject) =>
+    signal.addEventListener("abort", () => reject(new Error(`no answer in ${timeoutMs} ms`))),
+  );
+  await Promise.race([run(signal), timedOut]);
+}
 
 function cause(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).slice(0, MAX_CAUSE);
@@ -43,18 +58,21 @@ export async function settingsProblems(deps: {
   env: Env;
   db: ControlDb;
   provisioner: TenantProvisioner;
+  timeoutMs?: number;
 }): Promise<string[]> {
+  const timeoutMs = deps.timeoutMs ?? PROBE_TIMEOUT_MS;
   const problems = unresolvedSettings(deps.env).map(
     (name) => `${name} holds an unfilled reference instead of a value`,
   );
   try {
-    await deps.db.$client.execute("select 1");
+    await probe(() => deps.db.$client.execute("select 1"), timeoutMs);
   } catch (error) {
     problems.push(`the control database cannot be queried: ${cause(error)}`);
   }
-  if (deps.provisioner instanceof TursoProvisioner) {
+  const { provisioner } = deps;
+  if (provisioner instanceof TursoProvisioner) {
     try {
-      await deps.provisioner.check();
+      await probe((signal) => provisioner.check(signal), timeoutMs);
     } catch (error) {
       problems.push(`Turso refused TURSO_ORG, TURSO_GROUP or TURSO_API_TOKEN: ${cause(error)}`);
     }
