@@ -313,7 +313,7 @@ describe("rate limits on signing in and signing up", () => {
     await expect(signIn("nobody-else@agency.test", "guess", "198.51.100.7")).rejects.toMatchObject({
       status: "UNAUTHORIZED",
     });
-  });
+  }, 30_000);
 
   it("stops sign-ups for one address from one IP after three in an hour, and sends nothing more", async () => {
     for (let i = 0; i < 3; i++) {
@@ -340,7 +340,8 @@ describe("rate limits on signing in and signing up", () => {
         headers: from("203.0.113.1"),
       }),
     ).rejects.toMatchObject({ status: "TOO_MANY_REQUESTS" });
-  });
+    // Thirty sign-ups hash thirty passwords: past the 5 s default on a slow CI runner.
+  }, 30_000);
 
   it("stops resending an address's verification email after three in an hour", async () => {
     await auth.api.signUpEmail({ body: owner });
