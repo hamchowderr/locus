@@ -34,7 +34,7 @@ docker build -f apps/agent/Dockerfile -t locus-agent .
 | `LOCUS_SECRETS_KEY` | Opens agencies' sealed GoHighLevel tokens, as the web app's |
 | `TURSO_ORG`, `TURSO_GROUP`, `TURSO_API_TOKEN` | Mint tokens for clients' databases |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | Renew agencies' GoHighLevel grants |
-| `LOCUS_AGENT_MODEL` | The model, as a Mastra model id, e.g. `anthropic/claude-sonnet-5-5`; or `scripted` for a fixed reply with no AI provider (for staging: no key, no cost) |
+| `LOCUS_AGENT_MODEL` | The model, as a Mastra model id, e.g. `anthropic/claude-sonnet-5-5`; or `scripted` for a fixed reply with no AI provider (for staging: no key, no cost). With `scripted`, the message `sandbox check` in the Site builder mode runs `node --version` in the chosen site's sandbox |
 | The model provider's key | e.g. `ANTHROPIC_API_KEY`; not needed with `scripted` |
 | `LOCUS_WEB_VERCEL_BYPASS` | Only when the web app is behind Vercel's deployment protection (staging): the project's automation bypass, so the site builder's sandbox calls get through. The route still checks its own token |
 | `LOCUS_IMAGE_API_KEY` | Optional: image generation for the site builder, as the web app's |
