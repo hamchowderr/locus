@@ -2,7 +2,20 @@ import { createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chatKitKey, type SessionContext } from "@locus/auth";
+import {
+  type AgentToWebClaims,
+  agentToWebKey,
+  authorizeClient,
+  chatKitKey,
+  type SessionContext,
+  verifyAgentToWebToken,
+} from "@locus/auth";
+import {
+  chooseActiveSite,
+  openClientDb,
+  remoteSiteRuntimes,
+  type SiteBuilderDeps,
+} from "@locus/builder/host";
 import { connectAgency, createStubGhl, STUB_CODE } from "@locus/connect";
 import { type ControlDb, LocalProvisioner, migrateControlDb, openControlDb } from "@locus/db";
 import {
@@ -11,8 +24,11 @@ import {
   member,
   memberLocation,
   organization,
+  site,
+  subscription,
   user,
 } from "@locus/db/control";
+import { FakeRuntimeProvider, handleSandboxRequest } from "@locus/sandbox";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
@@ -597,5 +613,103 @@ describe("the chat kit", () => {
       new Request(`http://agent.test${PREFIX}/kit/agent-controller/threads`),
     );
     expect(res.status).toBe(401);
+  });
+});
+
+describe("the site builder", () => {
+  const SECRET = "test-auth-secret";
+
+  /** The web app's sandbox route, in process: who each call came for, and the fake sandboxes. */
+  function webSandboxes() {
+    const runtimes = new FakeRuntimeProvider({
+      handler: (command, args) => ({ stdout: `ran ${[command, ...args].join(" ")}`, exitCode: 0 }),
+    });
+    const callers: AgentToWebClaims[] = [];
+    const key = agentToWebKey(SECRET);
+    const fetchWeb: typeof fetch = async (input, init) =>
+      handleSandboxRequest(new Request(input, init), {
+        provider: runtimes,
+        authenticate: (token) => verifyAgentToWebToken(token, key, Date.now()),
+        sandboxKey: (claims, siteId) => {
+          callers.push(claims);
+          return `${claims.locationId}/${siteId}`;
+        },
+      });
+    return { runtimes, callers, fetchWeb };
+  }
+
+  test("is a mode of every client's chat, and its sandbox runs through the web app for the member", async () => {
+    mock().llm.on(
+      { userMessage: /list the site files/i, hasToolResult: false },
+      {
+        toolCalls: [
+          { id: "sb-ls", name: "run_command", arguments: JSON.stringify({ command: "ls" }) },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "sb-ls" }, { content: "Listed." });
+    const { connect, client, sessions } = await agency();
+    await db.insert(site).values({ id: "site-1", locationId: client.id });
+    await db
+      .insert(subscription)
+      .values({ id: "sub-1", plan: "starter", referenceId: "org", status: "active" });
+    const owner = sessions.owner as SessionContext;
+    await chooseActiveSite(db, owner, await authorizeClient(db, owner, client.id), "site-1");
+    const web = webSandboxes();
+    const siteBuilder: Omit<SiteBuilderDeps, "db"> = {
+      openClientDb: (c) => openClientDb(connect.provisioner, c),
+      runtimes: () => {
+        throw new Error("no local sandboxes on the agent");
+      },
+      openRuntime: remoteSiteRuntimes({
+        url: "http://web.test",
+        authSecret: SECRET,
+        fetch: web.fetchWeb,
+      }),
+      publish: null,
+      locusUrl: "http://web.test",
+    };
+    const host = createHost({
+      db,
+      session: async () => owner,
+      connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      fetch: createFakeGhl({ "*": { body: {} } }).fetch,
+      origin: "http://locus.test",
+      siteBuilder,
+    });
+    const chat = new MastraClient({
+      baseUrl: "http://agent.test",
+      apiPrefix: PREFIX,
+      retries: 0,
+      fetch: (input, init) => host.fetch(new Request(input, init)),
+    });
+    const controller = chat.getAgentController("locus");
+    const session = controller.session(`client:${client.ghlLocationId}`);
+    await session.create();
+    expect((await controller.listModes()).map((mode) => mode.id)).toContain("site-builder");
+    await session.switchMode("site-builder");
+    const events: unknown[] = [];
+    const done = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
+      void session.subscribe({
+        onEvent: (event) => {
+          events.push(event);
+          if ((event as { type: string }).type === "agent_end") {
+            clearTimeout(timer);
+            resolve();
+          }
+        },
+      });
+    });
+    await session.sendMessage("List the site files");
+    await done;
+    const local = web.runtimes.runtimes.get(`${client.id}/site-1`);
+    expect(JSON.stringify(events)).toContain("ran ls");
+    expect(local?.calls).toContainEqual(expect.objectContaining({ method: "run", command: "ls" }));
+    expect(web.callers.length).toBeGreaterThan(0);
+    for (const caller of web.callers) {
+      expect(caller).toEqual({ memberId: "m-owner", locationId: client.id, organizationId: "org" });
+    }
   });
 });

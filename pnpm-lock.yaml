@@ -35,6 +35,9 @@ importers:
       '@locus/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@locus/builder':
+        specifier: workspace:*
+        version: link:../../packages/builder
       '@locus/connect':
         specifier: workspace:*
         version: link:../../packages/connect
@@ -57,6 +60,9 @@ importers:
         specifier: 0.45.4
         version: 0.45.4(@libsql/client@0.18.0)(kysely@0.29.6)
     devDependencies:
+      '@locus/sandbox':
+        specifier: workspace:*
+        version: link:../../packages/sandbox
       '@locus/testing':
         specifier: workspace:*
         version: link:../../packages/testing
@@ -276,6 +282,15 @@ importers:
 
   packages/builder:
     dependencies:
+      '@locus/auth':
+        specifier: workspace:*
+        version: link:../auth
+      '@locus/connect':
+        specifier: workspace:*
+        version: link:../connect
+      '@locus/db':
+        specifier: workspace:*
+        version: link:../db
       '@locus/sandbox':
         specifier: workspace:*
         version: link:../sandbox
@@ -285,13 +300,13 @@ importers:
       '@mastra/core':
         specifier: 1.75.0
         version: 1.75.0(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      drizzle-orm:
+        specifier: 0.45.4
+        version: 0.45.4(@libsql/client@0.18.0)(kysely@0.29.6)
       zod:
         specifier: 4.6.5
         version: 4.6.5
     devDependencies:
-      '@locus/db':
-        specifier: workspace:*
-        version: link:../db
       '@locus/testing':
         specifier: workspace:*
         version: link:../testing
