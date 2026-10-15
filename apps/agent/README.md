@@ -19,7 +19,10 @@ the member chose on the Sites page (kept on their session, re-checked on every t
 agent holds no sandbox credentials: each sandbox call goes to the web app's
 `/api/internal/sandbox` with a five-minute token naming the member and client, and the web app
 runs the staff check itself (see `packages/sandbox/README.md`). Versions saved from the chat are
-published from the Sites page, since only the web app holds the GitHub App.
+published the same way, since only the web app holds the GitHub App: the agent sends the site
+and version ids to `/api/internal/publish` (`remotePublish`), and the web app runs the staff
+check, reads the version's files from the client's database and commits them to the site's
+repository, if it has one.
 
 ## Run
 
