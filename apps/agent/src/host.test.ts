@@ -31,7 +31,12 @@ import type { MastraModelConfig } from "@mastra/core/llm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createHost, PREFIX, sessionFromKitToken } from "./host.ts";
-import { SCRIPTED_REPLY, scriptedModel } from "./scripted-model.ts";
+import {
+  SANDBOX_CHECK,
+  SANDBOX_CHECK_REPLY,
+  SCRIPTED_REPLY,
+  scriptedModel,
+} from "./scripted-model.ts";
 
 const mock = useAimock();
 const now = new Date();
@@ -634,7 +639,7 @@ describe("the site builder", () => {
   }
 
   /** A host with the site builder; owner chose site-1, the staff member (allowed) site-2. */
-  async function builderHost() {
+  async function builderHost(model?: MastraModelConfig) {
     mock().llm.on(
       { userMessage: /list the site files/i, hasToolResult: false },
       {
@@ -666,7 +671,7 @@ describe("the site builder", () => {
       db,
       session: async () => sessions[signedIn.as] ?? null,
       connect,
-      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      model: model ?? { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
       fetch: createFakeGhl({ "*": { body: {} } }).fetch,
       origin: "http://locus.test",
       siteBuilder: {
@@ -746,5 +751,15 @@ describe("the site builder", () => {
     const callsBefore = web.callers.length;
     await expect(runAs("staff", "List the site files")).rejects.toThrow();
     expect(web.callers.length).toBe(callsBefore);
+  });
+
+  test("the scripted model's sandbox check runs a command in the site's sandbox, for free", async () => {
+    const { client, web, runAs } = await builderHost(await scriptedModel());
+    const events = JSON.stringify(await runAs("owner", SANDBOX_CHECK));
+    expect(events).toContain("ran node --version");
+    expect(events).toContain(SANDBOX_CHECK_REPLY);
+    expect(web.runtimes.runtimes.get(`${client.id}/site-1`)?.calls).toContainEqual(
+      expect.objectContaining({ method: "run", command: "node", args: ["--version"] }),
+    );
   });
 });
