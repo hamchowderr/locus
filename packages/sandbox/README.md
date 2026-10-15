@@ -45,6 +45,10 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   every call in `runtime.calls`, preview URL `https://preview.fake/<key>`, `setPreviewLogs()`.
   It never loads `@vercel/sandbox`.
 
+- **`RemoteRuntimeProvider`**: drives sandboxes through the web app over HTTP, for a backend
+  off Vercel (the agent server on Coolify), where Vercel's OIDC token doesn't exist. See
+  [Remote sandboxes](#remote-sandboxes).
+
 ## Configuration
 
 `sandboxFromEnv()` picks credentials in this order:
@@ -60,6 +64,52 @@ output and the preview log are cut to a bounded tail (64k characters by default)
 run that loads it gets real sandboxes in the Locus project. Set `LOCUS_SANDBOX=off` to keep the
 fake locally. A host off Vercel (the Coolify agent server) has no OIDC token and needs the
 explicit token if the builder ever runs there.
+
+## Remote sandboxes
+
+Vercel Sandbox authenticates only inside `apps/web` on Vercel (the deployment's OIDC token). A
+backend elsewhere drives sandboxes through the web app's `POST /api/internal/sandbox` instead,
+with no new credential:
+
+```ts
+import { agentToWebKey, mintAgentToWebToken } from "@locus/auth";
+// One provider per member and client; the claims come from that member's checked session.
+const provider = remoteSandboxFromEnv(process.env, () =>
+  mintAgentToWebToken(agentToWebKey(process.env.BETTER_AUTH_SECRET), {
+    memberId, locationId, organizationId,
+  }),
+); // null unless LOCUS_SANDBOX_URL is set
+const runtime = await provider.open(siteId); // a site id, not a sandbox key
+```
+
+- `RemoteRuntimeProvider({ url, mintToken, fetch?, maxBodyBytes? })` implements `SiteRuntime`
+  faithfully: each method is one JSON POST, `{ siteId, op, args }`, with
+  `Authorization: Bearer <token>`. Results come back as the local runtime returns them (outputs
+  already cut to their tail). Errors come back as `{ name, message }`, never a stack:
+  `InvalidPathError` is rebuilt as itself, anything else is a `RemoteSandboxError` with the same
+  message (`remoteName`, `status`). `writeFiles` is split into batches under the body cap (4 MiB,
+  under Vercel's 4.5 MB request limit); a single file over it is refused. The runtime's `id` is
+  `remote-<siteId>`: the real one (a sandbox name) never leaves the web app.
+- `remoteSandboxFromEnv(env, mintToken)`: a provider when `LOCUS_SANDBOX_URL` (the web app's base
+  URL) is set, else null.
+- `handleSandboxRequest(request, { provider, authenticate, sandboxKey, maxBodyBytes? })`: the
+  framework-free server side. `authenticate(token)` runs first (null: a bare 404, the same for
+  every unauthenticated request, before the body is read); then a stream-bounded body read (413
+  over the cap), a known op and checked args (400), and `sandboxKey(principal, siteId)` (null:
+  403) — all before `provider.open(key)`. Bodies are never logged.
+
+The token (`mintAgentToWebToken`, `@locus/auth`) is an HS256 JWT keyed by HKDF from
+`BETTER_AUTH_SECRET` under the label `locus-agent-to-web` (not the chat kit's key, so neither
+token works in the other direction), valid at most 10 minutes: `sub` is the member id, plus the
+client (`loc`) and agency (`org`). The body never names a client or a sandbox key. On every call
+`apps/web/lib/sandbox-rpc.ts` loads the member, requires the token's agency, runs the staff check
+for that client (`authorizeClient`), checks the site is that client's, and only then derives the
+key as the in-process builder does (`siteRuntimeKey`).
+
+**apps/web must never serve this route without those checks**: anyone who can call it can run
+commands in a site's sandbox. In production the route answers 404 unless `BETTER_AUTH_SECRET` is
+set and real sandboxes are configured. **No credential travels to the sandbox**: the token stops
+at the web app, and the Vercel credentials never leave it.
 
 ## Not here yet
 
