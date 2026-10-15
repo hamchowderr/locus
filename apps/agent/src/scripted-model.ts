@@ -17,7 +17,7 @@ export const SCRIPTED_REPLY =
  * so staging can check the whole sandbox path (agent, web app, Vercel Sandbox) at no AI cost.
  */
 export const SANDBOX_CHECK = "sandbox check";
-export const SANDBOX_CHECK_REPLY = "Sandbox check finished: the command's output is above.";
+export const SANDBOX_CHECK_REPLY = "Sandbox check done: see the tool result above.";
 
 /** Starts the scripted model on a local port and returns its model config. */
 export async function scriptedModel(): Promise<MastraModelConfig> {
