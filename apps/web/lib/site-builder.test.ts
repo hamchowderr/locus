@@ -582,7 +582,50 @@ describe("publishing saved versions", () => {
       expect((await post(staffA, { siteId: other.siteId, versionId })).status).toBe(403);
       // Client A's site with a version id from nowhere.
       expect((await post(staffA, { siteId, versionId: "v-unknown" })).status).toBe(404);
+      // A real version, but of another of client A's sites.
+      const second = await createClientSite(deps(), ctx("owner"), client, {
+        name: "A2",
+        kind: "website",
+        templateId: "blank",
+      });
+      const secondSession = await createSiteBuilder(deps(), { client }).resolve(
+        context({ [SITE_ID_KEY]: second.siteId }),
+      );
+      const secondVersion = (await secondSession.workspace.latestVersion())?.id as string;
+      expect((await post(staffA, { siteId, versionId: secondVersion })).status).toBe(404);
       expect((await post(staffA, { siteId })).status).toBe(400);
+      // Nothing reached the repository.
+      expect(github.repoFiles(`${STUB_GITHUB_INSTALLATION.login}/a-site`) ?? {}).toEqual({});
+    });
+
+    it("leaves a site without a repository alone, with no call to the web app", async () => {
+      const { client, siteId } = await startedSite();
+      const builder = createSiteBuilder(agentDeps(), { client });
+      const rc = context({ [SITE_ID_KEY]: siteId });
+      await call(builder.tools, "files", { action: "write", path: "a.txt", content: "a" }, rc);
+      const saved = await call(builder.tools, "versions", { action: "save", message: "Add a" }, rc);
+      expect(saved).toMatchObject({ saved: true, version: 2 });
+      expect(saved.publishError).toBeUndefined();
+      expect(sent).toHaveLength(0);
+    });
+
+    it("reports a web app that refuses the call without passing on its answer", async () => {
+      const { client, siteId } = await startedSite();
+      await ensureSiteRepo(publishDeps(), ctx("owner"), client, { siteId, name: "a-site" });
+      const wrongSecret = remotePublish({
+        url: "https://locus.test",
+        authSecret: "another-secret",
+        fetch: async (input, init) => handler()(new Request(input, init)),
+      });
+      const builder = createSiteBuilder(deps({ publish: null, publishVersion: wrongSecret }), {
+        client,
+      });
+      const rc = context({ [SITE_ID_KEY]: siteId });
+      await call(builder.tools, "files", { action: "write", path: "a.txt", content: "a" }, rc);
+      const saved = await call(builder.tools, "versions", { action: "save", message: "Add a" }, rc);
+      expect(saved).toMatchObject({ saved: true, version: 2 });
+      expect(saved.publishError).toMatch(/couldn't be published/);
+      expect(saved.commitUrl).toBeUndefined();
     });
   });
 });

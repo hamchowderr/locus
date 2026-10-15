@@ -441,6 +441,26 @@ export function remoteSiteRuntimes(
   };
 }
 
+/**
+ * `hook`, run only once the site has a repository, as `publishHook` does: a site without one
+ * is left alone with no call to the web app.
+ */
+function withRepoOnly(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+  hook: VersionSavedHook,
+): VersionSavedHook {
+  return async (version, files) => {
+    const row = await clientSite(db, client, siteId);
+    if (!row.repoFullName) return undefined;
+    return hook(version, files);
+  };
+}
+
+/** The longest a publish call may take; the web app's route allows 300 s (`maxDuration`). */
+const PUBLISH_CALL_MS = 280_000;
+
 /** The web app's route that publishes a saved version for a backend off Vercel. */
 export const PUBLISH_RPC_PATH = "/api/internal/publish";
 
@@ -477,12 +497,16 @@ export function remotePublish(
         body: JSON.stringify({ siteId, versionId: version.id }),
         // Never follow a redirect: it would carry the token to another address.
         redirect: "error",
+        signal: AbortSignal.timeout(PUBLISH_CALL_MS),
       });
       const body = (await response.json().catch(() => null)) as PublishRpcBody | null;
       if (response.status === 422 && typeof body?.error === "string") {
         throw new PublishError(body.error);
       }
       if (!response.ok) {
+        // Logged for the operator (a wrong secret or bypass shows up here); the person gets
+        // the tools' generic message.
+        console.error(`Publishing through the web app failed: it answered ${response.status}`);
         throw new Error(`the web app answered ${response.status} to a publish call`);
       }
       return {
@@ -542,7 +566,9 @@ export function createSiteBuilder(
     const lease = await leaseClientDb(deps.openClientDb, client);
     const onVersionSaved = deps.publish
       ? publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl)
-      : deps.publishVersion?.(client, siteId);
+      : deps.publishVersion
+        ? withRepoOnly(deps.db, client, siteId, deps.publishVersion(client, siteId))
+        : undefined;
     return {
       workspace: new SiteWorkspace(lease.db, siteId),
       release: lease.release,
