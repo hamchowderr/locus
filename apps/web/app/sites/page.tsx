@@ -23,6 +23,7 @@ import {
   addSiteDomain,
   chooseSite,
   createSite,
+  deleteSite,
   deleteSiteDomain,
   giveSiteRepository,
   giveSiteVercelProject,
@@ -66,12 +67,12 @@ const isProblem = (value: unknown): value is { problem: string } =>
 export default async function Sites({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; created?: string; chosen?: string }>;
+  searchParams: Promise<{ error?: string; created?: string; chosen?: string; deleted?: string }>;
 }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, created, chosen } = await searchParams;
+  const { error, created, chosen, deleted } = await searchParams;
   const ctx = sessionContext(current);
   const client = await resolveActiveClient(locus().db, ctx).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
@@ -133,6 +134,7 @@ export default async function Sites({
     <Page title={`Sites · ${client.location.name}`}>
       {error && <Notice tone="error">{error}</Notice>}
       {created && <Notice tone="info">Site created from its template as version 1.</Notice>}
+      {deleted && <Notice tone="info">Site deleted.</Notice>}
       {chosen && <Notice tone="info">The site builder now works on that site.</Notice>}
       {isProblem(projects) && (
         <Notice tone="error">
@@ -227,6 +229,19 @@ export default async function Sites({
                   Unlink project
                 </button>
               </form>
+            )}
+            {manager && !s.repoFullName && !s.hostProjectId && !s.customDomain && (
+              <details className="text-sm">
+                <summary className="cursor-pointer text-neutral-600">Delete this site</summary>
+                <form action={deleteSite} className="space-y-2 pt-2">
+                  <input type="hidden" name="siteId" value={s.id} />
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" name="confirm" value="yes" required />
+                    Delete this site and all its versions. This can't be undone.
+                  </label>
+                  <Button>Delete site</Button>
+                </form>
+              </details>
             )}
           </section>
         );

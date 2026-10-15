@@ -67,6 +67,7 @@ import {
   cookieValue,
   createClientSite,
   createSiteBuilder,
+  deleteClientSite,
   leaseClientDb,
   newSiteRefusal,
   openClientDb,
@@ -627,6 +628,108 @@ describe("publishing saved versions", () => {
       expect(saved.publishError).toMatch(/couldn't be published/);
       expect(saved.commitUrl).toBeUndefined();
     });
+  });
+});
+
+describe("deleting a site", () => {
+  async function draft(userId = "owner", name = "A") {
+    const client = await authorized(userId, clientA);
+    const { siteId } = await createClientSite(deps(), ctx(userId), client, {
+      name,
+      kind: "website",
+      templateId: "blank",
+    });
+    return { client, siteId };
+  }
+
+  async function tenantCounts(client: AuthorizedClient, siteId: string) {
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      const n = async (sql: string, args: string[] = [siteId]) =>
+        Number((await tenant.$client.execute({ sql, args })).rows[0]?.[0]);
+      return {
+        versions: await n("select count(*) from site_version where site_id = ?"),
+        drafts: await n("select count(*) from site_draft_file where site_id = ?"),
+        briefs: await n("select count(*) from site_brief where site_id = ?"),
+        versionFiles: await n("select count(*) from site_version_file", []),
+        blobs: await n("select count(*) from site_blob", []),
+      };
+    } finally {
+      tenant.$client.close();
+    }
+  }
+
+  it("removes a draft and everything Locus keeps for it, and only that site", async () => {
+    const kept = await draft("owner", "Kept");
+    const { client, siteId } = await draft();
+    const builder = createSiteBuilder(deps(), { client });
+    const rc = context({ [SITE_ID_KEY]: siteId });
+    await call(builder.tools, "files", { action: "write", path: "only.txt", content: "x1" }, rc);
+    await call(builder.tools, "versions", { action: "save", message: "Add only" }, rc);
+    await db.insert(session).values({
+      id: "s-owner",
+      token: "t-owner",
+      userId: "owner",
+      expiresAt: new Date(Date.now() + 3_600_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await chooseActiveSite(db, ctx("owner"), client, siteId);
+    const before = await tenantCounts(client, kept.siteId);
+
+    await deleteClientSite(deps(), ctx("owner"), client, siteId);
+
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(await activeSiteIdForSession(db, ctx("owner"), client)).toBeNull();
+    const after = await tenantCounts(client, siteId);
+    expect(after).toMatchObject({ versions: 0, drafts: 0, briefs: 0 });
+    // The other site is untouched; only contents nothing uses any more are gone.
+    const keptAfter = await tenantCounts(client, kept.siteId);
+    expect(keptAfter).toMatchObject({ versions: 1, briefs: 1, drafts: before.drafts });
+    expect(keptAfter.blobs).toBeLessThan(before.blobs);
+    expect(keptAfter.blobs).toBeGreaterThan(0);
+    expect(await db.select().from(site).where(eq(site.id, kept.siteId))).toHaveLength(1);
+    // Contents both sites shared still resolve for the kept one.
+    const keptSession = await builder.resolve(context({ [SITE_ID_KEY]: kept.siteId }));
+    const keptVersion = await keptSession.workspace.latestVersion();
+    expect(await keptSession.workspace.snapshot()).not.toHaveLength(0);
+    expect(
+      await keptSession.workspace.versionFiles((keptVersion as NonNullable<typeof keptVersion>).id),
+    ).not.toHaveLength(0);
+    const audit = await db.select().from(auditLog).where(eq(auditLog.action, "site.delete"));
+    expect(audit).toMatchObject([{ actorUserId: "owner", detail: { siteId } }]);
+  });
+
+  it("is for owners and admins only", async () => {
+    const { siteId } = await draft("staff");
+    const staff = await authorized("staff", clientA);
+    await expect(deleteClientSite(deps(), ctx("staff"), staff, siteId)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
+  });
+
+  it("refuses another client's site", async () => {
+    const { siteId } = await draft();
+    const b = await authorized("owner", clientB);
+    await expect(deleteClientSite(deps(), ctx("owner"), b, siteId)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
+  });
+
+  it.each([
+    { repoFullName: "agency/a-site" },
+    { hostProjectId: "prj_1" },
+    { customDomain: "www.example.com" },
+  ])("refuses a published site (%o), and leaves it as it was", async (published) => {
+    const { client, siteId } = await draft();
+    await db.update(site).set(published).where(eq(site.id, siteId));
+    await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
+      /can't be deleted here/,
+    );
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
   });
 });
 
