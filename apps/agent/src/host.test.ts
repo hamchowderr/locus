@@ -30,7 +30,7 @@ import { MastraClient } from "@mastra/client-js";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createHost, PREFIX, sessionFromKitToken } from "./host.ts";
+import { createHost, PREFIX, reportFailure, sessionFromKitToken } from "./host.ts";
 import {
   SANDBOX_CHECK,
   SANDBOX_CHECK_REPLY,
@@ -498,6 +498,37 @@ describe("the agent server", () => {
     ]);
     expect(ended).toBe(true);
   });
+  test("a request that fails is logged with its cause, and the caller sees no detail", async () => {
+    const { connect, sessions } = await agency();
+    const logged: unknown[][] = [];
+    const host = createHost({
+      db,
+      session: async () => sessions.owner ?? null,
+      connect: {
+        ...connect,
+        provisioner: Object.assign(Object.create(connect.provisioner), {
+          mintToken: async () => {
+            throw new Error("database token refused");
+          },
+        }),
+      },
+      model: await scriptedModel(),
+      origin: "http://locus.test",
+      logError: (...args) => logged.push(args),
+    });
+    const res = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "Hello there" }),
+      }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(await res.text()).not.toContain("database token refused");
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0]?.[0])).toContain(`POST ${PREFIX}/kit/agent-controller/stream`);
+    expect(JSON.stringify(logged[0]) + String(logged[0]?.[1])).toContain("database token refused");
+  });
 });
 
 /** A token as the chat kit's proxy signs it. */
@@ -506,6 +537,49 @@ function kitToken(key: string, sub: string, exp = Math.floor(Date.now() / 1000) 
   const body = `${b64({ alg: "HS256", typ: "JWT" })}.${b64({ sub, exp })}`;
   return `${body}.${createHmac("sha256", key).update(body).digest("base64url")}`;
 }
+
+describe("a failed request", () => {
+  const log = () => {
+    const logged: string[] = [];
+    return { logged, logError: (message: string) => logged.push(message) };
+  };
+
+  test("is logged with the start of its body, and the caller gets a generic error", async () => {
+    const { logged, logError } = log();
+    const failed = new Response(JSON.stringify({ error: "no such table: threads" }), {
+      status: 500,
+      headers: { "content-type": "application/json" },
+    });
+    const res = await reportFailure(failed, "GET /x", logError);
+    expect(res.status).toBe(500);
+    expect(await res.text()).not.toContain("threads");
+    expect(logged).toEqual([
+      expect.stringContaining('GET /x answered 500: {"error":"no such table: threads"}'),
+    ]);
+  });
+
+  test("stops reading an endless body at the logged length", async () => {
+    const { logged, logError } = log();
+    const endless = new ReadableStream({
+      pull: (controller) => controller.enqueue(new TextEncoder().encode("x".repeat(1_000))),
+    });
+    const res = await reportFailure(new Response(endless, { status: 502 }), "GET /y", logError);
+    expect(res.status).toBe(502);
+    expect(logged[0]?.length).toBeLessThan(2_100);
+  });
+
+  test("passes other answers and event streams through untouched", async () => {
+    const { logged, logError } = log();
+    const notFound = new Response("nope", { status: 404 });
+    expect(await reportFailure(notFound, "GET /z", logError)).toBe(notFound);
+    const stream = new Response("data: x\n\n", {
+      status: 500,
+      headers: { "content-type": "text/event-stream" },
+    });
+    expect(await reportFailure(stream, "GET /z", logError)).toBe(stream);
+    expect(logged).toEqual([]);
+  });
+});
 
 describe("the chat kit", () => {
   test("a token from the web app names a signed-in session; a bad or stale one, nobody", async () => {
