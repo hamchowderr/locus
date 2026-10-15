@@ -90,6 +90,9 @@ const runtime = await provider.open(siteId); // a site id, not a sandbox key
   message (`remoteName`, `status`). `writeFiles` is split into batches under the body cap (4 MiB,
   under Vercel's 4.5 MB request limit); a single file over it is refused. The runtime's `id` is
   `remote-<siteId>`: the real one (a sandbox name) never leaves the web app.
+  The route's function is killed at 300 s, so the handler cuts each command at
+  `MAX_CALL_COMMAND_MS` (240 s; reported as `timedOut`), and `install` resumes an install the
+  cut stopped, up to three calls.
 - `remoteSandboxFromEnv(env, mintToken)`: a provider when `LOCUS_SANDBOX_URL` (the web app's base
   URL) is set, else null.
 - `handleSandboxRequest(request, { provider, authenticate, sandboxKey, maxBodyBytes? })`: the

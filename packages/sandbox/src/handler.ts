@@ -11,6 +11,7 @@
 import { InvalidPathError } from "./paths.ts";
 import {
   DEFAULT_MAX_BODY_BYTES,
+  MAX_CALL_COMMAND_MS,
   SANDBOX_OPS,
   type SandboxOp,
   type SandboxRpcResponse,
@@ -144,11 +145,17 @@ function prepare(op: SandboxOp, args: Record<string, unknown>): Call {
         throw new BadRequest("timeoutMs must be a positive number");
       }
       const command = args.command;
-      const opts = timeoutMs === undefined ? {} : { timeoutMs: timeoutMs as number };
+      // Capped so the sandbox ends the command before the function is killed mid-call.
+      const opts = {
+        timeoutMs: Math.min(
+          (timeoutMs as number | undefined) ?? MAX_CALL_COMMAND_MS,
+          MAX_CALL_COMMAND_MS,
+        ),
+      };
       return (runtime) => runtime.run(command, runArgs, opts);
     }
     case "install":
-      return (runtime) => runtime.install();
+      return (runtime) => runtime.install({ timeoutMs: MAX_CALL_COMMAND_MS });
     case "startPreview":
       return (runtime) => runtime.startPreview();
     case "previewLogs":

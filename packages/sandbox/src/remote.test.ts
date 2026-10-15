@@ -3,6 +3,8 @@ import { FakeRuntimeProvider } from "./fake.ts";
 import { handleSandboxRequest, type SandboxHandlerOptions } from "./handler.ts";
 import { InvalidPathError } from "./paths.ts";
 import { RemoteRuntimeProvider, RemoteSandboxError, remoteSandboxFromEnv } from "./remote.ts";
+import { MAX_CALL_COMMAND_MS } from "./rpc.ts";
+import type { CommandResult, RuntimeProvider, SiteRuntime } from "./runtime.ts";
 
 const URL_ = "https://locus.test/api/internal/sandbox";
 type Principal = { client: string };
@@ -283,6 +285,69 @@ describe("the handler refuses", () => {
     expect((await handleSandboxRequest(streamed, handlerOptions)).status).toBe(413);
     const anonymous = post(big, { authorization: "Bearer wrong" });
     expect((await handleSandboxRequest(anonymous, handlerOptions)).status).toBe(404);
+  });
+});
+
+describe("long calls fit the route's time limit", () => {
+  /** A runtime that records the timeouts it was given; installs time out `slowInstalls` times. */
+  function recording(slowInstalls: number) {
+    const seen: { op: string; timeoutMs: number | undefined }[] = [];
+    const result = (timedOut: boolean): CommandResult => ({
+      exitCode: timedOut ? 137 : 0,
+      stdout: "",
+      stderr: "",
+      timedOut,
+    });
+    const runtime = {
+      id: "rec",
+      run: async (_command: string, _args: string[], opts: { timeoutMs?: number } = {}) => {
+        seen.push({ op: "run", timeoutMs: opts.timeoutMs });
+        return result(false);
+      },
+      install: async (opts: { timeoutMs?: number } = {}) => {
+        seen.push({ op: "install", timeoutMs: opts.timeoutMs });
+        return result(seen.filter((call) => call.op === "install").length <= slowInstalls);
+      },
+    } as unknown as SiteRuntime;
+    const provider: RuntimeProvider = { open: async () => runtime };
+    const remote = new RemoteRuntimeProvider({
+      url: URL_,
+      mintToken: () => "good-token",
+      fetch: async (input, init) =>
+        handleSandboxRequest(new Request(input, init), {
+          provider,
+          authenticate: (token) => (token === "good-token" ? {} : null),
+          sandboxKey: (_principal, siteId) => siteId,
+        }),
+    });
+    return { remote, seen };
+  }
+
+  it("caps a command's timeout, and gives one with none the cap", async () => {
+    const { remote, seen } = recording(0);
+    const runtime = await remote.open("site-1");
+    await runtime.run("next", ["build"], { timeoutMs: 600_000 });
+    await runtime.run("ls");
+    await runtime.run("ls", [], { timeoutMs: 5_000 });
+    expect(seen).toEqual([
+      { op: "run", timeoutMs: MAX_CALL_COMMAND_MS },
+      { op: "run", timeoutMs: MAX_CALL_COMMAND_MS },
+      { op: "run", timeoutMs: 5_000 },
+    ]);
+  });
+
+  it("resumes an install the cap cut, up to three calls", async () => {
+    const resumed = recording(1);
+    const done = await (await resumed.remote.open("site-1")).install();
+    expect(done.timedOut).toBe(false);
+    expect(resumed.seen).toEqual([
+      { op: "install", timeoutMs: MAX_CALL_COMMAND_MS },
+      { op: "install", timeoutMs: MAX_CALL_COMMAND_MS },
+    ]);
+
+    const stuck = recording(10);
+    expect((await (await stuck.remote.open("site-1")).install()).timedOut).toBe(true);
+    expect(stuck.seen).toHaveLength(3);
   });
 });
 

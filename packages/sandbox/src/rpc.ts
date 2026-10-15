@@ -11,6 +11,13 @@
 export const SANDBOX_RPC_PATH = "/api/internal/sandbox";
 /** Below Vercel's 4.5 MB request body limit. */
 export const DEFAULT_MAX_BODY_BYTES = 4 * 1024 * 1024;
+/**
+ * The longest a command may run within one call. The route's function is killed at 300 s (the
+ * cap on every Vercel plan's default), so a command must end, by the sandbox's own timeout,
+ * with time left to open the sandbox and answer. Longer runs are cut here and report `timedOut`;
+ * an install is resumed by the caller instead (see `RemoteRuntimeProvider`).
+ */
+export const MAX_CALL_COMMAND_MS = 240_000;
 
 export const SANDBOX_OPS = [
   "open",
