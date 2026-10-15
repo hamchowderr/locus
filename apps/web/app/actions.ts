@@ -32,6 +32,7 @@ import {
   ACTIVE_SITE_COOKIE,
   chooseActiveSite,
   createClientSite,
+  deleteClientSite,
   SiteInputError,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
@@ -418,6 +419,34 @@ export async function createSite(form: FormData) {
     throw error;
   }
   redirect("/sites?created=1");
+}
+
+/**
+ * Deletes one of the active client's draft sites, with everything Locus keeps for it. Owners
+ * and admins only; the client is the session's, and a site with a repository or Vercel project
+ * is refused (`deleteClientSite`).
+ */
+export async function deleteSite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  if (form.get("confirm") !== "yes") {
+    back("/sites", new Error("Tick the box to confirm you want the site deleted."));
+  }
+  try {
+    const client = await resolveActiveClient(locus().db, ctx);
+    await deleteClientSite(siteBuilderDeps(), ctx, client, text(form, "siteId"));
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Client databases aren't set up here yet."));
+    }
+    throw error;
+  }
+  revalidatePath("/sites");
+  redirect("/sites?deleted=1");
 }
 
 /**
