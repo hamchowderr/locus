@@ -78,6 +78,14 @@ export class TursoProvisioner implements TenantProvisioner {
     return body.jwt;
   }
 
+  /**
+   * Proves the token, organisation and group work together by reading the group: a wrong token
+   * answers 401, a wrong organisation or group 404. Throws that `TursoError`.
+   */
+  async check(signal?: AbortSignal) {
+    await this.call("GET", `/groups/${encodeURIComponent(this.config.group)}`, undefined, signal);
+  }
+
   /** Safe to repeat: a database that is already gone counts as deleted. */
   async destroy(dbName: string) {
     try {
@@ -93,13 +101,21 @@ export class TursoProvisioner implements TenantProvisioner {
     return `libsql://${hostname}`;
   }
 
-  private async call<T>(method: string, path: string, json?: unknown): Promise<T> {
+  private async call<T>(
+    method: string,
+    path: string,
+    json?: unknown,
+    signal?: AbortSignal,
+  ): Promise<T> {
     const { baseUrl, org, apiToken } = this.config;
     const headers: Record<string, string> = { authorization: `Bearer ${apiToken}` };
     if (json !== undefined) headers["content-type"] = "application/json";
+    const init: RequestInit = { method, headers };
+    if (json !== undefined) init.body = JSON.stringify(json);
+    if (signal) init.signal = signal;
     const response = await this.config.fetch(
       `${baseUrl}/v1/organizations/${encodeURIComponent(org)}${path}`,
-      json === undefined ? { method, headers } : { method, headers, body: JSON.stringify(json) },
+      init,
     );
     const text = await response.text();
     let body: unknown = {};
