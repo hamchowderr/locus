@@ -27,7 +27,7 @@ export interface SiteRuntime {
   /** Runs one command in the project root. Output is truncated to a bounded size (keep the tail). */
   run(command: string, args?: string[], opts?: { timeoutMs?: number }): Promise<CommandResult>;
   /** Installs dependencies (pnpm/npm per lockfile) if package.json changed since the last install. */
-  install(): Promise<CommandResult>;
+  install(opts?: { timeoutMs?: number }): Promise<CommandResult>;
   /** Starts `next dev` on a fixed port if it isn't running; returns the public preview URL. */
   startPreview(): Promise<{ url: string }>;
   /** The dev server's recent output (tail), for the agent to read runtime/compile errors. */

@@ -376,7 +376,7 @@ class VercelSiteRuntime implements SiteRuntime {
     );
   }
 
-  install(): Promise<CommandResult> {
+  install(opts: { timeoutMs?: number } = {}): Promise<CommandResult> {
     const digest = `{ cat package.json; cat pnpm-lock.yaml 2>/dev/null; cat package-lock.json 2>/dev/null; } | sha256sum | cut -d' ' -f1`;
     const script = [
       `[ -f package.json ] || { echo "package.json not found" >&2; exit 1; }`,
@@ -390,7 +390,7 @@ class VercelSiteRuntime implements SiteRuntime {
     return this.exec(
       "sh",
       ["-c", script],
-      this.config.installTimeoutMs ?? DEFAULTS.installTimeoutMs,
+      opts.timeoutMs ?? this.config.installTimeoutMs ?? DEFAULTS.installTimeoutMs,
       { ...COMMAND_ENV, CI: "1" },
     );
   }

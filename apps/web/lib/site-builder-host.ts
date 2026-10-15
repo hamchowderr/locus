@@ -15,7 +15,8 @@ import {
 } from "./site-builder.ts";
 
 let runtimes: RuntimeProvider | undefined;
-const siteRuntimes = () => {
+/** This process's sandbox provider (`runtimesFromEnv`), shared by the builder and the RPC route. */
+export const siteRuntimes = () => {
   runtimes ??= runtimesFromEnv();
   return runtimes;
 };
