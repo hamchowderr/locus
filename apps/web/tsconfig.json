@@ -13,7 +13,12 @@
     "paths": {
       "@/*": ["./*"]
     },
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    // The chat kit's components (installed from its registry, not edited here) are written
+    // without these two checks. `pnpm typecheck` still checks Locus's own code
+    // with them (scripts/typecheck-strict.ts). Restore them once the kit compiles (locus-8c0.18).
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
   "exclude": ["node_modules"]
