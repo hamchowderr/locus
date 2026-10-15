@@ -88,6 +88,11 @@ export interface SiteBuilderDeps {
    */
   publish?: (() => PublishDeps) | null;
   /**
+   * Publishing through the web app, for a host without the GitHub App (`remotePublish`). Used
+   * only when `publish` is not set.
+   */
+  publishVersion?: ((client: AuthorizedClient, siteId: string) => VersionSavedHook) | null;
+  /**
    * This deployment's public address. Each published version gets `lib/locus.ts` pointing the
    * site's form route at `<locusUrl>/api/sites/<siteId>/leads` (`withLocusSettings`).
    */
@@ -228,6 +233,9 @@ const GENERIC_PUBLISH_ERROR =
   "The version is saved, but GitHub refused it. Check that the Locus app can still reach the " +
   "site's repository, then save again.";
 
+/** What runs after each saved version (`BuilderSession.onVersionSaved`). */
+export type VersionSavedHook = NonNullable<BuilderSession["onVersionSaved"]>;
+
 /** The message the model may see for a publishing refusal. */
 export function publishMessage(error: ConnectError): string {
   if (PERSON_FACING_PUBLISH_ERRORS.some((pattern) => pattern.test(error.message))) {
@@ -252,7 +260,7 @@ export function publishHook(
   client: AuthorizedClient,
   siteId: string,
   locusUrl: string,
-): NonNullable<BuilderSession["onVersionSaved"]> {
+): VersionSavedHook {
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
@@ -375,13 +383,8 @@ export function runtimesFromEnv(
   };
 }
 
-/**
- * Sandboxes driven through the web app's `/api/internal/sandbox` (see `RemoteRuntimeProvider`),
- * for `SiteBuilderDeps.openRuntime` on a host off Vercel. Each call carries a short-lived token
- * naming the member and client, so the web app runs the staff check itself; no credential for
- * Vercel leaves it.
- */
-export function remoteSiteRuntimes(options: {
+/** How a Locus backend off Vercel reaches the web app (`remoteSiteRuntimes`, `remotePublish`). */
+export interface WebAppOptions {
   /** The web app's base URL. */
   url: string;
   /** `BETTER_AUTH_SECRET`, shared with the web app. */
@@ -393,30 +396,124 @@ export function remoteSiteRuntimes(options: {
    */
   vercelBypass?: string;
   fetch?: typeof fetch;
-}): (client: AuthorizedClient, siteId: string) => Promise<SiteRuntime> {
-  const key = agentToWebKey(options.authSecret);
-  const url = `${options.url.replace(/\/+$/, "")}${SANDBOX_RPC_PATH}`;
+}
+
+/** `fetch` for calls to the web app, with the Vercel bypass header when there is one. */
+function webFetch(options: WebAppOptions): typeof fetch {
   const send = options.fetch ?? fetch;
   const bypass = options.vercelBypass;
-  const fetchWeb: typeof fetch = bypass
-    ? (input, init) => {
-        const headers = new Headers(init?.headers);
-        headers.set("x-vercel-protection-bypass", bypass);
-        return send(input, { ...init, headers });
-      }
-    : send;
+  if (!bypass) return send;
+  return (input, init) => {
+    const headers = new Headers(init?.headers);
+    headers.set("x-vercel-protection-bypass", bypass);
+    return send(input, { ...init, headers });
+  };
+}
+
+/** A short-lived agent-to-web token for the member and client behind `client`. */
+function tokenFor(key: string, client: AuthorizedClient): string {
+  return mintAgentToWebToken(key, {
+    memberId: client.memberId,
+    locationId: client.location.id,
+    organizationId: client.location.organizationId,
+  });
+}
+
+/**
+ * Sandboxes driven through the web app's `/api/internal/sandbox` (see `RemoteRuntimeProvider`),
+ * for `SiteBuilderDeps.openRuntime` on a host off Vercel. Each call carries a short-lived token
+ * naming the member and client, so the web app runs the staff check itself; no credential for
+ * Vercel leaves it.
+ */
+export function remoteSiteRuntimes(
+  options: WebAppOptions,
+): (client: AuthorizedClient, siteId: string) => Promise<SiteRuntime> {
+  const key = agentToWebKey(options.authSecret);
+  const url = `${options.url.replace(/\/+$/, "")}${SANDBOX_RPC_PATH}`;
+  const fetchWeb = webFetch(options);
   return (client, siteId) => {
     assertAuthorizedClient(client);
     return new RemoteRuntimeProvider({
       url,
-      mintToken: () =>
-        mintAgentToWebToken(key, {
-          memberId: client.memberId,
-          locationId: client.location.id,
-          organizationId: client.location.organizationId,
-        }),
+      mintToken: () => tokenFor(key, client),
       fetch: fetchWeb,
     }).open(siteId);
+  };
+}
+
+/**
+ * `hook`, run only once the site has a repository, as `publishHook` does: a site without one
+ * is left alone with no call to the web app.
+ */
+function withRepoOnly(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+  hook: VersionSavedHook,
+): VersionSavedHook {
+  return async (version, files) => {
+    const row = await clientSite(db, client, siteId);
+    if (!row.repoFullName) return undefined;
+    return hook(version, files);
+  };
+}
+
+/** The longest a publish call may take; the web app's route allows 300 s (`maxDuration`). */
+const PUBLISH_CALL_MS = 280_000;
+
+/** The web app's route that publishes a saved version for a backend off Vercel. */
+export const PUBLISH_RPC_PATH = "/api/internal/publish";
+
+/** The answer the publish route gives, success or refusal. */
+interface PublishRpcBody {
+  commitSha?: unknown;
+  url?: unknown;
+  error?: unknown;
+}
+
+/**
+ * Publishing saved versions through the web app's `/api/internal/publish`, for
+ * `SiteBuilderDeps.publishVersion` on a host without the GitHub App (the agent server). Only the
+ * site and version ids travel, with a short-lived token naming the member and client: the web
+ * app runs the staff check, reads the version's files from the client's database itself, and
+ * publishes them as `publishHook` does. A refusal written for the person (422) comes back as a
+ * `PublishError`; anything else is a plain error, which the tools report generically.
+ */
+export function remotePublish(
+  options: WebAppOptions,
+): (client: AuthorizedClient, siteId: string) => VersionSavedHook {
+  const key = agentToWebKey(options.authSecret);
+  const url = `${options.url.replace(/\/+$/, "")}${PUBLISH_RPC_PATH}`;
+  const fetchWeb = webFetch(options);
+  return (client, siteId) => {
+    assertAuthorizedClient(client);
+    return async (version) => {
+      const response = await fetchWeb(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${tokenFor(key, client)}`,
+        },
+        body: JSON.stringify({ siteId, versionId: version.id }),
+        // Never follow a redirect: it would carry the token to another address.
+        redirect: "error",
+        signal: AbortSignal.timeout(PUBLISH_CALL_MS),
+      });
+      const body = (await response.json().catch(() => null)) as PublishRpcBody | null;
+      if (response.status === 422 && typeof body?.error === "string") {
+        throw new PublishError(body.error);
+      }
+      if (!response.ok) {
+        // Logged for the operator (a wrong secret or bypass shows up here); the person gets
+        // the tools' generic message.
+        console.error(`Publishing through the web app failed: it answered ${response.status}`);
+        throw new Error(`the web app answered ${response.status} to a publish call`);
+      }
+      return {
+        ...(typeof body?.commitSha === "string" ? { commitSha: body.commitSha } : {}),
+        ...(typeof body?.url === "string" ? { url: body.url } : {}),
+      };
+    };
   };
 }
 
@@ -467,6 +564,11 @@ export function createSiteBuilder(
     const { client, userId } = await reauthorize(deps.db, requester);
     await clientSite(deps.db, client, siteId);
     const lease = await leaseClientDb(deps.openClientDb, client);
+    const onVersionSaved = deps.publish
+      ? publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl)
+      : deps.publishVersion
+        ? withRepoOnly(deps.db, client, siteId, deps.publishVersion(client, siteId))
+        : undefined;
     return {
       workspace: new SiteWorkspace(lease.db, siteId),
       release: lease.release,
@@ -477,9 +579,7 @@ export function createSiteBuilder(
       images: deps.images ?? null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
-      ...(deps.publish
-        ? { onVersionSaved: publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl) }
-        : {}),
+      ...(onVersionSaved ? { onVersionSaved } : {}),
     };
   };
 
