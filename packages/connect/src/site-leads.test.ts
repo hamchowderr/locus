@@ -729,6 +729,19 @@ describe("counting a site's leads in the client's own database", () => {
     expect(logged).not.toMatch(/dana|example\.test/i);
   });
 
+  it("doesn't keep the visitor waiting on a count that hangs", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const hanging = new LocalProvisioner(join(dir, "tenants"));
+    hanging.mintToken = () => new Promise<string>(() => {});
+    const started = Date.now();
+    const result = await submit(deps(okRoutes, { provisioner: hanging, countTimeoutMs: 50 }), lead);
+    expect(result).toEqual({ status: 200, body: { ok: true } });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(errors.mock.calls.flat().join("\n")).toContain(
+      "Counting a lead for site site-live failed: Timeout",
+    );
+  });
+
   it("adds to an existing day's row", async () => {
     const { provisioner, read } = await withClientDb();
     const tenant = openTenantDb(provisioner.url("loc-sunrise.local"));

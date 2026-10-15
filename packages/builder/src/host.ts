@@ -925,7 +925,6 @@ async function whenNotBusy<T>(work: () => Promise<T>, retries = 6): Promise<T> {
   }
 }
 
-/** The sites' names from their briefs in the client's database, by site id. */
 /** The days `siteLeadTotals` adds up, today included. */
 export const LEAD_TOTAL_DAYS = 30;
 
@@ -960,6 +959,7 @@ export async function siteLeadTotals(
   return totals;
 }
 
+/** The sites' names from their briefs in the client's database, by site id. */
 export async function siteNames(
   deps: Pick<SiteBuilderDeps, "openClientDb">,
   client: AuthorizedClient,
