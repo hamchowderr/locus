@@ -12,11 +12,23 @@
       "!packages/skills/catalog",
       "!packages/skills/source",
       "!packages/skills/src/generated",
+      "!packages/builder/src/skills/bundle.generated.ts",
       "!.claude/skills/mastra",
       "!.beads",
       "!packages/db/src/control/auth-schema.ts",
       "!packages/db/migrations",
-      "!packages/db/src/generated"
+      "!packages/db/src/generated",
+      "!packages/agent-api/src/mastra",
+      "!apps/web/components/ai-elements",
+      "!apps/web/components/chat",
+      "!apps/web/components/chat-minimal",
+      "!apps/web/components/ui",
+      "!apps/web/lib/agent-controller",
+      "!apps/web/lib/mastra-proxy.ts",
+      "!apps/web/app/api/agent-controller",
+      "!apps/web/app/api/workspace",
+      "!apps/web/app/api/browser",
+      "!apps/web/app/api/images"
     ]
   },
   "formatter": {
@@ -42,6 +54,11 @@
       "source": {
         "organizeImports": "on"
       }
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   }
 }

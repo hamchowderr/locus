@@ -31,7 +31,7 @@ import {
   type BuiltinToolId,
 } from "@mastra/core/agent-controller";
 import type { MastraModelConfig } from "@mastra/core/llm";
-import { createLocusAgent, type LocusAgentConfig } from "./agent.ts";
+import { createLocusAgent, type LocusAgentConfig, refuseOwnTextCollisions } from "./agent.ts";
 import { type ConversationStore, clientResource } from "./conversation.ts";
 import type { RunContext, ToolDeps } from "./tools.ts";
 
@@ -39,6 +39,18 @@ export const CONTROLLER_ID = "locus";
 
 /** Which client each controller serves; sessions are opened through it, never named by caller. */
 const clientOf = new WeakMap<AgentController, string>();
+const storageOf = new WeakMap<AgentController, ConversationStore>();
+
+/**
+ * The client's own store a controller keeps its conversations in. A Mastra instance hosting the
+ * controller must be given it: the controller reads threads and messages through its parent
+ * Mastra's storage, and a Mastra without one falls back to an in-memory store.
+ */
+export function controllerStorage(controller: AgentController): ConversationStore {
+  const storage = storageOf.get(controller);
+  if (!storage) throw new Error("not a Locus controller");
+  return storage;
+}
 
 export const ASK_TOOLS = ["load_skill", "query_data", "ask_user"];
 
@@ -64,6 +76,17 @@ export const LOCUS_MODES: AgentControllerMode[] = [
  */
 const DISABLED_BUILTINS: BuiltinToolId[] = ["submit_plan", "subagent"];
 
+/** The controller's built-in tools, which `ownTextTools` may never name either. */
+const CONTROLLER_BUILTINS: BuiltinToolId[] = [
+  "ask_user",
+  "submit_plan",
+  "task_write",
+  "task_update",
+  "task_complete",
+  "task_check",
+  "subagent",
+];
+
 export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   model: MastraModelConfig;
   /** The client this controller serves. */
@@ -82,6 +105,8 @@ export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   processors?: LocusAgentConfig["processors"];
   /** Tools added here whose results hold no GHL data (see `LocusAgentConfig`). */
   keepResults?: LocusAgentConfig["keepResults"];
+  /** Tools added here whose results are Locus's own text (see `LocusAgentConfig`). */
+  ownTextTools?: LocusAgentConfig["ownTextTools"];
 }
 
 export async function createLocusController({
@@ -94,8 +119,10 @@ export async function createLocusController({
   disableBuiltinTools = DISABLED_BUILTINS,
   processors,
   keepResults,
+  ownTextTools,
   ...deps
 }: LocusControllerConfig): Promise<AgentController> {
+  refuseOwnTextCollisions(ownTextTools ?? [], CONTROLLER_BUILTINS);
   const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
   const checkedSession = async (requestContext?: RunContext) => {
     const current = await session(requestContext);
@@ -112,6 +139,7 @@ export async function createLocusController({
     storage,
     ...(processors ? { processors } : {}),
     ...(keepResults ? { keepResults } : {}),
+    ...(ownTextTools ? { ownTextTools } : {}),
   });
   const controller = new AgentController({
     id: CONTROLLER_ID,
@@ -125,6 +153,7 @@ export async function createLocusController({
   });
   await controller.init();
   clientOf.set(controller, locationId);
+  storageOf.set(controller, storage);
   return controller;
 }
 
@@ -140,9 +169,17 @@ export async function openClientSession(
 ) {
   const locationId = clientOf.get(controller);
   if (!locationId) throw new Error("not a Locus controller");
+  const resourceId = clientResource({ token: "", tokenKind: "location", locationId });
+  const scope = `member:${memberId}`;
   return controller.createSession({
-    resourceId: clientResource({ token: "", tokenKind: "location", locationId }),
-    scope: `member:${memberId}`,
+    resourceId,
+    // The id Mastra's own routes give a scoped session, so every route reaches one session
+    // with one identity, whichever opens it first.
+    id: `${resourceId}::${scope}`,
+    ownerId: controller.id,
+    scope,
+    // A thread is made when the first message needs one, so opening leaves no empty thread.
+    createInitialThread: false,
     ...(threadId ? { threadId } : {}),
   });
 }

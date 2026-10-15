@@ -62,6 +62,10 @@ export default async function Home() {
       <p>
         {client && (
           <>
+            <Link href="/chat" className="underline">
+              Chat
+            </Link>{" "}
+            ·{" "}
             <Link href="/sites" className="underline">
               Sites
             </Link>{" "}
