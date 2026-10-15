@@ -482,6 +482,37 @@ describe("the agent server", () => {
     ]);
     expect(ended).toBe(true);
   });
+  test("a request that fails is logged with its cause, and the caller sees no detail", async () => {
+    const { connect, sessions } = await agency();
+    const logged: unknown[][] = [];
+    const host = createHost({
+      db,
+      session: async () => sessions.owner ?? null,
+      connect: {
+        ...connect,
+        provisioner: Object.assign(Object.create(connect.provisioner), {
+          mintToken: async () => {
+            throw new Error("database token refused");
+          },
+        }),
+      },
+      model: await scriptedModel(),
+      origin: "http://locus.test",
+      logError: (...args) => logged.push(args),
+    });
+    const res = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "Hello there" }),
+      }),
+    );
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(await res.text()).not.toContain("database token refused");
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0]?.[0])).toContain(`POST ${PREFIX}/kit/agent-controller/stream`);
+    expect(JSON.stringify(logged[0]) + String(logged[0]?.[1])).toContain("database token refused");
+  });
 });
 
 /** A token as the chat kit's proxy signs it. */
