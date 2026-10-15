@@ -111,6 +111,8 @@ export class RemoteRuntimeProvider implements RuntimeProvider {
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
         body,
         cache: "no-store",
+        // Never follow a redirect: it would carry the call's headers to another address.
+        redirect: "error",
       });
     } catch (error) {
       throw new RemoteSandboxError(

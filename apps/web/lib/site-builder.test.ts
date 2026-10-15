@@ -69,6 +69,7 @@ import {
   openClientDb,
   pooledUsers,
   publishMessage,
+  remoteSiteRuntimes,
   runtimesFromEnv,
   SITE_ID_KEY,
   type SiteBuilderDeps,
@@ -674,6 +675,31 @@ describe("what reaches the model from a publishing refusal", () => {
     ]) {
       expect(publishMessage(new ConnectError(message))).toBe(message);
     }
+  });
+});
+
+describe("sandboxes through the web app", () => {
+  it("send the Vercel bypass only when given, beside the route's own token", async () => {
+    const client = await authorized("owner", clientA);
+    const seen: Headers[] = [];
+    const fetchWeb: typeof fetch = async (_input, init) => {
+      // A redirect would carry the bypass (and the token) elsewhere.
+      expect(init?.redirect).toBe("error");
+      seen.push(new Headers(init?.headers));
+      return Response.json({ ok: true, result: {} });
+    };
+    const open = (vercelBypass?: string) =>
+      remoteSiteRuntimes({
+        url: "https://staging.example/",
+        authSecret: "secret",
+        fetch: fetchWeb,
+        ...(vercelBypass ? { vercelBypass } : {}),
+      })(client, "site-1");
+    await open("bypass-value");
+    await open();
+    expect(seen[0]?.get("x-vercel-protection-bypass")).toBe("bypass-value");
+    expect(seen[0]?.get("authorization")).toMatch(/^Bearer /);
+    expect(seen[1]?.has("x-vercel-protection-bypass")).toBe(false);
   });
 });
 
