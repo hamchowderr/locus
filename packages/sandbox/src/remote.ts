@@ -67,6 +67,8 @@ const encodeFile = (file: RuntimeFile): WireFile =>
 
 /** Room left in a body for the envelope around the files. */
 const ENVELOPE_BYTES = 4 * 1024;
+/** Calls one install may take: with `MAX_CALL_COMMAND_MS` each, about the 10 min a local install gets. */
+const INSTALL_ATTEMPTS = 3;
 
 export class RemoteRuntimeProvider implements RuntimeProvider {
   readonly url: URL;
@@ -189,8 +191,16 @@ class RemoteSiteRuntime implements SiteRuntime {
     })) as CommandResult;
   }
 
+  /**
+   * Each call is cut at `MAX_CALL_COMMAND_MS`, so a cold install that runs longer is resumed: the
+   * package manager keeps what it already fetched, and a finished install is skipped by its stamp.
+   */
   async install(): Promise<CommandResult> {
-    return (await this.provider.call(this.key, "install")) as CommandResult;
+    let result = (await this.provider.call(this.key, "install")) as CommandResult;
+    for (let attempt = 1; result.timedOut && attempt < INSTALL_ATTEMPTS; attempt++) {
+      result = (await this.provider.call(this.key, "install")) as CommandResult;
+    }
+    return result;
   }
 
   async startPreview(): Promise<{ url: string }> {

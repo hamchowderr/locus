@@ -14,8 +14,8 @@ import { siteRuntimes } from "@/lib/site-builder-host";
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// An install may take several minutes. 300 s is the most every Vercel plan allows with Fluid
-// compute (Hobby's cap); Pro allows up to 800.
+// 300 s is the most every Vercel plan allows with Fluid compute (Hobby's cap). The handler cuts
+// each command at `MAX_CALL_COMMAND_MS` to end inside it; the caller resumes a longer install.
 export const maxDuration = 300;
 
 const notFound = () => new Response("Not Found", { status: 404 });
@@ -28,3 +28,6 @@ export async function POST(request: Request) {
     request,
   );
 }
+
+// Any other method gets the same bare 404, not Next's 405.
+export { notFound as GET, notFound as PUT, notFound as PATCH, notFound as DELETE };

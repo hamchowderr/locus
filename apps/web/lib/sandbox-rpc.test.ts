@@ -10,7 +10,7 @@ import {
   openControlDb,
   provisionLocation,
 } from "@locus/db";
-import { member, memberLocation, organization, site, user } from "@locus/db/control";
+import { location, member, memberLocation, organization, site, user } from "@locus/db/control";
 import { FakeRuntimeProvider, RemoteRuntimeProvider, RemoteSandboxError } from "@locus/sandbox";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -168,5 +168,13 @@ describe("/api/internal/sandbox", () => {
     expect(await status(runtime.run("ls"))).toBe(403);
     await db.delete(member).where(eq(member.id, "owner@agency-a"));
     expect(await status(remoteFor(tokenFor("owner@agency-a", clientA)).open("site-a"))).toBe(403);
+  });
+
+  it("refuses a client that is not active (403), even for the owner", async () => {
+    for (const state of ["suspended", "offboarding", "provisioning"] as const) {
+      await db.update(location).set({ status: state }).where(eq(location.id, clientA));
+      expect(await status(remoteFor(tokenFor("owner@agency-a", clientA)).open("site-a"))).toBe(403);
+    }
+    expect(runtimes.runtimes.size).toBe(0);
   });
 });

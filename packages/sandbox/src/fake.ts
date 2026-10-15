@@ -102,7 +102,7 @@ export class FakeRuntime implements SiteRuntime {
     return this.exec(command, args);
   }
 
-  async install(): Promise<CommandResult> {
+  async install(_opts: { timeoutMs?: number } = {}): Promise<CommandResult> {
     const packageJson = this.readText("package.json");
     if (packageJson === undefined) {
       this.calls.push({ method: "install", skipped: false });
