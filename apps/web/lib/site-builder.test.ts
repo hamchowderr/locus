@@ -683,6 +683,8 @@ describe("sandboxes through the web app", () => {
     const client = await authorized("owner", clientA);
     const seen: Headers[] = [];
     const fetchWeb: typeof fetch = async (_input, init) => {
+      // A redirect would carry the bypass (and the token) elsewhere.
+      expect(init?.redirect).toBe("error");
       seen.push(new Headers(init?.headers));
       return Response.json({ ok: true, result: {} });
     };
