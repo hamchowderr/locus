@@ -226,4 +226,99 @@ describe("tenant migration runner", () => {
     expect(version?.lastError).toMatch(/already exists/);
     expect(version?.appliedHashes).toEqual([]);
   });
+
+  it("records a client whose token can't be minted and carries on with the others", async () => {
+    const deps = { control, provisioner, migrations: [] };
+    const bad = await provisionLocation(deps, {
+      organizationId: "org-1",
+      ghlLocationId: "ghl-1",
+      name: "Bad",
+    });
+    const good = await provisionLocation(deps, {
+      organizationId: "org-1",
+      ghlLocationId: "ghl-2",
+      name: "Good",
+    });
+    const failing = Object.create(provisioner) as LocalProvisioner;
+    failing.mintToken = async (dbName: string) => {
+      if (dbName === bad.dbName) throw new Error("Turso refused");
+      return provisioner.mintToken(dbName);
+    };
+
+    const reports = await migrateTenants({
+      control,
+      provisioner: failing,
+      migrations: [m("a")],
+    });
+    const byId = new Map(reports.map((r) => [r.locationId, r]));
+    expect(byId.get(bad.id)?.error).toBe("Turso refused");
+    expect(byId.get(good.id)?.applied).toEqual(["hash-a"]);
+    const [version] = await control
+      .select()
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, bad.id));
+    expect(version?.lastError).toBe("Turso refused");
+
+    // The next run succeeds and clears the old error.
+    await migrateTenants({ control, provisioner, migrations: [m("a")] });
+    const [fixed] = await control
+      .select()
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, bad.id));
+    expect(fixed?.appliedHashes).toContain("hash-a");
+    expect(fixed?.lastError).toBeNull();
+  });
+
+  it("clears a stale error when a client is already up to date", async () => {
+    const { id } = await provisionLocation(
+      { control, provisioner, migrations: [m("a")] },
+      { organizationId: "org-1", ghlLocationId: "ghl-1", name: "One" },
+    );
+    await control
+      .update(locationSchemaVersion)
+      .set({ lastError: "an old failure" })
+      .where(eq(locationSchemaVersion.locationId, id));
+
+    const [report] = await migrateTenants({ control, provisioner, migrations: [m("a")] });
+    expect(report?.applied).toEqual([]);
+    expect(report?.error).toBeUndefined();
+    const [version] = await control
+      .select()
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, id));
+    expect(version?.lastError).toBeNull();
+  });
+
+  it("never erases hashes another deploy recorded while it ran", async () => {
+    const { id } = await provisionLocation(
+      { control, provisioner, migrations: [m("a")] },
+      { organizationId: "org-1", ghlLocationId: "ghl-1", name: "One" },
+    );
+    // While this deploy (which adds b) is migrating, another deploy (which adds c) finishes.
+    const racing = Object.create(provisioner) as LocalProvisioner;
+    racing.mintToken = async (dbName: string) => {
+      await migrateTenants({ control, provisioner, migrations: [m("a"), m("c")] });
+      return provisioner.mintToken(dbName);
+    };
+    const [report] = await migrateTenants({
+      control,
+      provisioner: racing,
+      migrations: [m("a"), m("b")],
+    });
+    expect(report?.applied).toEqual(["hash-b"]);
+
+    const [version] = await control
+      .select()
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, id));
+    expect(version?.appliedHashes).toEqual(["hash-a", "hash-c", "hash-b"]);
+
+    // A deploy with an older set then finds nothing to do and leaves the record alone.
+    await migrateTenants({ control, provisioner, migrations: [m("a")] });
+    const [after] = await control
+      .select()
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, id));
+    expect(after?.appliedHashes).toEqual(["hash-a", "hash-c", "hash-b"]);
+  });
 });
