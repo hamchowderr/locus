@@ -31,5 +31,11 @@ export const EMBEDDED_TENANT_MIGRATIONS: { hash: string; sql: string[] }[] = [
       "CREATE TABLE `site_version_file` (\n\t`version_id` text NOT NULL,\n\t`path` text NOT NULL,\n\t`blob_hash` text NOT NULL,\n\tPRIMARY KEY(`version_id`, `path`),\n\tFOREIGN KEY (`version_id`) REFERENCES `site_version`(`id`) ON UPDATE no action ON DELETE cascade,\n\tFOREIGN KEY (`blob_hash`) REFERENCES `site_blob`(`hash`) ON UPDATE no action ON DELETE no action\n);",
       "CREATE INDEX `site_version_file_blob_idx` ON `site_version_file` (`blob_hash`);"
     ]
+  },
+  {
+    "hash": "44955d2668608425050afe8773553eec4fe8401ea2b268e0554dcbea3e3e71b4",
+    "sql": [
+      "CREATE TABLE `site_lead_day` (\n\t`site_id` text NOT NULL,\n\t`day` text NOT NULL,\n\t`delivered` integer DEFAULT 0 NOT NULL,\n\t`failed` integer DEFAULT 0 NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`site_id`, `day`)\n);"
+    ]
   }
 ];
