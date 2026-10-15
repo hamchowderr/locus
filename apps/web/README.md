@@ -56,8 +56,10 @@ Vercel; the sync overwrites Vercel's copy.
 
 Vercel builds with `vercel.json`'s command: `db:migrate`, then `next build`. Each deployment
 migrates its own control database before it is built (Production the production database,
-Preview the development one), and a migration that fails stops the deployment. Client
-databases are migrated by `migrateTenants`, not here.
+Preview the development one), and a migration that fails stops the deployment. The same step
+then brings every client's database up to date with `migrateTenants`: on Production, and on
+the `staging` branch's Preview. Other Preview builds skip it, so a branch's unmerged migration
+never reaches staging's clients.
 
 Agencies' own tokens are not in Infisical: they are sealed in the control database with
 `LOCUS_SECRETS_KEY`, which is itself one of those Infisical values.
