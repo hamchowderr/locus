@@ -406,21 +406,46 @@ export function createHost({
         logError(`Agent request failed: ${what}`, error);
         return Response.json({ error: "something went wrong" }, { status: 500 });
       }
-      if (
-        response.status < 500 ||
-        response.headers.get("content-type")?.startsWith("text/event-stream")
-      ) {
-        return response;
-      }
-      const body = (await response.text()).slice(0, MAX_LOGGED_BODY);
-      logError(`Agent request failed: ${what} answered ${response.status}: ${body}`);
-      return Response.json({ error: "something went wrong" }, { status: response.status });
+      return reportFailure(response, what, logError);
     },
   };
 }
 
 /** How much of a failed response's body is logged. */
 const MAX_LOGGED_BODY = 2_000;
+
+/**
+ * The response, unless it is a server error: then its cause (the first part of its body) is
+ * logged and the caller gets a generic error in its place. Event streams pass through as is.
+ */
+export async function reportFailure(
+  response: Response,
+  what: string,
+  logError: (message: string, error?: unknown) => void,
+): Promise<Response> {
+  if (
+    response.status < 500 ||
+    response.headers.get("content-type")?.startsWith("text/event-stream")
+  ) {
+    return response;
+  }
+  let cause = "";
+  try {
+    const reader = response.body?.getReader();
+    while (reader && cause.length < MAX_LOGGED_BODY) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      cause += new TextDecoder().decode(value, { stream: true });
+    }
+    await reader?.cancel();
+  } catch (error) {
+    cause = `(body unreadable: ${error})`;
+  }
+  logError(
+    `Agent request failed: ${what} answered ${response.status}: ${cause.slice(0, MAX_LOGGED_BODY)}`,
+  );
+  return Response.json({ error: "something went wrong" }, { status: response.status });
+}
 
 /**
  * The stream, while `check` passes. It is checked before passing on what arrives once the last
