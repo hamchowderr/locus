@@ -89,7 +89,7 @@ you need.)
    is offboarded. Limit it to those permissions if your plan allows.
 
 The control database is migrated on every deploy (see [Deploy](#6-deploy)). Client databases
-are created empty and migrated by Locus itself when a client is added.
+are migrated when a client is added, and brought up to date by every production deploy.
 
 ## 2. Accounts and email
 
@@ -216,8 +216,8 @@ migration script runs TypeScript directly, which Node supports from 22.18.)
 2. Add every setting above to the project's environment (Production, and Preview if you use
    one).
 3. Deploy. `apps/web/vercel.json` runs `pnpm db:migrate && pnpm build`: each deployment
-   migrates its own control database before it is built, and a failed migration stops the
-   deployment.
+   migrates its own control database, then every client's database, before it is built, and
+   a failed migration stops the deployment.
 4. Add your domain to the project and set `BETTER_AUTH_URL` to it.
 
 A **Preview** deployment uses its branch URL (`VERCEL_BRANCH_URL`) as its own address rather
