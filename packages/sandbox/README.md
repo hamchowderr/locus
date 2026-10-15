@@ -95,6 +95,9 @@ const runtime = await provider.open(siteId); // a site id, not a sandbox key
   cut stopped, up to three calls.
 - `remoteSandboxFromEnv(env, mintToken)`: a provider when `LOCUS_SANDBOX_URL` (the web app's base
   URL) is set, else null.
+  The agent server doesn't use it: its site builder calls `remoteSiteRuntimes` from
+  `@locus/builder/host`, pointed at `BETTER_AUTH_URL` (the web app), which mints a token per call
+  for the member and client.
 - `handleSandboxRequest(request, { provider, authenticate, sandboxKey, maxBodyBytes? })`: the
   framework-free server side. `authenticate(token)` runs first (null: a bare 404, the same for
   every unauthenticated request, before the body is read); then a stream-bounded body read (413
