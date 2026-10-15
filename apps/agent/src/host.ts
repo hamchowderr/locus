@@ -87,6 +87,8 @@ export interface HostDeps {
   origin: string;
   /** How often an open event stream re-checks access; tests shorten it. */
   streamCheckMs?: number;
+  /** Where a request the agent failed is reported; the process's error log by default. */
+  logError?: (message: string, error?: unknown) => void;
 }
 
 export function hostDepsFromEnv(env: Env = process.env): HostDeps {
@@ -175,6 +177,8 @@ export function createHost({
   fetch,
   origin,
   streamCheckMs = STREAM_CHECK_MS,
+  logError = (message, error) =>
+    error === undefined ? console.error(message) : console.error(message, error),
 }: HostDeps) {
   // Per client, the sessions that opened it, newest last: its database token is the client's,
   // not one run's, so any of them still allowed in will do.
@@ -290,35 +294,62 @@ export function createHost({
     );
   };
 
+  const serve = async (request: Request): Promise<Response> => {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/health") return new Response("ok");
+    if (request.method === "GET" || request.method === "HEAD") {
+      return guardStream(request, await api.fetch(request));
+    }
+    // The session cookie authenticates these, so only the web app's pages may send them, and
+    // a body only as JSON: a cross-site form or text/plain post can't.
+    const from = request.headers.get("origin");
+    if (from && from !== origin) return Response.json({ error: "wrong origin" }, { status: 403 });
+    const max = pathname === KIT_STREAM_PATH ? KIT_STREAM_BODY_LIMIT : MAX_BODY_BYTES;
+    const body = request.body ? await readCapped(request.body, max) : Buffer.alloc(0);
+    if (!body) return Response.json({ error: "too large" }, { status: 413 });
+    if (body.length > 0 && !request.headers.get("content-type")?.startsWith("application/json")) {
+      return Response.json({ error: "send JSON" }, { status: 415 });
+    }
+    // Aborting the request is how a run streamed on its response is stopped.
+    const cut = new AbortController();
+    const forwarded = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      signal: AbortSignal.any([request.signal, cut.signal]),
+      ...(body.length > 0 ? { body } : {}),
+    });
+    return guardStream(forwarded, await api.fetch(forwarded), () => cut.abort());
+  };
+
   return {
+    /**
+     * Serves a request. A failure is logged with its cause (Mastra's own logger is off), and
+     * the caller gets only a generic error.
+     */
     async fetch(request: Request): Promise<Response> {
-      const { pathname } = new URL(request.url);
-      if (pathname === "/health") return new Response("ok");
-      if (request.method === "GET" || request.method === "HEAD") {
-        return guardStream(request, await api.fetch(request));
+      const what = `${request.method} ${new URL(request.url).pathname}`;
+      let response: Response;
+      try {
+        response = await serve(request);
+      } catch (error) {
+        logError(`Agent request failed: ${what}`, error);
+        return Response.json({ error: "something went wrong" }, { status: 500 });
       }
-      // The session cookie authenticates these, so only the web app's pages may send them, and
-      // a body only as JSON: a cross-site form or text/plain post can't.
-      const from = request.headers.get("origin");
-      if (from && from !== origin) return Response.json({ error: "wrong origin" }, { status: 403 });
-      const max = pathname === KIT_STREAM_PATH ? KIT_STREAM_BODY_LIMIT : MAX_BODY_BYTES;
-      const body = request.body ? await readCapped(request.body, max) : Buffer.alloc(0);
-      if (!body) return Response.json({ error: "too large" }, { status: 413 });
-      if (body.length > 0 && !request.headers.get("content-type")?.startsWith("application/json")) {
-        return Response.json({ error: "send JSON" }, { status: 415 });
+      if (
+        response.status < 500 ||
+        response.headers.get("content-type")?.startsWith("text/event-stream")
+      ) {
+        return response;
       }
-      // Aborting the request is how a run streamed on its response is stopped.
-      const cut = new AbortController();
-      const forwarded = new Request(request.url, {
-        method: request.method,
-        headers: request.headers,
-        signal: AbortSignal.any([request.signal, cut.signal]),
-        ...(body.length > 0 ? { body } : {}),
-      });
-      return guardStream(forwarded, await api.fetch(forwarded), () => cut.abort());
+      const body = (await response.text()).slice(0, MAX_LOGGED_BODY);
+      logError(`Agent request failed: ${what} answered ${response.status}: ${body}`);
+      return Response.json({ error: "something went wrong" }, { status: response.status });
     },
   };
 }
+
+/** How much of a failed response's body is logged. */
+const MAX_LOGGED_BODY = 2_000;
 
 /**
  * The stream, while `check` passes. It is checked before passing on what arrives once the last
