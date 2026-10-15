@@ -26,7 +26,7 @@ export interface TenantMigrationReport {
 
 /**
  * The tenant migrations, embedded in code by `scripts/embed-migrations.ts`: the deployed app
- * migrates tenants at run time and has no migrations folder to read.
+ * migrates a new client at run time and has no migrations folder to read.
  */
 export const TENANT_MIGRATION_SET: TenantMigration[] = EMBEDDED_TENANT_MIGRATIONS;
 
@@ -96,16 +96,25 @@ export async function migrateTenant(
     repaired: [],
     unknown: plan.unknown,
   };
+  // Nothing to apply: leave the hashes alone, so a build with an older migration set can't
+  // overwrite what a newer one recorded meanwhile. Only an old error is cleared.
   if (plan.pending.length === 0) {
-    await record(control, locationId, appliedHashes, null);
+    if (version?.lastError) {
+      await control
+        .update(locationSchemaVersion)
+        .set({ lastError: null, lastMigratedAt: new Date() })
+        .where(eq(locationSchemaVersion.locationId, locationId));
+    }
     return report;
   }
 
-  const authToken = await provisioner.mintToken(loc.tursoDbName, { ttl: "10m" });
-  const client = createClient({ url: provisioner.url(loc.tursoDbHostname), authToken });
-  const done = [...appliedHashes];
+  const done: string[] = [];
   let error: string | null = null;
+  let client: ReturnType<typeof createClient> | undefined;
   try {
+    // Inside the try: a Turso API failure is this tenant's error, not the end of the run.
+    const authToken = await provisioner.mintToken(loc.tursoDbName, { ttl: "10m" });
+    client = createClient({ url: provisioner.url(loc.tursoDbHostname), authToken });
     for (const migration of plan.pending) {
       // One batch per migration: all of its statements apply, or none do.
       await client.batch(migration.sql, "write");
@@ -117,21 +126,40 @@ export async function migrateTenant(
     error = e instanceof Error ? e.message : String(e);
     report.error = error;
   } finally {
-    client.close();
+    client?.close();
   }
-  await record(control, locationId, done, error);
+  const covered = await record(control, locationId, done, error, migrations);
+  // Another deploy applied the same migrations while this one ran (the batch then fails on
+  // "already exists"): the client is up to date, so this is not a failure.
+  if (covered) delete report.error;
   return report;
 }
 
+/**
+ * Adds `applied` to the tenant's recorded hashes. It re-reads them in the same transaction
+ * rather than writing back the list read before migrating, so two deploys migrating at once
+ * never erase each other's record.
+ */
 async function record(
   control: ControlDb,
   locationId: string,
-  appliedHashes: string[],
-  lastError: string | null,
-) {
-  const values = { appliedHashes, lastMigratedAt: new Date(), lastError };
-  await control
-    .insert(locationSchemaVersion)
-    .values({ locationId, ...values })
-    .onConflictDoUpdate({ target: locationSchemaVersion.locationId, set: values });
+  applied: string[],
+  error: string | null,
+  migrations: TenantMigration[],
+): Promise<boolean> {
+  return control.transaction(async (tx) => {
+    const [current] = await tx
+      .select({ appliedHashes: locationSchemaVersion.appliedHashes })
+      .from(locationSchemaVersion)
+      .where(eq(locationSchemaVersion.locationId, locationId));
+    const have = current?.appliedHashes ?? [];
+    const appliedHashes = [...have, ...applied.filter((h) => !have.includes(h))];
+    const covered = migrations.every((m) => appliedHashes.includes(m.hash));
+    const values = { appliedHashes, lastMigratedAt: new Date(), lastError: covered ? null : error };
+    await tx
+      .insert(locationSchemaVersion)
+      .values({ locationId, ...values })
+      .onConflictDoUpdate({ target: locationSchemaVersion.locationId, set: values });
+    return covered;
+  });
 }
