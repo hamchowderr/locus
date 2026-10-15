@@ -23,6 +23,7 @@ import {
   activeSiteIdForSession,
   createSiteBuilder,
   openClientDb,
+  remotePublish,
   remoteSiteRuntimes,
   SITE_ID_KEY,
   type SiteBuilderDeps,
@@ -100,8 +101,8 @@ export interface HostDeps {
   logError?: (message: string, error?: unknown) => void;
   /**
    * The site builder's mode and tools, added to every client's controller. Its sandboxes are
-   * driven through the web app (`remoteSiteRuntimes`), which can reach Vercel Sandbox. Null
-   * leaves the builder out.
+   * driven through the web app (`remoteSiteRuntimes`), which can reach Vercel Sandbox, and its
+   * saved versions are published through it too (`remotePublish`). Null leaves the builder out.
    */
   siteBuilder?: Omit<SiteBuilderDeps, "db"> | null;
 }
@@ -128,6 +129,12 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
   });
   const kitSession = sessionFromKitToken(db, chatKitKey(config.authSecret));
   const provisioner = provisionerFromEnv(".data/tenants", env);
+  const webApp = {
+    url: config.authUrl,
+    authSecret: config.authSecret,
+    // Staging's web app is a protected Vercel preview; production's domain isn't.
+    ...(env.LOCUS_WEB_VERCEL_BYPASS ? { vercelBypass: env.LOCUS_WEB_VERCEL_BYPASS } : {}),
+  };
   return {
     db,
     session: async (headers) => {
@@ -154,16 +161,12 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
     siteBuilder: {
       openClientDb: (client) => openClientDb(provisioner, client),
       runtimes: NO_LOCAL_SANDBOXES,
-      openRuntime: remoteSiteRuntimes({
-        url: config.authUrl,
-        authSecret: config.authSecret,
-        // Staging's web app is a protected Vercel preview; production's domain isn't.
-        ...(env.LOCUS_WEB_VERCEL_BYPASS ? { vercelBypass: env.LOCUS_WEB_VERCEL_BYPASS } : {}),
-      }),
+      openRuntime: remoteSiteRuntimes(webApp),
       images: imagesFromEnv(env),
       // Publishing needs the GitHub App, which only the web app holds: versions saved here
-      // are published from the Sites page.
+      // are published through it.
       publish: null,
+      publishVersion: remotePublish(webApp),
       locusUrl: config.authUrl,
     },
   };
