@@ -367,8 +367,14 @@ const blank = (value: string | null | undefined) => !value?.trim();
 /** Whether what the visitor typed says the same as the contact's value, give or take format. */
 function sameAs(key: string, typed: string, existing: string | null | undefined): boolean {
   if (blank(existing)) return false;
-  const norm = (v: string) =>
-    key === "phone" ? v.replace(/\D/g, "") : v.trim().replace(/\s+/g, " ").toLowerCase();
+  if (key === "phone") {
+    // The same number with or without its country code: "+1 555 010 0199" and "555-010-0199".
+    const x = typed.replace(/\D/g, "");
+    const y = (existing as string).replace(/\D/g, "");
+    const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+    return short.length >= 7 && long.endsWith(short);
+  }
+  const norm = (v: string) => v.trim().replace(/\s+/g, " ").toLowerCase();
   return norm(typed) === norm(existing as string);
 }
 
@@ -401,7 +407,8 @@ async function sendToGhl(
 
   // Anyone can type a customer's email into a form, so a form never changes a detail the CRM
   // already has (bead locus-ptq.18). The upsert sends only the one detail it matches on, so it
-  // finds or creates the contact without changing it; then only the contact's blank fields are
+  // finds or creates the contact without changing anything else (GHL may still store that one
+  // detail as the visitor typed it, e.g. its casing); then only the contact's blank fields are
   // filled, on that contact by id, and whatever else the visitor typed goes in the note.
   // No step is retried within a request, so each request adds at most one note. A visitor who
   // resends after a 502 whose note did land (a lost response) gets a second, identical note.
@@ -430,8 +437,19 @@ async function sendToGhl(
     else if (!sameAs(key, typed, existing[key])) unused.push(key);
   }
 
-  // The company goes through the upsert (Update Contact doesn't take one), matched as before;
-  // the rest by id, so a second email or phone can't steer it to another contact.
+  // Tags first: the lead is the CRM's from here on, whatever happens to the filling below.
+  await ghlRequest(
+    operation("contacts.add-tags"),
+    session,
+    { path: { contactId }, body: { tags: leadTags(form) } },
+    options,
+  );
+
+  // Filling is best effort. GHL refuses a value it won't take (400/422, e.g. an email or phone
+  // another contact already has when the sub-account keeps them unique); then the lead still
+  // counts and what didn't fit goes in the note, so a resend can't fail the same way forever.
+  const refused = (error: unknown) =>
+    error instanceof GhlError && (error.status === 400 || error.status === 422);
   const { companyName, ...byId } = fill;
   if (created || blank(existing.source)) {
     byId.source = `Website form (${form})`;
@@ -445,27 +463,33 @@ async function sendToGhl(
         options,
       );
     } catch (error) {
-      // GHL refuses an email or phone another contact already has (when the sub-account keeps
-      // them unique). The lead still counts: what didn't fit goes in the note.
-      if (!(error instanceof GhlError) || error.status !== 400) throw error;
+      if (!refused(error)) throw error;
       unused.push(...FILLABLE.filter((key) => key in byId));
     }
   }
-  if (companyName) {
-    await ghlRequest(
-      operation("contacts.upsert-contact"),
-      session,
-      { body: { [match]: fields[match], companyName } },
-      options,
-    );
+  // Update Contact takes no company, so it goes through the upsert, which matches again rather
+  // than naming the contact. Only for a contact this request just created: an existing contact
+  // could share its email or phone with others (when the sub-account allows duplicates), and the
+  // upsert might pick one of those. Otherwise the company goes in the note.
+  if (companyName && created) {
+    try {
+      const again = await ghlRequest<{ contact?: GhlContact }>(
+        operation("contacts.upsert-contact"),
+        session,
+        { body: { [match]: fields[match], companyName } },
+        options,
+      );
+      if (again.contact?.id !== contactId) {
+        console.warn("A site lead's company was set on a different contact than it created");
+        unused.push("companyName");
+      }
+    } catch (error) {
+      if (!refused(error)) throw error;
+      unused.push("companyName");
+    }
+  } else if (companyName) {
+    unused.push("companyName");
   }
-
-  await ghlRequest(
-    operation("contacts.add-tags"),
-    session,
-    { path: { contactId }, body: { tags: leadTags(form) } },
-    options,
-  );
 
   const lines: string[] = [];
   if (fields.message) lines.push(fields.message, "");
