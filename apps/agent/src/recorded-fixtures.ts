@@ -7,7 +7,8 @@
  * so a chat replays against any data and in any thread:
  *
  * - the model's name is dropped: the scripted model is not the model that was recorded;
- * - the user's message must match exactly, not as a substring of a longer message;
+ * - the user's message must match exactly, not as a substring of a longer message, and a
+ *   chat's first call matches on it alone;
  * - a call that follows a tool result matches on that tool call's id instead of on its
  *   position, since the replayed tool calls carry the recorded ids. Position (the number of
  *   assistant messages) depends on the thread's history, so a multi-step chat replayed in a
@@ -26,10 +27,13 @@ export const RECORDED_DIR = fileURLToPath(new URL("../fixtures/recorded/", impor
 export function loadRecordedChats(
   dir: string = RECORDED_DIR,
 ): { id: string; fixtures: Fixture[] }[] {
-  return listDir(dir)
-    .filter((name) => statSync(join(dir, name)).isDirectory())
-    .map((id) => ({ id, fixtures: loadRecordedChat(join(dir, id)) }))
-    .filter((chat) => chat.fixtures.length > 0);
+  return (
+    listDir(dir)
+      // `record:chats` writes into `<chat>.partial` until a recording passes.
+      .filter((name) => !name.endsWith(".partial") && statSync(join(dir, name)).isDirectory())
+      .map((id) => ({ id, fixtures: loadRecordedChat(join(dir, id)) }))
+      .filter((chat) => chat.fixtures.length > 0)
+  );
 }
 
 /** One chat's fixture files, in the order they were recorded, rewritten for replay. */
@@ -52,7 +56,10 @@ export function forReplay(recorded: Fixture[]): Fixture[] {
     if (match.hasToolResult === true && previous !== undefined) {
       replay = { toolCallId: previous };
     } else if (text !== undefined) {
-      replay = { ...match, userMessage: exactly(text) };
+      // A first step's position depends on the thread's history too, so it matches on its
+      // message alone.
+      const { turnIndex: _turn, ...first } = match;
+      replay = { ...first, userMessage: exactly(text) };
     }
     if (text !== undefined) {
       const id = lastToolCallId(fixture.response);
@@ -81,4 +88,12 @@ function listDir(dir: string): string[] {
   } catch {
     return [];
   }
+}
+
+/** Whether any of a chat's recorded calls changes GoHighLevel data. */
+export function changesData(fixtures: Fixture[]): boolean {
+  return fixtures.some((fixture) => {
+    const response = fixture.response as { toolCalls?: { name?: string }[] } | null;
+    return response?.toolCalls?.some((call) => call.name === "perform_action") ?? false;
+  });
 }

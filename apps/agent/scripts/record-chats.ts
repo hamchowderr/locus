@@ -13,7 +13,7 @@
  * Review the recordings before committing them.
  */
 
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { LLMock } from "@copilotkit/aimock";
 import { RECORDED_DIR } from "../src/recorded-fixtures.ts";
@@ -39,7 +39,9 @@ if (chats.length === 0) {
 
 let failed = false;
 for (const sample of chats) {
-  const dir = join(RECORDED_DIR, sample.id);
+  // Record beside the chat's last good recording and replace it only once this one passes.
+  const dir = join(RECORDED_DIR, `${sample.id}.partial`);
+  const done = join(RECORDED_DIR, sample.id);
   rmSync(dir, { recursive: true, force: true });
   // A mock per chat, so no chat replays another's recording.
   const mock = new LLMock({ host: "127.0.0.1", port: 0, logLevel: "warn" });
@@ -62,11 +64,14 @@ for (const sample of chats) {
         throw new Error("a recording held the API key; this chat's recording was deleted");
       }
     }
-    console.info(`${sample.id}: ${files.length} model calls recorded in ${dir}`);
+    rmSync(done, { recursive: true, force: true });
+    renameSync(dir, done);
+    console.info(`${sample.id}: ${files.length} model calls recorded in ${done}`);
   } catch (error) {
     failed = true;
     console.error(`${sample.id}: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
+    rmSync(dir, { recursive: true, force: true });
     await host.close();
     await mock.stop();
   }
