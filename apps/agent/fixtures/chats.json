@@ -1,0 +1,42 @@
+{
+  "$comment": "Sample chats for `pnpm --filter @locus/agent record:chats`. Each runs in a new thread against the fake sub-account in src/sample-chats.ts. `messages` are sent in order; `approve` answers every approval (default true); `answers` answer the agent's questions in order (default: its first option).",
+  "chats": [
+    {
+      "id": "count-tagged-contacts",
+      "messages": ["How many contacts are tagged vip?"]
+    },
+    {
+      "id": "search-contacts",
+      "messages": ["Find the contacts with an email address at example.org."]
+    },
+    {
+      "id": "pipeline-summary",
+      "messages": [
+        "Which stage of the Sales pipeline has the most open opportunities, and what are they worth in total?"
+      ]
+    },
+    {
+      "id": "add-tag",
+      "messages": ["Add the tag follow-up to Jordan Sample."],
+      "approve": true
+    },
+    {
+      "id": "delete-tag",
+      "messages": ["Delete the old-promo tag. Nobody uses it any more."],
+      "approve": true
+    },
+    {
+      "id": "delete-contact-declined",
+      "messages": ["Delete the contact Casey Placeholder."],
+      "approve": false
+    },
+    {
+      "id": "ask-back",
+      "messages": [
+        "Tag one of my contacts for me, but check with me which one and which tag first."
+      ],
+      "answers": ["Avery Example, with the tag vip"],
+      "approve": true
+    }
+  ]
+}
