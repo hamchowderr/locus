@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LLMock } from "@copilotkit/aimock";
 import { afterEach, describe, expect, test } from "vitest";
-import { forReplay, loadRecordedChat, loadRecordedChats } from "./recorded-fixtures.ts";
+import {
+  changesData,
+  forReplay,
+  loadRecordedChat,
+  loadRecordedChats,
+} from "./recorded-fixtures.ts";
 import {
   loadSampleChats,
   runSampleChat,
@@ -43,6 +48,22 @@ function unmatched(mock: LLMock) {
 
 const calls = (host: { ghl: { requests: { method: string; url: URL }[] } }) =>
   host.ghl.requests.map((r) => `${r.method} ${r.url.pathname}`);
+
+const write = (id: string) => ({
+  match: { userMessage: "Delete the contact", hasToolResult: false },
+  response: {
+    toolCalls: [
+      {
+        id,
+        name: "perform_action",
+        arguments: JSON.stringify({
+          operation: "contacts.delete-contact",
+          params: { path: { contactId: "fake-contact-01" } },
+        }),
+      },
+    ],
+  },
+});
 
 // Each test stands up the agent host once or twice, which is slower than the default allows on CI.
 describe("recorded chats", { timeout: 30_000 }, () => {
@@ -134,7 +155,7 @@ describe("recorded chats", { timeout: 30_000 }, () => {
 
     const fixtures = loadRecordedChat(dir);
     expect(fixtures.map((f) => f.match)).toEqual([
-      { userMessage: /^How many contacts are tagged vip\?$/, turnIndex: 0, hasToolResult: false },
+      { userMessage: /^How many contacts are tagged vip\?$/, hasToolResult: false },
       { toolCallId: "toolu_a" },
       { toolCallId: "toolu_b" },
     ]);
@@ -193,23 +214,43 @@ describe("recorded chats", { timeout: 30_000 }, () => {
     expect(fixture?.match).toEqual({ userMessage: /^hi$/, hasToolResult: true });
   });
 
-  test("every recorded chat replays against the fake sub-account with no unmatched request", {
-    timeout: 600_000,
-  }, async () => {
-    const samples = new Map(loadSampleChats().map((c) => [c.id, c]));
-    for (const { id } of loadRecordedChats()) {
-      const sample = samples.get(id);
-      expect(sample, `fixtures/recorded/${id} has no chat in fixtures/chats.json`).toBeDefined();
-      if (!sample) continue;
-      const { mock, model } = await startScriptedModel({ strict: true });
-      cleanups.push(() => mock.stop());
-      const host = await sampleHost(model);
-      const events = await runSampleChat(host, sample);
-      expect(unmatched(mock), id).toEqual([]);
-      expect(
-        events.some((e) => e.type === "error"),
-        id,
-      ).toBe(false);
-    }
+  // Runs once `record:chats` has committed recordings; until then there is nothing to replay.
+  test.skipIf(loadRecordedChats().length === 0)(
+    "every recorded chat replays against the fake sub-account with no unmatched request",
+    { timeout: 600_000 },
+    async () => {
+      const samples = new Map(loadSampleChats().map((c) => [c.id, c]));
+      for (const { id } of loadRecordedChats()) {
+        const sample = samples.get(id);
+        expect(sample, `fixtures/recorded/${id} has no chat in fixtures/chats.json`).toBeDefined();
+        if (!sample) continue;
+        const { mock, model } = await startScriptedModel({ strict: true, writes: true });
+        cleanups.push(() => mock.stop());
+        const host = await sampleHost(model);
+        const events = await runSampleChat(host, sample);
+        expect(unmatched(mock), id).toEqual([]);
+        expect(
+          events.some((e) => e.type === "error"),
+          id,
+        ).toBe(false);
+      }
+    },
+  );
+
+  test("a recorded chat that changes data replays only when asked", async () => {
+    const dir = join(await tempDir(), "delete-contact");
+    mkdirSync(dir, { recursive: true });
+    await writeFile(
+      join(dir, "openai-2026-10-17T10-00-00-000Z-cccccccc.json"),
+      JSON.stringify({ fixtures: [write("toolu_del")] }),
+    );
+    const root = join(dir, "..");
+    expect(changesData(loadRecordedChat(dir))).toBe(true);
+    const staging = await startScriptedModel({ recordedDir: root, strict: true });
+    cleanups.push(() => staging.mock.stop());
+    expect(staging.mock.getFixtures()).toHaveLength(0);
+    const tests = await startScriptedModel({ recordedDir: root, strict: true, writes: true });
+    cleanups.push(() => tests.mock.stop());
+    expect(tests.mock.getFixtures()).toHaveLength(1);
   });
 });

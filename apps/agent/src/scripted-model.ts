@@ -6,7 +6,7 @@
 
 import { LLMock } from "@copilotkit/aimock";
 import type { MastraModelConfig } from "@mastra/core/llm";
-import { loadRecordedChats, RECORDED_DIR } from "./recorded-fixtures.ts";
+import { changesData, loadRecordedChats, RECORDED_DIR } from "./recorded-fixtures.ts";
 
 /** The `LOCUS_AGENT_MODEL` value that selects the scripted model. */
 export const SCRIPTED = "scripted";
@@ -44,6 +44,11 @@ export interface ScriptedOptions {
    * answers fails (AIMock's strict mode) instead of getting the fixed reply. For tests.
    */
   strict?: boolean;
+  /**
+   * Also replay recorded chats that change data. Off by default: on staging the scripted model
+   * runs against a real sub-account, and a recorded write names the fake sub-account's records.
+   */
+  writes?: boolean;
 }
 
 /** Starts the scripted model on a local port and returns its model config. */
@@ -62,7 +67,7 @@ export async function startScriptedModel(
     strict: options.strict ?? false,
   });
   for (const chat of loadRecordedChats(options.recordedDir ?? RECORDED_DIR)) {
-    mock.addFixtures(chat.fixtures);
+    if (options.writes || !changesData(chat.fixtures)) mock.addFixtures(chat.fixtures);
   }
   if (!options.strict) scriptTestMessages(mock);
   await mock.start();
