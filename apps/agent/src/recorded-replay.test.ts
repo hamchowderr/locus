@@ -44,7 +44,8 @@ function unmatched(mock: LLMock) {
 const calls = (host: { ghl: { requests: { method: string; url: URL }[] } }) =>
   host.ghl.requests.map((r) => `${r.method} ${r.url.pathname}`);
 
-describe("recorded chats", () => {
+// Each test stands up the agent host once or twice, which is slower than the default allows on CI.
+describe("recorded chats", { timeout: 30_000 }, () => {
   test("a chat recorded through AIMock keeps no key and replays through the agent, step by step", async () => {
     // The provider: a second mock, so recording runs end to end with no network.
     const upstream = await started(new LLMock({ host: "127.0.0.1", port: 0, logLevel: "silent" }));
