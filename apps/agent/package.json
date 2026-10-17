@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node --import ./src/extensionless.ts src/server.ts",
+    "record:chats": "node --import ./src/extensionless.ts scripts/record-chats.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
