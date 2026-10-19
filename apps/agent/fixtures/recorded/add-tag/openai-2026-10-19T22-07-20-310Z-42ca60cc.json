@@ -1,0 +1,109 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Add the tag follow-up to Jordan Sample.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 5,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "I couldn't add the tag. Jordan Sample hasn't been changed.\n\nEvery time I searched contacts to find Jordan Sample's contact ID, the safety filter blocked the result. That happened even when I only asked for the ID. It said some of the contact data looked like instructions, so it withheld it. That usually means a contact field, such as a name or note, contains text written like a command. Because of this, I never got an ID, and I won't guess one. The filter also now requires a person to approve any change.\n\nTo finish this, you can:\n- **Send me Jordan Sample's contact ID, email or phone number**, and I'll add the tag `follow-up` once you approve it.\n- **Or check the contact in GoHighLevel**: open it, look for odd text in its fields, and add the tag there directly.",
+        "usage": {
+          "prompt_tokens": 7710,
+          "completion_tokens": 308,
+          "total_tokens": 8018,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.037,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 54,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.037
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1068,
+        "interChunkDelaysMs": [
+          3378,
+          9,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          22,
+          0
+        ],
+        "totalDurationMs": 4477
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
