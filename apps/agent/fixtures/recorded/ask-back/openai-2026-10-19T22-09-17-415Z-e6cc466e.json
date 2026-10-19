@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Tag one of my contacts for me, but check with me which one and which tag first.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 6,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "ask_user",
+            "arguments": "{\"question\": \"Every time I search for \\\"Avery Example\\\", the results come back blocked. Some of the contact data reads like instructions, so the safety filter is holding it back and I can't get the contact's ID. Can you give me Avery's exact email or phone number so I can look them up directly? Or would you rather add the tag yourself in GoHighLevel?\", \"options\": [{\"label\":\"I'll give email/phone\"},{\"label\":\"I'll tag it myself\"}]}",
+            "id": "toolu_01QUHq8h56RMCydCSwufAc9Y"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 7784,
+          "completion_tokens": 283,
+          "total_tokens": 8067,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.036796,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 78,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.036796
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1566,
+        "interChunkDelaysMs": [
+          1266, 66, 0, 0, 0, 0, 0, 0, 27, 49, 50, 199, 10, 0, 0, 51, 50, 51, 37, 69, 31, 51, 96, 50,
+          50, 50, 48, 54, 150, 52, 57, 45, 66, 33, 50, 172, 5, 0
+        ],
+        "totalDurationMs": 4551
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

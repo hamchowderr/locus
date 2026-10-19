@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "How many contacts are tagged vip?",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 1,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\":\"c\",\"operation\":\"contacts.search-contacts-advanced\",\"params\":{\"body\":{\"pageLimit\":500}}}], \"sql\": \"SELECT COUNT(DISTINCT c.id) AS vip_count, (SELECT COUNT(*) FROM c) AS total FROM c, json_each(c.tags) t WHERE lower(trim(t.value))='vip'\"}",
+            "id": "toolu_01PEoqteDLTBAVc6Kquds7Lf"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 6650,
+          "completion_tokens": 224,
+          "total_tokens": 6874,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.03108,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 31,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.03108
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1624,
+        "interChunkDelaysMs": [
+          267, 9, 0, 95, 60, 39, 49, 50, 51, 61, 139, 49, 53, 48, 48, 52, 48, 95, 11, 89, 12, 41,
+          66, 94, 8, 0
+        ],
+        "totalDurationMs": 3158
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

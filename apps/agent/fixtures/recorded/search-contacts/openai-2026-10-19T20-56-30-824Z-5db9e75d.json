@@ -1,0 +1,53 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Find the contacts with an email address at example.org.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 3,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\": \"c\", \"operation\": \"contacts.search-contacts-advanced\", \"params\": {\"body\": {\"pageLimit\": 100}}}], \"sql\": \"SELECT count(*) AS n FROM c\"}",
+            "id": "toolu_01TY5QYp5EC5prFabpZ8cnov"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 7220,
+          "completion_tokens": 160,
+          "total_tokens": 7380,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.03208,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 28,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.03208
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 2976,
+        "interChunkDelaysMs": [601, 10, 0, 0, 0, 0, 32, 54, 49, 51, 151, 48, 66, 134, 13, 0],
+        "totalDurationMs": 4185
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
