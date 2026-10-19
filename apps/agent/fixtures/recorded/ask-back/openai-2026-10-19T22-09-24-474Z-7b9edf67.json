@@ -1,0 +1,50 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Tag one of my contacts for me, but check with me which one and which tag first.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 8,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "I haven't tagged anyone yet because I still don't know which contact or which tag you want.\n\nMy first question didn't get your answer back, so I guessed and searched for a contact called \"Avery Example\". You never gave me that name. The search results were also blocked every time, so I couldn't even see who matched.\n\nWhen I asked again, the only reply I got was \"Yes\".\n\nTo go ahead, please reply with:\n1. **The contact**: their exact email or phone number works best, since I can look them up directly that way.\n2. **The tag**: the exact wording, for example \"VIP\".\n\nI'll tell you which contact I find before I add the tag.",
+        "usage": {
+          "prompt_tokens": 7968,
+          "completion_tokens": 236,
+          "total_tokens": 8204,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.036592,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 39,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.036592
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1439,
+        "interChunkDelaysMs": [
+          2041, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ],
+        "totalDurationMs": 3489
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

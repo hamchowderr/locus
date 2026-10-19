@@ -1,0 +1,51 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Find the contacts with an email address at example.org.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 5,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "I couldn't get you the list of example.org contacts. I tried the contact search four ways: a full search filtered by email, the same search returning only IDs and emails, a plain count, and a search filtered by GoHighLevel on \"example.org\". Each time, the system's safety filter held back the response. It said something in the GoHighLevel data read like instructions, so it hid that text, and with it any results, IDs or counts.\n\nThat suggests at least one contact record has a field containing instruction-like text, possibly put there on purpose. I didn't act on it and haven't changed anything. Because of that warning, any change from here on will also need a person's approval.\n\nTo get the list, you could:\n- run the search in the GoHighLevel UI: Contacts → filter Email contains \"example.org\"\n- check recently created or imported contacts for odd text in their name, notes or custom fields, then clean it up and I'll try again\n- send me a specific email address, and I'll try an exact lookup for it",
+        "usage": {
+          "prompt_tokens": 7738,
+          "completion_tokens": 354,
+          "total_tokens": 8092,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.038032,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 48,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.038032
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1025,
+        "interChunkDelaysMs": [
+          4064, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+          0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ],
+        "totalDurationMs": 5096
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
