@@ -35,30 +35,7 @@
       },
       "recordedTimings": {
         "ttftMs": 2012,
-        "interChunkDelaysMs": [
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          6,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
+        "interChunkDelaysMs": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         "totalDurationMs": 2018
       },
       "metadata": {

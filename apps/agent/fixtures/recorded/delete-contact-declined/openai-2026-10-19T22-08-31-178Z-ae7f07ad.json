@@ -41,24 +41,7 @@
       },
       "recordedTimings": {
         "ttftMs": 2593,
-        "interChunkDelaysMs": [
-          187,
-          9,
-          0,
-          91,
-          48,
-          51,
-          54,
-          88,
-          12,
-          47,
-          48,
-          163,
-          158,
-          63,
-          9,
-          0
-        ],
+        "interChunkDelaysMs": [187, 9, 0, 91, 48, 51, 54, 88, 12, 47, 48, 163, 158, 63, 9, 0],
         "totalDurationMs": 3621
       },
       "metadata": {
