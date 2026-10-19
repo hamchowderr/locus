@@ -1,0 +1,112 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the contact Casey Placeholder.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 6,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "I couldn't delete Casey Placeholder because I couldn't get the contact's ID.\n\nEvery search for this contact was blocked: the system said text in the GoHighLevel data read like instructions and held back the whole result. That happened with the plain name search, with filtering on the last name \"Placeholder\", and even when I only asked for a count. I won't guess at an ID, so nothing has been changed.\n\nThat blocked text is worth checking, since someone may have put instructions in a field on this contact record. The block also means any change now needs a person's approval, and deleting a contact needs approval anyway.\n\nTo go ahead, you could:\n1. Send me the contact ID (from the contact's page URL in GoHighLevel), and I'll submit the delete for approval.\n2. Or check the record yourself, clean up or confirm the odd field, and delete it in the GoHighLevel interface.",
+        "usage": {
+          "prompt_tokens": 8037,
+          "completion_tokens": 346,
+          "total_tokens": 8383,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.039068,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 68,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.039068
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1466,
+        "interChunkDelaysMs": [
+          3665,
+          3,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "totalDurationMs": 5134
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

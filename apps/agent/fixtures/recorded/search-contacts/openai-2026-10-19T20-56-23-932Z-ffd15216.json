@@ -1,0 +1,76 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Find the contacts with an email address at example.org.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 1,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "Search all contacts and filter in SQL.",
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\":\"c\",\"operation\":\"contacts.search-contacts-advanced\",\"params\":{\"body\":{\"pageLimit\":100}}}], \"sql\": \"SELECT id, firstName, lastName, email FROM c WHERE lower(trim(email)) LIKE '%@example.org' ORDER BY lastName, firstName\"}",
+            "id": "toolu_01N9oDLFcvCV3LwEJFxspMPr"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 6653,
+          "completion_tokens": 184,
+          "total_tokens": 6837,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.030292,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.030292
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1493,
+        "interChunkDelaysMs": [
+          0,
+          9,
+          1,
+          0,
+          71,
+          52,
+          49,
+          54,
+          51,
+          44,
+          152,
+          52,
+          46,
+          49,
+          52,
+          50,
+          59,
+          84,
+          61,
+          8,
+          0
+        ],
+        "totalDurationMs": 2437
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

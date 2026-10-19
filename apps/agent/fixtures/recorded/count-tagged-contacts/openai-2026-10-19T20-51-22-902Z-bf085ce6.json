@@ -1,0 +1,104 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "How many contacts are tagged vip?",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 4,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "I couldn't get the count. I tried three queries against your contacts and none of them returned a number.\n\nEach time, the safety filter blocked the reply because some text in it read like instructions. The text came from GoHighLevel, and I don't know whether it's in a contact record or in an error message. I didn't act on it, and I haven't changed anything. Because of that warning, any change made in this session will now need a person's approval.\n\nTo get the number, you could check the vip tag in the GoHighLevel Contacts screen. I can also try again with a narrower search, like a smaller page size or only certain fields. It would also help to find the contact record with the instruction-like text and clean it up.",
+        "usage": {
+          "prompt_tokens": 7554,
+          "completion_tokens": 255,
+          "total_tokens": 7809,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.035316,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 45,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.035316
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1135,
+        "interChunkDelaysMs": [
+          3011,
+          23,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "totalDurationMs": 4170
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

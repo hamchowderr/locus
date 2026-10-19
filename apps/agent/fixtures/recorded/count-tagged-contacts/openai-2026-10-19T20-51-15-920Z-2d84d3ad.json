@@ -1,0 +1,78 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "How many contacts are tagged vip?",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 2,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\": \"c\", \"operation\": \"contacts.search-contacts-advanced\", \"params\": {\"body\": {\"pageLimit\": 500}}}], \"sql\": \"SELECT (SELECT COUNT(DISTINCT c.id) FROM c, json_each(c.tags) t WHERE lower(trim(t.value))='vip') AS vip_count, (SELECT COUNT(*) FROM c) AS total\"}",
+            "id": "toolu_014UbQnj8thVTNJuSLfpndXV"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 6956,
+          "completion_tokens": 229,
+          "total_tokens": 7185,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.032404,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 28,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.032404
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 2150,
+        "interChunkDelaysMs": [
+          552,
+          15,
+          0,
+          1,
+          0,
+          0,
+          0,
+          43,
+          44,
+          50,
+          238,
+          10,
+          11,
+          41,
+          52,
+          49,
+          56,
+          44,
+          49,
+          59,
+          46,
+          152,
+          7,
+          0
+        ],
+        "totalDurationMs": 3669
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

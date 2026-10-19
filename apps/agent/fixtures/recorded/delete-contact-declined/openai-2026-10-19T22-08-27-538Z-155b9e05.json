@@ -1,0 +1,79 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the contact Casey Placeholder.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 3,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\": \"c\", \"operation\": \"contacts.search-contacts-advanced\", \"params\": {\"body\": {\"query\": \"Casey Placeholder\", \"pageLimit\": 100}}}], \"sql\": \"SELECT id, length(firstName) fl, length(lastName) ll, (lower(firstName)='casey' AND lower(lastName)='placeholder') exact FROM c\"}",
+            "id": "toolu_01AyVQ4KUGcM2E8egQPpXCuV"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 7208,
+          "completion_tokens": 206,
+          "total_tokens": 7414,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.032952,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 19,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.032952
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1578,
+        "interChunkDelaysMs": [
+          256,
+          10,
+          0,
+          91,
+          49,
+          50,
+          51,
+          338,
+          10,
+          0,
+          0,
+          10,
+          42,
+          68,
+          38,
+          48,
+          45,
+          53,
+          47,
+          57,
+          42,
+          50,
+          105,
+          3,
+          0
+        ],
+        "totalDurationMs": 3041
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
