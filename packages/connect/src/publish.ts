@@ -180,7 +180,7 @@ async function agencyInstallation(deps: PublishDeps, organizationId: string) {
     .select()
     .from(githubInstallation)
     .where(eq(githubInstallation.organizationId, organizationId));
-  if (!row) throw new ConnectError("Connect GitHub on the Connections page first.");
+  if (!row) throw new ConnectError("Connect GitHub on the Integrations page first.");
   return row;
 }
 
