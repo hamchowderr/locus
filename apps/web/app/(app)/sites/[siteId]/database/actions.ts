@@ -1,7 +1,12 @@
 "use server";
 
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
-import { ConnectError, restoreSiteBackend, undoSiteBackendRestore } from "@locus/connect";
+import {
+  ConnectError,
+  resetSiteDatabaseKey,
+  restoreSiteBackend,
+  undoSiteBackendRestore,
+} from "@locus/connect";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { siteRestoreDeps } from "@/lib/hosts";
@@ -15,7 +20,7 @@ const databasePath = (siteId: string) => `/sites/${encodeURIComponent(siteId)}/d
 function refusal(error: unknown): string | null {
   if (error instanceof ConnectError) return error.message;
   if (error instanceof ClientAccessDenied) {
-    return "Only the agency's owners and admins can restore a site's database.";
+    return "Only the agency's owners and admins can restore a site's database or reset its key.";
   }
   if (error instanceof NotConfigured) return "Site databases aren't set up here yet.";
   return null;
@@ -72,5 +77,16 @@ export async function undoDatabaseRestore(form: FormData) {
       siteId,
     });
     return `undone=${redeployed ? "live" : "saved"}`;
+  });
+}
+
+/** Gives the site's database a new key, so every old one (a leaked one too) stops working. */
+export async function resetDatabaseKey(form: FormData) {
+  await databaseAction(form, async ({ ctx, client, siteId }) => {
+    if (text(form, "confirm") !== "yes") {
+      throw new ConnectError("Tick the box to confirm resetting the key.");
+    }
+    const { redeployed } = await resetSiteDatabaseKey(siteRestoreDeps(), ctx, client, { siteId });
+    return `keyReset=${redeployed ? "live" : "saved"}`;
   });
 }

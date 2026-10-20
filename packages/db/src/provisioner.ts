@@ -25,6 +25,8 @@ export interface TenantProvisioner {
   mintToken(dbName: string, opts: { readOnly?: boolean; ttl: string }): Promise<string>;
   /** The database if it exists, e.g. one a failed attempt created but never registered. */
   findDatabase(dbName: string): Promise<CreatedDatabase | null>;
+  /** Makes every token minted for this database so far stop working; other databases keep theirs. */
+  revokeTokens(dbName: string): Promise<void>;
   destroy(dbName: string): Promise<void>;
   /** The libSQL URL for a database's hostname. */
   url(hostname: string): string;
@@ -87,6 +89,11 @@ export class LocalProvisioner implements TenantProvisioner {
   async mintToken(dbName: string) {
     this.file(dbName);
     return "local-token-guards-nothing";
+  }
+
+  /** Local tokens guard nothing, so there is nothing to revoke. */
+  async revokeTokens(dbName: string) {
+    this.file(dbName);
   }
 
   async findDatabase(dbName: string) {
