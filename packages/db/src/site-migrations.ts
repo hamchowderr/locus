@@ -92,7 +92,9 @@ export async function pendingSiteMigrations(
 /**
  * Applies the pending migrations in order. Each one runs in its own transaction with its
  * ledger row, so a failure leaves that migration (and the ones after it) unapplied and
- * everything before it in place.
+ * everything before it in place. It runs through libSQL's `migrate`, which turns foreign keys
+ * off outside the transaction: SQLite ignores `PRAGMA foreign_keys` inside one, and a table
+ * rebuild (drop and rename) would otherwise cascade-delete every row that refers to it.
  */
 export async function applySiteMigrations(
   db: Client,
@@ -107,7 +109,7 @@ export async function applySiteMigrations(
       args: [migration.name, hash(migration.sql), now],
     });
     try {
-      await db.batch(statements, "write");
+      await db.migrate(statements);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new SiteMigrationError(`${migration.name} failed: ${reason}`);

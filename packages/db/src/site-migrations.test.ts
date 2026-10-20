@@ -89,4 +89,29 @@ describe("site migrations", () => {
       "0002_later",
     ]);
   });
+
+  it("rebuilds a table without cascade-deleting the rows that refer to it", async () => {
+    await applySiteMigrations(db, [
+      {
+        name: "0000_init",
+        sql: "create table parent (id integer primary key);\n--> statement-breakpoint\ncreate table child (id integer primary key, parent_id integer not null references parent(id) on delete cascade);",
+      },
+    ]);
+    await db.batch(["insert into parent values (1)", "insert into child values (1, 1)"]);
+    await applySiteMigrations(db, [
+      {
+        name: "0001_rebuild",
+        sql: [
+          "PRAGMA foreign_keys=OFF;",
+          "create table __new_parent (id integer primary key, label text);",
+          "insert into __new_parent (id) select id from parent;",
+          "drop table parent;",
+          "alter table __new_parent rename to parent;",
+          "PRAGMA foreign_keys=ON;",
+        ].join("\n--> statement-breakpoint\n"),
+      },
+    ]);
+    const children = await db.execute("select count(*) as n from child");
+    expect(Number(children.rows[0]?.n)).toBe(1);
+  });
 });

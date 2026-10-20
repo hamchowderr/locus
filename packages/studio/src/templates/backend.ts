@@ -22,7 +22,8 @@ export const BACKEND_STACK = {
 export const SITE_DATABASE_ENV = {
   url: "SITE_DATABASE_URL",
   token: "SITE_DATABASE_TOKEN",
-  authSecret: "BETTER_AUTH_SECRET",
+  /** The site's own login secret: one per site, never Locus's own `BETTER_AUTH_SECRET`. */
+  authSecret: "SITE_AUTH_SECRET",
 } as const;
 
 export const SITE_SCHEMA_PATH = "db/schema.ts";
@@ -164,16 +165,23 @@ export const LOGINS_MIGRATION = [
 
 const dbFile = (): SiteFile => ({
   path: "lib/db.ts",
-  content: `import { createClient } from "@libsql/client";
+  content: `import { mkdirSync } from "node:fs";
+import { createClient } from "@libsql/client";
 import { drizzle } from "drizzle-orm/libsql";
 import * as schema from "@/db/schema";
 
 // Server code only: never import this from a "use client" file. On the published site the
-// database comes from env vars Locus sets on the host; in the preview it is a local file, and
-// the preview has no token at all.
+// database comes from env vars Locus sets on the host. In the preview (next dev) it is a local
+// file, and the preview has no token at all. A production build without them refuses to start
+// rather than quietly keeping members in a throwaway file.
 const url = process.env.${SITE_DATABASE_ENV.url};
 
-export const isPreviewDatabase = !url;
+export const isPreviewDatabase = !url && process.env.NODE_ENV !== "production";
+
+if (!url && !isPreviewDatabase) {
+  throw new Error("${SITE_DATABASE_ENV.url} is not set. Publish the site from Locus to set it.");
+}
+if (isPreviewDatabase) mkdirSync(".data", { recursive: true });
 
 export const client = createClient(
   url
@@ -189,20 +197,20 @@ export const db = drizzle(client, { schema });
 const localMigrationsFile = (): SiteFile => ({
   path: "lib/local-migrations.ts",
   content: `import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { InStatement } from "@libsql/client";
 import { client, isPreviewDatabase } from "@/lib/db";
 
-// Applies db/migrations/ to the preview's local database when the preview starts. Locus does
-// this for the published site when it publishes, so this never touches a real database.
+// Applies db/migrations/ to the preview's local database: when the preview starts, and again
+// whenever Locus adds a migration (app/api/locus/preview-migrations). Locus does this for the
+// published site when it publishes, so this never touches a real database.
 const DIR = ${JSON.stringify(SITE_MIGRATIONS_DIR)};
 const LEDGER = ${JSON.stringify(SITE_MIGRATIONS_TABLE)};
 const BREAKPOINT = ${JSON.stringify(STATEMENT_BREAKPOINT)};
 
 export async function applyLocalMigrations() {
-  if (!isPreviewDatabase) return;
-  await mkdir(".data", { recursive: true });
+  if (!isPreviewDatabase) return { applied: [] as string[] };
   await client.execute(
     \`create table if not exists \${LEDGER} (name text primary key, hash text not null, applied_at integer not null)\`,
   );
@@ -212,9 +220,20 @@ export async function applyLocalMigrations() {
       String(row.hash),
     ]),
   );
-  const files = (await readdir(DIR).catch(() => [] as string[]))
-    .filter((file) => /^\\d{4}_[a-z0-9_]+\\.sql$/.test(file))
-    .sort();
+  // The same rules as Locus applies at publish, so the preview never accepts what publishing
+  // would refuse.
+  const files = (await readdir(DIR).catch(() => [] as string[])).sort();
+  const numbers = new Set<string>();
+  for (const file of files) {
+    if (!/^\\d{4}_[a-z0-9_]+\\.sql$/.test(file)) {
+      throw new Error(\`\${DIR}/\${file} isn't named like \${DIR}/0001_short_name.sql.\`);
+    }
+    if (numbers.has(file.slice(0, 4))) {
+      throw new Error(\`Two migrations are numbered \${file.slice(0, 4)}.\`);
+    }
+    numbers.add(file.slice(0, 4));
+  }
+  const applied: string[] = [];
   for (const file of files) {
     const name = file.slice(0, -4);
     const sql = await readFile(join(DIR, file), "utf8");
@@ -230,8 +249,12 @@ export async function applyLocalMigrations() {
       sql: \`insert into \${LEDGER} (name, hash, applied_at) values (?, ?, ?)\`,
       args: [name, hash, Date.now()],
     });
-    await client.batch(statements, "write");
+    // migrate, not batch: it turns foreign keys off outside the transaction, so rebuilding a
+    // table doesn't cascade-delete the rows that refer to it.
+    await client.migrate(statements);
+    applied.push(name);
   }
+  return { applied };
 }
 `,
 });
@@ -243,6 +266,24 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const { applyLocalMigrations } = await import("@/lib/local-migrations");
   await applyLocalMigrations();
+}
+`,
+});
+
+/** Lets Locus bring the preview's database up to date after the agent adds a migration. */
+const previewMigrateRouteFile = (): SiteFile => ({
+  path: "app/api/locus/preview-migrations/route.ts",
+  content: `import { isPreviewDatabase } from "@/lib/db";
+import { applyLocalMigrations } from "@/lib/local-migrations";
+
+// Preview only: the published site answers 404 and never runs migrations itself.
+export async function POST() {
+  if (!isPreviewDatabase) return new Response(null, { status: 404 });
+  try {
+    return Response.json(await applyLocalMigrations());
+  } catch (error) {
+    return Response.json({ error: String(error) }, { status: 422 });
+  }
 }
 `,
 });
@@ -260,7 +301,7 @@ import { db, isPreviewDatabase } from "@/lib/db";
 export const auth = betterAuth({
   secret:
     process.env.${SITE_DATABASE_ENV.authSecret} ??
-    (isPreviewDatabase ? "locus-preview-only-not-secret" : undefined),
+    (isPreviewDatabase ? "locus-preview-only-not-a-secret-at-all" : undefined),
   database: drizzleAdapter(db, { provider: "sqlite", schema }),
   emailAndPassword: { enabled: true },
   telemetry: { enabled: false },
@@ -294,6 +335,7 @@ export function backendFiles(): SiteFile[] {
     dbFile(),
     localMigrationsFile(),
     instrumentationFile(),
+    previewMigrateRouteFile(),
     authFile(),
     authRouteFile(),
     authClientFile(),
