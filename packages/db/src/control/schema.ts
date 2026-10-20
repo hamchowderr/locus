@@ -30,7 +30,7 @@ export const location = sqliteTable(
       .notNull()
       .default("provisioning"),
     /** Whether the agency turned the site builder on for this client (the Clients page). */
-    siteBuilder: integer("site_builder", { mode: "boolean" }).notNull().default(true),
+    siteBuilder: integer("sites_enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: createdAt(),
   },
   // The unique index leads with organization_id, so it also serves the foreign key.
@@ -94,7 +94,7 @@ export const site = sqliteTable(
  * admin made them view-only here.
  */
 export const siteMemberAccess = sqliteTable(
-  "site_member_access",
+  "site_member_role",
   {
     siteId: text("site_id")
       .notNull()
@@ -106,7 +106,7 @@ export const siteMemberAccess = sqliteTable(
   },
   (t) => [
     primaryKey({ columns: [t.siteId, t.memberId] }),
-    index("site_member_access_member_idx").on(t.memberId),
+    index("site_member_role_member_idx").on(t.memberId),
   ],
 );
 

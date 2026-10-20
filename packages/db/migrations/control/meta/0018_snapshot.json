@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "9a2fcf37-0e8b-40f9-b430-bc92fd909b12",
-  "prevId": "791beb0f-6bc2-4eb3-ac4c-2a193342ecac",
+  "id": "6203e585-fdcf-45ab-a121-975a50a29f7f",
+  "prevId": "8f1fe531-0e1e-47a0-bf3e-5061194ec75c",
   "tables": {
     "account": {
       "name": "account",
@@ -1208,8 +1208,8 @@
           "autoincrement": false,
           "default": "'provisioning'"
         },
-        "site_builder": {
-          "name": "site_builder",
+        "sites_enabled": {
+          "name": "sites_enabled",
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
@@ -1471,8 +1471,8 @@
           "autoincrement": false,
           "default": "'draft'"
         },
-        "folder": {
-          "name": "folder",
+        "folder_name": {
+          "name": "folder_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -1529,8 +1529,8 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "site_member_access": {
-      "name": "site_member_access",
+    "site_member_role": {
+      "name": "site_member_role",
       "columns": {
         "site_id": {
           "name": "site_id",
@@ -1555,8 +1555,8 @@
         }
       },
       "indexes": {
-        "site_member_access_member_idx": {
-          "name": "site_member_access_member_idx",
+        "site_member_role_member_idx": {
+          "name": "site_member_role_member_idx",
           "columns": [
             "member_id"
           ],
@@ -1564,9 +1564,9 @@
         }
       },
       "foreignKeys": {
-        "site_member_access_site_id_site_id_fk": {
-          "name": "site_member_access_site_id_site_id_fk",
-          "tableFrom": "site_member_access",
+        "site_member_role_site_id_site_id_fk": {
+          "name": "site_member_role_site_id_site_id_fk",
+          "tableFrom": "site_member_role",
           "tableTo": "site",
           "columnsFrom": [
             "site_id"
@@ -1577,9 +1577,9 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "site_member_access_member_id_member_id_fk": {
-          "name": "site_member_access_member_id_member_id_fk",
-          "tableFrom": "site_member_access",
+        "site_member_role_member_id_member_id_fk": {
+          "name": "site_member_role_member_id_member_id_fk",
+          "tableFrom": "site_member_role",
           "tableTo": "member",
           "columnsFrom": [
             "member_id"
@@ -1592,12 +1592,12 @@
         }
       },
       "compositePrimaryKeys": {
-        "site_member_access_site_id_member_id_pk": {
+        "site_member_role_site_id_member_id_pk": {
           "columns": [
             "site_id",
             "member_id"
           ],
-          "name": "site_member_access_site_id_member_id_pk"
+          "name": "site_member_role_site_id_member_id_pk"
         }
       },
       "uniqueConstraints": {},
