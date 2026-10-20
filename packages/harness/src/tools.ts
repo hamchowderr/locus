@@ -149,13 +149,13 @@ async function recoverable<T>(
   } catch (error) {
     // Locus's own errors say what to change and may name our tools; GHL's carry GHL's text.
     if (
-      error instanceof QueryError ||
+      (error instanceof QueryError && !error.quotesGhl) ||
       error instanceof ActionError ||
       error instanceof GhlUsageError
     ) {
       return locusError(error.message);
     }
-    if (error instanceof GhlError) return { error: error.message };
+    if (error instanceof QueryError || error instanceof GhlError) return { error: error.message };
     throw error;
   }
 }

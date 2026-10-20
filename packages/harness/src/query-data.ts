@@ -83,6 +83,14 @@ export interface QueryDeps {
 /** A query the engine refuses or cannot answer correctly. The message is meant for the model. */
 export class QueryError extends Error {
   override name = "QueryError";
+
+  /** The message quotes GoHighLevel's response (its field names), so it is screened in full. */
+  readonly quotesGhl: boolean;
+
+  constructor(message: string, quotesGhl = false) {
+    super(message);
+    this.quotesGhl = quotesGhl;
+  }
 }
 
 type Row = Record<string, unknown>;
@@ -259,6 +267,7 @@ export function extractRows(payload: unknown, rowsField: string | undefined, opI
     if (value && typeof value === "object") return [value as Row];
     throw new QueryError(
       `${opId} has no list "${rowsField}" — its fields are ${Object.keys(record).join(", ")}`,
+      true,
     );
   }
 
@@ -270,6 +279,7 @@ export function extractRows(payload: unknown, rowsField: string | undefined, opI
   if (lists.length > 1) {
     throw new QueryError(
       `${opId} returns several lists (${lists.map(([key]) => key).join(", ")}); set rowsField`,
+      true,
     );
   }
   const objects = Object.entries(record).filter(
