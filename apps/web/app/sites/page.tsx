@@ -262,9 +262,20 @@ export default async function Sites({
                 <Button>Publish the latest version</Button>
               </form>
             )}
-            {manager && s.repoFullName && !s.hostProjectId && (
-              <ProjectForm siteId={s.id} problem={isProblem(projects) ? projects.problem : null} />
-            )}
+            {manager &&
+              s.repoFullName &&
+              !s.hostProjectId &&
+              // Vercel would fail to build an empty repository, so the site is published first.
+              (s.status === "draft" ? (
+                <p className="text-sm text-neutral-600">
+                  Publish the site to {s.repoFullName} first, then create its Vercel project.
+                </p>
+              ) : (
+                <ProjectForm
+                  siteId={s.id}
+                  problem={isProblem(projects) ? projects.problem : null}
+                />
+              ))}
             {deployments[i] !== undefined && <DeploymentLine deployment={deployments[i]} />}
             {gone(s.hostProjectId) && (
               <Notice tone="error">This project is no longer on your Vercel team.</Notice>
