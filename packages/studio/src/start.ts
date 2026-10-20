@@ -7,7 +7,7 @@ import {
   type SiteTemplate,
   templateById,
 } from "./templates/index.ts";
-import type { SiteWorkspace, VersionInfo } from "./workspace.ts";
+import type { SiteFile, SiteWorkspace, VersionInfo } from "./workspace.ts";
 
 /**
  * Starts a new site: stores its brief, writes the template's files and saves them as version 1.
@@ -15,13 +15,19 @@ import type { SiteWorkspace, VersionInfo } from "./workspace.ts";
  */
 export async function startSite(
   workspace: SiteWorkspace,
-  input: { brief: z.input<typeof DesignBrief>; templateId?: string; userId?: string | null },
+  input: {
+    brief: z.input<typeof DesignBrief>;
+    templateId?: string;
+    userId?: string | null;
+    /** Files to start with besides the template's, e.g. reference screenshots. */
+    files?: SiteFile[];
+  },
 ): Promise<{ brief: DesignBrief; template: SiteTemplate; version: VersionInfo }> {
   const parsed = DesignBrief.parse(input.brief);
   const template = input.templateId ? templateById(input.templateId) : defaultTemplate(parsed);
   if (!template) throw new WorkspaceError(`There's no template called ${input.templateId}.`);
   const brief = DesignBrief.parse({ ...parsed, templateId: template.id });
-  const files = renderTemplate(template, brief);
+  const files = [...renderTemplate(template, brief), ...(input.files ?? [])];
   if ((await workspace.listFiles()).length > 0 || (await workspace.latestVersion())) {
     throw new WorkspaceError("This site has already been started.");
   }

@@ -1,4 +1,9 @@
-import { LocalProvisioner, type TenantProvisioner, tenantDbName } from "./provisioner.ts";
+import {
+  type DatabaseFork,
+  LocalProvisioner,
+  type TenantProvisioner,
+  tenantDbName,
+} from "./provisioner.ts";
 
 export interface TursoConfig {
   /** The organisation slug, e.g. `hamchowderr`. */
@@ -50,12 +55,27 @@ export class TursoProvisioner implements TenantProvisioner {
     };
   }
 
-  async create(locationId: string) {
-    const name = tenantDbName(locationId);
+  create(locationId: string) {
+    return this.createDatabase(tenantDbName(locationId));
+  }
+
+  /** A fork is Turso's `seed` of type `database`: a copy as of now, or of a recent moment. */
+  async createDatabase(dbName: string, opts: { fork?: DatabaseFork } = {}) {
+    const name = checkName(dbName);
+    const request: Record<string, unknown> = { name, group: this.config.group };
+    if (opts.fork) {
+      request.seed = {
+        type: "database",
+        name: checkName(opts.fork.from),
+        ...(opts.fork.at
+          ? { timestamp: opts.fork.at.toISOString().replace(/\.\d{3}Z$/, "Z") }
+          : {}),
+      };
+    }
     const body = await this.call<{ database?: { Name?: string; Hostname?: string } }>(
       "POST",
       "/databases",
-      { name, group: this.config.group },
+      request,
     );
     const hostname = body.database?.Hostname;
     if (!hostname || !HOSTNAME.test(hostname)) {
@@ -76,6 +96,23 @@ export class TursoProvisioner implements TenantProvisioner {
     );
     if (!body.jwt) throw new TursoError(502, `Turso minted no token for ${dbName}`);
     return body.jwt;
+  }
+
+  async findDatabase(dbName: string) {
+    try {
+      const body = await this.call<{ database?: { Name?: string; Hostname?: string } }>(
+        "GET",
+        `/databases/${checkName(dbName)}`,
+      );
+      const hostname = body.database?.Hostname;
+      if (!hostname || !HOSTNAME.test(hostname)) {
+        throw new TursoError(502, `Turso returned no usable hostname for ${dbName}`);
+      }
+      return { dbName: body.database?.Name ?? dbName, hostname };
+    } catch (error) {
+      if (error instanceof TursoError && error.status === 404) return null;
+      throw error;
+    }
   }
 
   /**

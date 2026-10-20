@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6203e585-fdcf-45ab-a121-975a50a29f7f",
-  "prevId": "8f1fe531-0e1e-47a0-bf3e-5061194ec75c",
+  "id": "949e556e-2ca0-40cc-8093-a7f9758b50fd",
+  "prevId": "e3dfe3cf-7483-453f-9c8c-1feb1dedd05a",
   "tables": {
     "account": {
       "name": "account",
@@ -1208,14 +1208,6 @@
           "autoincrement": false,
           "default": "'provisioning'"
         },
-        "sites_enabled": {
-          "name": "sites_enabled",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1529,44 +1521,66 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "site_member_role": {
-      "name": "site_member_role",
+    "site_backend": {
+      "name": "site_backend",
       "columns": {
         "site_id": {
           "name": "site_id",
           "type": "text",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         },
-        "member_id": {
-          "name": "member_id",
+        "location_id": {
+          "name": "location_id",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "level": {
-          "name": "level",
+        "turso_db_name": {
+          "name": "turso_db_name",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "turso_db_hostname": {
+          "name": "turso_db_hostname",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(cast(unixepoch('subsecond') * 1000 as integer))"
         }
       },
       "indexes": {
-        "site_member_role_member_idx": {
-          "name": "site_member_role_member_idx",
+        "site_backend_turso_db_name_unique": {
+          "name": "site_backend_turso_db_name_unique",
           "columns": [
-            "member_id"
+            "turso_db_name"
+          ],
+          "isUnique": true
+        },
+        "site_backend_location_idx": {
+          "name": "site_backend_location_idx",
+          "columns": [
+            "location_id"
           ],
           "isUnique": false
         }
       },
       "foreignKeys": {
-        "site_member_role_site_id_site_id_fk": {
-          "name": "site_member_role_site_id_site_id_fk",
-          "tableFrom": "site_member_role",
+        "site_backend_site_id_site_id_fk": {
+          "name": "site_backend_site_id_site_id_fk",
+          "tableFrom": "site_backend",
           "tableTo": "site",
           "columnsFrom": [
             "site_id"
@@ -1574,32 +1588,24 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         },
-        "site_member_role_member_id_member_id_fk": {
-          "name": "site_member_role_member_id_member_id_fk",
-          "tableFrom": "site_member_role",
-          "tableTo": "member",
+        "site_backend_location_id_location_id_fk": {
+          "name": "site_backend_location_id_location_id_fk",
+          "tableFrom": "site_backend",
+          "tableTo": "location",
           "columnsFrom": [
-            "member_id"
+            "location_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {
-        "site_member_role_site_id_member_id_pk": {
-          "columns": [
-            "site_id",
-            "member_id"
-          ],
-          "name": "site_member_role_site_id_member_id_pk"
-        }
-      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
