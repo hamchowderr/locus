@@ -337,14 +337,20 @@ export default async function Sites({
                   clients={clients}
                 />
               )}
-              {manager && !s.repoFullName && !s.hostProjectId && !s.customDomain && (
+              {manager && !s.hostProjectId && !s.customDomain && (
                 <details className="text-sm">
                   <summary className="cursor-pointer text-neutral-600">Delete this site</summary>
                   <form action={deleteSite} className="space-y-2 pt-2">
                     <input type="hidden" name="siteId" value={s.id} />
+                    {s.repoFullName && (
+                      <p className="text-neutral-600">
+                        Its GitHub repository {s.repoFullName} stays; delete it on GitHub if you no
+                        longer need it.
+                      </p>
+                    )}
                     <label className="flex items-center gap-2">
                       <input type="checkbox" name="confirm" value="yes" required />
-                      Delete this site and all its versions. This can't be undone.
+                      Delete this site and all its versions from Locus. This can't be undone.
                     </label>
                     <Button>Delete site</Button>
                   </form>
