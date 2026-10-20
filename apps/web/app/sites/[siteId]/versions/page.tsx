@@ -12,6 +12,7 @@ const SOURCE: Record<SiteHistory["versions"][number]["source"], string> = {
   agent: "Site builder",
   restore: "Restore",
   edit: "Edit",
+  copy: "Copy",
 };
 
 const when = new Intl.DateTimeFormat("en-US", {
