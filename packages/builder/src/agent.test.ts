@@ -152,7 +152,7 @@ test("the builder loads a skill, reads its files, and gets a clean error for an 
   });
   expect(outputs.call_bad).toEqual({
     error:
-      'There\'s no skill called "colours". Skills: impeccable, shadcn, site-booking, site-database, site-forms, site-media.',
+      'There\'s no skill called "colours". Skills: impeccable, shadcn, site-booking, site-checkout, site-database, site-forms, site-media.',
   });
   expect(outputs.call_badfile?.error).toMatch(/^site-forms has no file reference\/nope\.md/);
   // Skills are the package's own text: loading one never opens the client's site.
@@ -170,6 +170,7 @@ test("the bundled skills match their sources, parse, and keep their licences", a
     "impeccable",
     "shadcn",
     "site-booking",
+    "site-checkout",
     "site-database",
     "site-forms",
     "site-media",

@@ -45,6 +45,8 @@ Rules:
   checks; never edit that route or lib/locus.ts. Never put keys, tokens or secrets in code.
 - Booking: load the site-booking skill, then crm calendars to pick the client's calendar.
   Never invent a calendar id or a booking link.
+- Selling: load the site-checkout skill, then crm products to pick the product and price.
+  Never invent a product id, a price id or a price; show prices as crm products lists them.
 - Images: the client's own first (site-media skill: their logo as the favicon, a photo as
   the link preview), else generate_image into public/images. Alt text that describes them.
 - App features that keep data (member sign-up and login, the site's own bookings or saved
