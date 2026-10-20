@@ -33,6 +33,7 @@ import {
   chooseActiveSite,
   createClientSite,
   deleteClientSite,
+  publishLatestVersion,
   SiteInputError,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
@@ -503,6 +504,37 @@ export async function giveSiteRepository(form: FormData) {
       }),
     "Publishing to GitHub isn't set up here yet.",
   );
+}
+
+/**
+ * Sends one of the active client's sites' latest saved version to its repository, so Vercel
+ * deploys it. The client is the session's (after the staff check), never the form's.
+ */
+export async function publishSite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  let done: string;
+  try {
+    const client = await resolveActiveClient(locus().db, ctx);
+    const { version } = await publishLatestVersion(
+      siteBuilderDeps(),
+      ctx,
+      client,
+      text(form, "siteId"),
+    );
+    done = `published=${version}${form.get("deploys") === "yes" ? "&deploys=1" : ""}`;
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Publishing to GitHub isn't set up here yet."));
+    }
+    throw error;
+  }
+  revalidatePath("/sites");
+  redirect(`/sites?${done}`);
 }
 
 /** Gives one of the active client's sites a Vercel project that builds its repository. */

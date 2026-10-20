@@ -146,7 +146,7 @@ export default async function Connect({
       <p className="text-neutral-600">
         {installation
           ? `Connected to ${installation.orgLogin}. Sites will get their own repositories there.`
-          : "Install Locus on your GitHub organisation. It can only reach repositories it creates, never your existing code."}
+          : "Install Locus on your GitHub organisation, where it creates each site's repository. On a personal account it can't create repositories: choose Only select repositories and give it just the empty ones your sites use."}
       </p>
       <a href="/api/connect/github/start" className={LINK}>
         {installation ? "Reconnect GitHub" : "Connect GitHub"}

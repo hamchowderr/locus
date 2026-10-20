@@ -73,6 +73,7 @@ import {
   newSiteRefusal,
   openClientDb,
   pooledUsers,
+  publishLatestVersion,
   publishMessage,
   remotePublish,
   remoteSiteRuntimes,
@@ -430,6 +431,93 @@ describe("publishing saved versions", () => {
     expect(latest?.commitSha).toMatch(/\w+/);
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.status).toBe("pushed");
+  });
+
+  it("publishes the latest saved version from the Sites page, without the chat", async () => {
+    const { client, siteId } = await startedSite();
+    const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
+      siteId,
+      name: "a-site",
+    });
+    const published = await publishLatestVersion(deps(), ctx("owner"), client, siteId);
+    expect(published).toMatchObject({ version: 1, commitSha: expect.stringMatching(/\w+/) });
+    const pushed = github.repoFiles(repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain(`"https://locus.test/api/sites/${siteId}/leads"`);
+    const { db: tenant, release } = await leaseClientDb(
+      (c) => openClientDb(provisioner, c),
+      client,
+    );
+    try {
+      const latest = await new SiteWorkspace(tenant, siteId).latestVersion();
+      expect(latest?.commitSha).toBe(published.commitSha);
+    } finally {
+      release();
+    }
+    const [row] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(row?.status).toBe("pushed");
+  });
+
+  it("refuses to publish from the Sites page without a repository or as staff", async () => {
+    const { client, siteId } = await startedSite();
+    await expect(publishLatestVersion(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
+      /GitHub repository first/,
+    );
+    await ensureSiteRepo(publishDeps(), ctx("owner"), client, { siteId, name: "a-site" });
+    const staff = await authorized("staff", clientA);
+    await expect(publishLatestVersion(deps(), ctx("staff"), staff, siteId)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    await db.delete(githubInstallation);
+    const refused = publishLatestVersion(deps(), ctx("owner"), client, siteId);
+    await expect(refused).rejects.toBeInstanceOf(SiteInputError);
+    await expect(refused).rejects.toThrow(/Connect GitHub/);
+    expect(pooledUsers(clientA)).toBe(0);
+  });
+
+  it("publishes a version saved in the chat during a Sites page publish, so it stays on top", async () => {
+    const { client, siteId } = await startedSite();
+    const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
+      siteId,
+      name: "a-site",
+    });
+    let saved = false;
+    const racing = (): PublishDeps => ({
+      ...publishDeps(),
+      github: {
+        apiBaseUrl: "https://api.github.stub",
+        // A chat save lands while the button's first commit is on its way.
+        fetch: async (input, init) => {
+          if (!saved) {
+            saved = true;
+            const tenant = await openClientDb(provisioner, client);
+            try {
+              const workspace = new SiteWorkspace(tenant, siteId);
+              await workspace.writeFile("app/about/page.tsx", "about");
+              await workspace.saveVersion({ message: "Add about", source: "agent" });
+            } finally {
+              tenant.$client.close();
+            }
+          }
+          return github(input, init);
+        },
+      },
+    });
+    const published = await publishLatestVersion(
+      deps({ publish: racing }),
+      ctx("owner"),
+      client,
+      siteId,
+    );
+    expect(published.version).toBe(2);
+    expect(github.repoFiles(repoFullName as string)?.["app/about/page.tsx"]).toBe("about");
+  });
+
+  it("refuses to publish another client's site from the Sites page", async () => {
+    const { siteId } = await startedSite();
+    const other = await authorized("owner", clientB);
+    await expect(publishLatestVersion(deps(), ctx("owner"), other, siteId)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
   });
 
   it("leaves a site without a repository unpublished, with no call to GitHub", async () => {
