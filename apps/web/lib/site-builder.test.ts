@@ -50,7 +50,7 @@ import { FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
 import { readBrief, SiteWorkspace } from "@locus/studio";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GITHUB_APP_KEY_SECRET,
   GithubAppKeyError,
@@ -515,11 +515,14 @@ describe("publishing saved versions", () => {
 
   it("sends the latest version as soon as the site gets its repository", async () => {
     const { client, siteId } = await startedSite();
-    const row = await giveSiteRepoAndPublish(publishDeps(), deps(), ctx("owner"), client, {
-      siteId,
-      repo: "",
-      name: "a-site",
-    });
+    const { row, version } = await giveSiteRepoAndPublish(
+      publishDeps(),
+      () => deps(),
+      ctx("owner"),
+      client,
+      { siteId, repo: "", name: "a-site" },
+    );
+    expect(version).toBe(1);
     const pushed = github.repoFiles(row.repoFullName as string);
     expect(pushed?.["lib/locus.ts"]).toContain(`"https://locus.test/api/sites/${siteId}/leads"`);
     const [saved] = await db.select().from(site).where(eq(site.id, siteId));
@@ -530,15 +533,65 @@ describe("publishing saved versions", () => {
     const { client, siteId } = await startedSite();
     const giving = giveSiteRepoAndPublish(
       publishDeps(),
-      deps({ publish: null }),
+      () => deps({ publish: null }),
       ctx("owner"),
       client,
       { siteId, repo: "", name: "a-site" },
     );
     await expect(giving).rejects.toBeInstanceOf(ConnectError);
-    await expect(giving).rejects.toThrow(/repository is linked.*Press Publish/);
+    await expect(giving).rejects.toThrow(/is linked, but the site wasn't sent to it yet/);
     const [saved] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(saved).toMatchObject({ status: "draft" });
     expect(saved?.repoFullName).toBeTruthy();
+  });
+
+  it("tells the page the repository is linked when the first publish fails unexpectedly", async () => {
+    const { client, siteId } = await startedSite();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const giving = giveSiteRepoAndPublish(
+        publishDeps(),
+        () =>
+          deps({
+            publish: () => {
+              throw new Error("network unreachable");
+            },
+          }),
+        ctx("owner"),
+        client,
+        { siteId, repo: "", name: "a-site" },
+      );
+      await expect(giving).rejects.toBeInstanceOf(ConnectError);
+      // The cause is logged, not shown.
+      await expect(giving).rejects.not.toThrow(/unreachable/);
+      const [saved] = await db.select().from(site).where(eq(site.id, siteId));
+      expect(saved?.repoFullName).toBeTruthy();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("doesn't publish again when the repository form is sent twice", async () => {
+    const { client, siteId } = await startedSite();
+    let publishes = 0;
+    const builder = () =>
+      deps({
+        publish: () => {
+          publishes++;
+          return publishDeps();
+        },
+      });
+    const choice = { siteId, repo: "", name: "a-site" };
+    await giveSiteRepoAndPublish(publishDeps(), builder, ctx("owner"), client, choice);
+    const again = await giveSiteRepoAndPublish(
+      publishDeps(),
+      builder,
+      ctx("owner"),
+      client,
+      choice,
+    );
+    expect(again.version).toBeNull();
+    expect(publishes).toBe(1);
   });
 
   it("refuses to publish another client's site from the Sites page", async () => {
