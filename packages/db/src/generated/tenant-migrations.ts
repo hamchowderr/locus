@@ -37,5 +37,11 @@ export const EMBEDDED_TENANT_MIGRATIONS: { hash: string; sql: string[] }[] = [
     "sql": [
       "CREATE TABLE `site_lead_day` (\n\t`site_id` text NOT NULL,\n\t`day` text NOT NULL,\n\t`delivered` integer DEFAULT 0 NOT NULL,\n\t`failed` integer DEFAULT 0 NOT NULL,\n\t`updated_at` integer NOT NULL,\n\tPRIMARY KEY(`site_id`, `day`)\n);"
     ]
+  },
+  {
+    "hash": "d2775ecf6233d0038b09922f1188c75bcd0d3441450aaa3301138a3abe6456c8",
+    "sql": [
+      "CREATE TABLE `app_access` (\n\t`toolkit` text PRIMARY KEY NOT NULL,\n\t`access` text NOT NULL,\n\t`updated_by_user_id` text,\n\t`updated_at` integer NOT NULL\n);"
+    ]
   }
 ];
