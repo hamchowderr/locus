@@ -43,6 +43,7 @@ import {
   sandboxFromEnv,
 } from "@locus/sandbox";
 import {
+  bookingCalendarIds,
   type PageSeo,
   pageSeo,
   readBrief,
@@ -315,6 +316,12 @@ export function publishHook(
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
+    // The calendars this version books on: the only ones its visitors may book once it's live.
+    // Recorded before the push, so the new deployment never refuses its own calendars.
+    await db
+      .update(site)
+      .set({ bookingCalendars: bookingCalendarIds(files) })
+      .where(eq(site.id, row.id));
     try {
       const deps = publish();
       const siteUrl = await siteAddress(deps, client, row);

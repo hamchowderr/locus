@@ -540,12 +540,13 @@ const FILLABLE = Object.keys(NOTE_LABELS) as (keyof typeof NOTE_LABELS)[];
 /**
  * Puts one lead in the client's CRM and returns its contact's id: the contact is found or
  * created, tagged, its blank fields filled, and the rest of what the visitor typed noted.
- * `extraNote` lines (Locus's own text, e.g. a booking's time) go at the end of the note.
+ * `beforeNote` runs once the contact exists, before the note is written; the lines it returns
+ * (Locus's own text, e.g. what happened to a booking) go at the end of the note.
  */
 export async function sendToGhl(
   { session, options }: SiteGhl,
   lead: Lead,
-  extraNote: string[] = [],
+  beforeNote?: (contactId: string) => Promise<string[]>,
 ): Promise<string> {
   const { fields, extras } = lead;
   const form = fields.form ?? "contact";
@@ -645,7 +646,7 @@ export async function sendToGhl(
   }
   for (const [key, value] of extras) lines.push(`${key}: ${value}`);
   if (fields.page) lines.push(`Page: ${fields.page}`);
-  lines.push(...extraNote);
+  if (beforeNote) lines.push(...(await beforeNote(contactId)));
   if (lines.length > 0) {
     await ghlRequest(
       operation("contacts.create-note"),

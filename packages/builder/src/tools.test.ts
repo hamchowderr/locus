@@ -879,18 +879,28 @@ describe("crm tool", () => {
 
   it("writes Locus's booking pieces, keeping a site's own copy unless told to replace it", async () => {
     const { call } = await setup();
-    expect(await call("crm", { action: "add_booking" })).toEqual({
+    // A site made before booking: no Locus route, and settings without siteApi.
+    await t.session.workspace.writeFile(
+      "lib/locus.ts",
+      "export const locus = { leadEndpoint: null };",
+    );
+    expect(await call("crm", { action: "add_booking" })).toMatchObject({
       written: "components/booking.tsx",
+      note: expect.stringContaining("calendarId"),
     });
     expect(String(await t.session.workspace.readFile("components/booking.tsx"))).toContain(
       'fetch("/api/locus/booking"',
     );
+    expect(
+      String(await t.session.workspace.readFile("app/api/locus/[...path]/route.ts")),
+    ).toContain('"POST booking"');
+    expect(String(await t.session.workspace.readFile("lib/locus.ts"))).toContain("siteApi");
     await t.session.workspace.writeFile("components/booking.tsx", "mine");
-    expect(await call("crm", { action: "add_booking" })).toEqual({
+    expect(await call("crm", { action: "add_booking" })).toMatchObject({
       kept: "components/booking.tsx",
     });
     expect(await t.session.workspace.readFile("components/booking.tsx")).toBe("mine");
-    expect(await call("crm", { action: "add_booking", overwrite: true })).toEqual({
+    expect(await call("crm", { action: "add_booking", overwrite: true })).toMatchObject({
       written: "components/booking.tsx",
     });
     expect(await call("crm", { action: "add_calendar_embed" })).toEqual({

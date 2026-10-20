@@ -38,9 +38,10 @@ export {
 export { startSite } from "./start.ts";
 export {
   BACKEND_STACK,
-  backendFiles,
   BOOKING_COMPONENT_PATH,
+  backendFiles,
   baseFiles,
+  bookingCalendarIds,
   bookingComponentFile,
   CALENDAR_EMBED_PATH,
   calendarEmbedFile,

@@ -15,6 +15,7 @@ export {
 export { baseFiles, DEFAULT_PALETTE, packageName, readableOn, SITE_STACK } from "./base.ts";
 export {
   BOOKING_COMPONENT_PATH,
+  bookingCalendarIds,
   bookingComponentFile,
   CALENDAR_EMBED_PATH,
   calendarEmbedFile,

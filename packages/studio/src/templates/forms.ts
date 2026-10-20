@@ -164,11 +164,15 @@ async function readBody(request: Request): Promise<string | null> {
   return new TextDecoder().decode(bytes);
 }
 
-/** Sample times for a draft or preview, which reaches no calendar. */
-function previewSlots(timezone: string) {
+/** Sample weekday times for a draft or preview, which reaches no calendar. */
+function previewSlots(query: URLSearchParams) {
+  const timezone = query.get("timezone") ?? "UTC";
+  const from = Date.parse(\`\${query.get("start")}T00:00:00Z\`);
+  const first = Number.isNaN(from) ? Date.now() + 86_400_000 : from;
+  const count = Math.min(Number(query.get("days")) || 7, 14);
   const days = [];
-  for (let i = 1; days.length < 5; i++) {
-    const date = new Date(Date.now() + i * 86_400_000);
+  for (let i = 0; i < count; i++) {
+    const date = new Date(first + i * 86_400_000);
     if (date.getUTCDay() === 0 || date.getUTCDay() === 6) continue;
     const day = date.toISOString().slice(0, 10);
     const slots = [9, 10, 11, 13, 14, 15].map((h) => \`\${day}T\${String(h).padStart(2, "0")}:00:00Z\`);
@@ -192,7 +196,7 @@ async function forward(request: Request, { params }: Params) {
   if (!locus.siteApi) {
     // A draft or preview: nothing is sent anywhere.
     if (call === "GET booking/slots") {
-      return NextResponse.json(previewSlots(url.searchParams.get("timezone") ?? "UTC"));
+      return NextResponse.json(previewSlots(url.searchParams));
     }
     return NextResponse.json({ ok: true, preview: true });
   }
