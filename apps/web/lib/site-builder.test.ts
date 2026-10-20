@@ -46,6 +46,7 @@ import {
   usageLimit,
   user,
 } from "@locus/db/control";
+import { siteBrief } from "@locus/db/tenant";
 import { FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
 import { readBrief, SiteWorkspace } from "@locus/studio";
@@ -82,6 +83,7 @@ import {
   type SiteBuilderDeps,
   SiteInputError,
   siteLeadTotals,
+  siteNames,
   siteRuntimeKey,
   toMeasurement,
   usageMeter,
@@ -831,6 +833,28 @@ describe("deleting a site", () => {
       tenant.$client.close();
     }
   }
+
+  it("names the client's sites, skipping one whose brief no longer reads", async () => {
+    const good = await draft("owner", "Good");
+    const { client, siteId: bad } = await draft("owner", "Bad");
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      await tenant
+        .update(siteBrief)
+        .set({ brief: { old: true } })
+        .where(eq(siteBrief.siteId, bad));
+    } finally {
+      tenant.$client.close();
+    }
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const names = await siteNames(deps(), client, [good.siteId, bad, "unknown"]);
+      expect([...names]).toEqual([[good.siteId, "Good"]]);
+    } finally {
+      error.mockRestore();
+    }
+    expect(await siteNames(deps(), client, [])).toEqual(new Map());
+  });
 
   it("removes a draft and everything Locus keeps for it, and only that site", async () => {
     const kept = await draft("owner", "Kept");

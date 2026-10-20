@@ -476,7 +476,7 @@ export async function chooseSite(form: FormData) {
       return null;
     });
     if (!briefs) back("/sites", new Error("Locus couldn't reach this client's sites. Try again."));
-    hasBrief = briefs?.has(wanted) ?? false;
+    hasBrief = briefs.has(wanted);
     if (hasBrief) siteId = await chooseActiveSite(locus().db, ctx, client, wanted);
   } catch (error) {
     if (error instanceof ClientAccessDenied) back("/sites", error);

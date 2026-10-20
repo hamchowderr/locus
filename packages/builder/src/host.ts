@@ -46,6 +46,7 @@ import {
   withLocusSettings,
 } from "@locus/studio";
 import { and, count, eq, gte, inArray, isNull, notInArray, sum } from "drizzle-orm";
+import { ZodError } from "zod";
 import {
   BuilderError,
   type BuilderSession,
@@ -1030,7 +1031,12 @@ export async function siteNames(
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
-      const brief = await readBrief(tenant, id);
+      // One brief that no longer reads (an older format) mustn't hide every other site.
+      const brief = await readBrief(tenant, id).catch((error) => {
+        if (!(error instanceof ZodError)) throw error;
+        console.error("A site's brief couldn't be read", { siteId: id, error });
+        return null;
+      });
       if (brief) names.set(id, brief.name);
     }
   } finally {
