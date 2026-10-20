@@ -34,7 +34,7 @@ docker build -f apps/agent/Dockerfile -t locus-agent .
 |---|---|
 | `LOCUS_CONTROL_DB_URL`, `LOCUS_CONTROL_DB_TOKEN` | The control database, as the web app's |
 | `BETTER_AUTH_URL`, `BETTER_AUTH_SECRET` | As the web app's; the secret must match to read its sessions |
-| `LOCUS_SECRETS_KEY` | Opens agencies' sealed GoHighLevel tokens, as the web app's |
+| `LOCUS_SECRETS_KEY` | Opens agencies' sealed GoHighLevel tokens, as the web app's. It must be the web app's own current key: app-style sites' bigger uploads come here with tickets the web app signs with a key derived from it |
 | `TURSO_ORG`, `TURSO_GROUP`, `TURSO_API_TOKEN` | Mint tokens for clients' databases |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | Renew agencies' GoHighLevel grants |
 | `LOCUS_AGENT_MODEL` | The model, as a Mastra model id, e.g. `anthropic/claude-sonnet-5-5`; or `scripted` for a fixed reply with no AI provider (for staging: no key, no cost). With `scripted`, the message `sandbox check` in the Site builder mode runs `node --version` in the chosen site's sandbox, and chats recorded from a real model in `fixtures/recorded/` replay first, except chats that change data, since their writes name the fake sub-account recording used (see `scripts/record-chats.ts`) |
@@ -45,3 +45,9 @@ docker build -f apps/agent/Dockerfile -t locus-agent .
 | `PORT` | Defaults to 3000 |
 
 `GET /health` answers `ok`.
+
+`PUT /site-files/upload` takes app-style sites' files over 4 MB (up to 25 MB, videos up to
+500 MB), sent by members' browsers with a one-time ticket in `x-locus-ticket`, and streams them
+to the client's Media Library; at most four at once, each through a temporary file. The web
+app offers it when its `LOCUS_AGENT_URL` points here. Uploads can take many minutes, so a proxy
+in front of this server must not cut requests short or limit their size.
