@@ -16,6 +16,7 @@ export {
   SITE_KINDS,
   writeBrief,
 } from "./brief.ts";
+export { type SitePage, sitePages } from "./pages.ts";
 export {
   isTextPath,
   MAX_FILE_BYTES,
