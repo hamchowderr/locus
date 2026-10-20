@@ -15,7 +15,9 @@ if (deps.model === SCRIPTED) {
 }
 const host = createHost(deps);
 const port = Number(process.env.PORT ?? 3000);
-serve({ fetch: host.fetch, port }, () => {
+// Node ends a request after five minutes by default; a member's 500 MB video on a slow line
+// takes longer. Headers still have to arrive within Node's own minute.
+serve({ fetch: host.fetch, port, serverOptions: { requestTimeout: 60 * 60_000 } }, () => {
   console.info(`Locus agent listening on ${port}`);
 });
 

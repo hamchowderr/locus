@@ -19,6 +19,9 @@ function createWindow(): void {
   // Only the Locus origin renders inside the app; everything else opens in the browser.
   const origin = new URL(LOCUS_URL).origin;
   window.webContents.setWindowOpenHandler(({ url }) => {
+    // A blank window is a page preparing a pop-up (Connect on the Apps page); refusing it
+    // makes the page fall back to its own tab instead of opening a stray blank browser tab.
+    if (url === "about:blank") return { action: "deny" };
     void shell.openExternal(url);
     return { action: "deny" };
   });

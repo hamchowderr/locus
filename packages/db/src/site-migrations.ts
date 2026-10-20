@@ -44,6 +44,17 @@ export const SITE_FILE_TYPES = [
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 ] as const;
 
+/** Videos a site's member may upload: only the way that bypasses Vercel (`MAX_SITE_VIDEO_BYTES`). */
+export const SITE_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"] as const;
+
+/**
+ * The largest picture or document a member may send straight to Locus's own server (the agent
+ * server, which no Vercel request limit applies to): HighLevel's own limit for a file.
+ */
+export const MAX_LARGE_SITE_FILE_BYTES = 25 * 1024 * 1024;
+/** HighLevel's limit for a video. */
+export const MAX_SITE_VIDEO_BYTES = 500 * 1024 * 1024;
+
 const FILE = /^db\/migrations\/(\d{4}_[a-z0-9_]+)\.sql$/;
 
 export interface SiteMigration {

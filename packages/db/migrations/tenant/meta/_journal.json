@@ -29,6 +29,13 @@
       "when": 1792053244864,
       "tag": "0003_site_lead_day",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792519271461,
+      "tag": "0004_app_access",
+      "breakpoints": true
     }
   ]
 }
