@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   type AuthorizedClient,
   assertAuthorizedClient,
@@ -20,9 +20,10 @@ import {
   siteDbName,
   siteMigrationsIn,
   type TenantProvisioner,
+  TursoError,
 } from "@locus/db";
-import { site, siteBackend } from "@locus/db/control";
-import { and, eq } from "drizzle-orm";
+import { auditLog, site, siteBackend } from "@locus/db/control";
+import { and, eq, sql } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { audit } from "./sites.ts";
 import { hostGrant, refused, type VercelCallDeps, vercel } from "./vercel-api.ts";
@@ -77,20 +78,41 @@ export async function enableSiteBackend(
 ): Promise<SiteBackendRow> {
   assertAuthorizedClient(client);
   await requireAgencyManager(deps.db, ctx);
-  const row = await clientSite(deps.db, client, input.siteId);
+  const { row, created } = await provisionSiteBackend(deps, client, input.siteId);
+  if (created) {
+    await audit(deps.db, ctx, client, "site.backend.enable", {
+      siteId: row.siteId,
+      dbName: row.tursoDbName,
+    });
+  }
+  return row;
+}
+
+/** The site's database, made (and registered) if it has none yet. */
+async function provisionSiteBackend(
+  deps: SiteBackendDeps,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<{ row: SiteBackendRow; created: boolean }> {
+  const row = await clientSite(deps.db, client, siteId);
   const existing = await siteBackendOf(deps.db, client, row.id);
-  if (existing) return existing;
+  if (existing) return { row: existing, created: false };
 
   const name = siteDbName(row.id);
   let made: { dbName: string; hostname: string };
   try {
-    made = await deps.provisioner.createDatabase(name);
+    try {
+      made = await deps.provisioner.createDatabase(name);
+    } catch (error) {
+      // The name comes from the site id, so the database may already exist: made by a request
+      // that died before registering it, or by one running right now. Register it either way.
+      const found = await deps.provisioner.findDatabase(name);
+      if (!found) throw error;
+      made = found;
+    }
   } catch (error) {
-    // The name comes from the site id, so the database may already exist: made by a request
-    // that died before registering it, or by one running right now. Register it either way.
-    const found = await deps.provisioner.findDatabase(name);
-    if (!found) throw error;
-    made = found;
+    if (error instanceof TursoError) throw new ConnectError(NOT_MADE);
+    throw error;
   }
   const { dbName, hostname } = made;
   let created: SiteBackendRow | undefined;
@@ -113,10 +135,9 @@ export async function enableSiteBackend(
   if (!created) {
     const winner = await siteBackendOf(deps.db, client, row.id);
     if (!winner) throw new ConnectError("The site's database wasn't saved. Try again.");
-    return winner;
+    return { row: winner, created: false };
   }
-  await audit(deps.db, ctx, client, "site.backend.enable", { siteId: row.id, dbName });
-  return created;
+  return { row: created, created: true };
 }
 
 /**
@@ -226,36 +247,105 @@ export interface SiteReleaseDeps extends VercelCallDeps {
 const MIGRATE_TTL = "10m";
 
 const NO_PROVISIONER = "This site's database isn't set up on this deployment yet.";
+const NOT_MADE = "Locus couldn't make the site's database. Try again.";
+const REMOVED =
+  "This site's database was removed, so Locus won't make a new one on its own. Take the " +
+  "db/migrations files out to publish it as a plain website.";
 
 /**
  * Applies the version's new database changes (its `db/migrations/` files) to the site's own
  * database, before the version is sent to GitHub: a change that fails stops the publish, so
- * the live site never runs code that expects tables its database lacks. Does nothing for a
- * plain website. Anyone who may work on the client may publish; the token is minted after
- * that check, names only the site's database and lives ten minutes.
+ * the live site never runs code that expects tables its database lacks. The first version
+ * with migrations gives the site its database (the agent made it an app-style site in the
+ * chat). Does nothing for a plain website. Anyone who may work on the client may publish; the
+ * token is minted after that check, names only the site's database and lives ten minutes.
  */
 export async function migrateSiteBackend(
   deps: SiteReleaseDeps,
   client: AuthorizedClient,
   input: { siteId: string; files: { path: string; content: string | Uint8Array }[] },
 ): Promise<{ applied: string[] } | null> {
-  const row = await siteBackendOf(deps.db, client, input.siteId);
-  if (!row) return null;
+  assertAuthorizedClient(client);
+  let migrations: ReturnType<typeof siteMigrationsIn>;
+  try {
+    migrations = siteMigrationsIn(input.files);
+  } catch (error) {
+    throw migrationRefusal(error);
+  }
+  let row = await siteBackendOf(deps.db, client, input.siteId);
+  if (!row && migrations.length === 0) return null;
   if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
+  if (!row) {
+    // Removing a site's database is an owner's choice; a later save doesn't quietly undo it.
+    if (await backendRemoved(deps.db, client, input.siteId)) throw new ConnectError(REMOVED);
+    const provisioned = await provisionSiteBackend(
+      { db: deps.db, provisioner: deps.provisioner },
+      client,
+      input.siteId,
+    );
+    row = provisioned.row;
+    if (provisioned.created) {
+      await deps.db.insert(auditLog).values({
+        id: randomUUID(),
+        organizationId: client.location.organizationId,
+        // Made by publishing the version that first had migrations; the member who published
+        // it is in the detail.
+        actorUserId: null,
+        locationId: client.location.id,
+        action: "site.backend.enable",
+        detail: {
+          siteId: row.siteId,
+          dbName: row.tursoDbName,
+          by: "publish",
+          memberId: client.memberId,
+        },
+      });
+    }
+  }
   const token = await deps.provisioner.mintToken(row.tursoDbName, { ttl: MIGRATE_TTL });
   const db = openSiteDb(deps.provisioner.url(row.tursoDbHostname), token);
   try {
-    return await applySiteMigrations(db, siteMigrationsIn(input.files));
+    return await applySiteMigrations(db, migrations);
   } catch (error) {
-    if (error instanceof SiteMigrationError) {
-      throw new ConnectError(
-        `The site's database change didn't apply: ${error.message.replace(/\.?$/, ".")} Changes that already ran stay as they are, even if their publish failed; fix this with a new migration file, and keep changes additive so the live site's current code still works.`,
-      );
-    }
-    throw error;
+    throw migrationRefusal(error);
   } finally {
     db.close();
   }
+}
+
+/** Whether an owner or admin removed the site's database (and no one turned it on again). */
+async function backendRemoved(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.locationId, client.location.id),
+        eq(auditLog.action, "site.backend.remove"),
+        sql`json_extract(${auditLog.detail}, '$.siteId') = ${siteId}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
+/** A migration's own fault, for the person and the agent; anything else as it was. */
+function migrationRefusal(error: unknown): unknown {
+  if (!(error instanceof SiteMigrationError)) return error;
+  // A failed migration rolled back and never ran, so the fix is in that file itself; one that
+  // ran stays frozen, and a misnamed file only needs renaming.
+  const fix = / failed: /.test(error.message)
+    ? " That file didn't run, so fix it in place."
+    : / was changed after it ran\./.test(error.message)
+      ? ""
+      : " Rename the file to fix it.";
+  return new ConnectError(
+    `The site's database change didn't apply: ${error.message.replace(/\.?$/, ".")}${fix} Keep changes additive so the live site's current code still works.`,
+  );
 }
 
 type EnvVar = { id?: string; key?: string; target?: string[] | string; gitBranch?: string | null };
