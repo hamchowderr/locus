@@ -30,6 +30,22 @@ describe("visual edit style classes", () => {
     expect(setGroup("", PADDING, "p-8")).toBe("p-8");
   });
 
+  it("leaves classes that only look like colours alone", () => {
+    expect(setGroup("bg-[url('/hero.jpg')] bg-cover p-4", BACKGROUND, "bg-primary")).toBe(
+      "bg-[url('/hero.jpg')] bg-cover p-4 bg-primary",
+    );
+    expect(setGroup("bg-top bg-no-repeat bg-white", BACKGROUND, "bg-black")).toBe(
+      "bg-top bg-no-repeat bg-black",
+    );
+    expect(setGroup("text-[15px] text-muted-foreground", TEXT_COLOR, "text-primary")).toBe(
+      "text-[15px] text-primary",
+    );
+    expect(setGroup("text-shadow-lg text-white", TEXT_COLOR, "text-black")).toBe(
+      "text-shadow-lg text-black",
+    );
+    expect(currentOf("bg-[#ff0000] p-2", BACKGROUND)).toBe("bg-[#ff0000]");
+  });
+
   it("offers text styles only where there is text", () => {
     expect(groupsFor({ text: "Hi", tag: "div" })).toContain(TEXT_COLOR);
     expect(groupsFor({ text: null, tag: "img" })).not.toContain(TEXT_COLOR);

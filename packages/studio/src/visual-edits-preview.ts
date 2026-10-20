@@ -15,7 +15,16 @@ export { VISUAL_EDITS_MESSAGE } from "./visual-edits-protocol.ts";
  * the script itself is added under `public/__locus/`. The draft itself is never changed.
  * A draft file at the script's path is replaced: the preview's copy must be Locus's own.
  */
-export function previewFiles(files: SiteFile[]): SiteFile[] {
+export function previewFiles(
+  files: SiteFile[],
+  options: {
+    /**
+     * The Locus web app's origins: the only pages the script takes orders from or reports to.
+     * With none, the script is still added but never answers anyone.
+     */
+    editorOrigins?: string[];
+  } = {},
+): SiteFile[] {
   let loadsScript = false;
   const out = files
     .filter((file) => file.path !== VISUAL_EDITS_SCRIPT_PATH)
@@ -29,7 +38,12 @@ export function previewFiles(files: SiteFile[]): SiteFile[] {
       return content === file.content ? file : { path: file.path, content };
     });
   // Only a layout that loads it needs the script (a draft without one has nothing to edit).
-  if (loadsScript) out.push({ path: VISUAL_EDITS_SCRIPT_PATH, content: VISUAL_EDITS_SCRIPT });
+  if (loadsScript) {
+    out.push({
+      path: VISUAL_EDITS_SCRIPT_PATH,
+      content: visualEditsScript(options.editorOrigins ?? []),
+    });
+  }
   return out;
 }
 
@@ -69,20 +83,36 @@ function withScriptTag(code: string): string {
   return `${code.slice(0, at)}<script src="${SCRIPT_URL}" async />${code.slice(at)}`;
 }
 
+/** The origin of a URL, or null when it isn't an http(s) one. */
+export function editorOrigin(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.origin : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Runs inside the preview page. It does nothing until the Locus editor framing the page sends
  * `enable`; then hovering outlines elements, a click selects one (Shift or Ctrl/Cmd adds more),
  * and a double-click edits plain text in place. It only reports what was clicked and shows
- * changes the editor sends; saving happens in Locus. It holds no credentials and only talks
- * to the window that framed it, at the origin that first spoke to it.
+ * changes the editor sends (text and a few attributes, never anything that runs); saving
+ * happens in Locus. It holds no credentials and only talks to the window that framed it, and
+ * only when that window is one of `origins` (the Locus web app).
  */
-export const VISUAL_EDITS_SCRIPT = `(function () {
+export function visualEditsScript(origins: string[]): string {
+  return `(function () {
   if (window.__locusVisualEdits || window.parent === window) return;
   window.__locusVisualEdits = true;
   var SRC = ${JSON.stringify(SOURCE_ATTR)};
   var MSG = ${JSON.stringify(VISUAL_EDITS_MESSAGE)};
+  var ORIGINS = ${JSON.stringify(origins)};
+  var SHOWN = { src: 1, alt: 1, href: 1, className: 1, placeholder: 1, newTab: 1 };
   var parentOrigin = null;
   var enabled = false;
+  var frameLoop = 0;
   var selected = [];
   var hovered = null;
   var editing = null;
@@ -112,21 +142,32 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
     return text.trim() ? text : null;
   }
 
+  // The image's own address: next/image serves it through /_next/image?url=...
+  function imageSrc(el) {
+    var src = el.getAttribute("src");
+    if (!src) return src;
+    try {
+      var u = new URL(src, location.href);
+      if (u.origin === location.origin && u.pathname === "/_next/image" && u.searchParams.get("url")) {
+        return u.searchParams.get("url");
+      }
+    } catch (e) {}
+    return src;
+  }
+
   function info(el) {
     var link = el.closest("a");
-    var r = el.getBoundingClientRect();
     return {
       target: el.getAttribute(SRC),
       tag: el.tagName.toLowerCase(),
       text: plainText(el),
-      className: typeof el.className === "string" ? el.className : el.getAttribute("class") || "",
-      src: el.tagName === "IMG" ? el.getAttribute("src") : null,
+      className: el.getAttribute("class") || "",
+      src: el.tagName === "IMG" ? imageSrc(el) : null,
       alt: el.tagName === "IMG" ? el.getAttribute("alt") || "" : null,
       href: el.tagName === "A" ? el.getAttribute("href") : null,
       newTab: el.tagName === "A" ? el.getAttribute("target") === "_blank" : null,
       placeholder: el.hasAttribute("placeholder") ? el.getAttribute("placeholder") : null,
-      inLink: !!link && link !== el,
-      rect: { x: r.left, y: r.top, width: r.width, height: r.height }
+      inLink: !!link && link !== el
     };
   }
 
@@ -147,19 +188,20 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
   }
 
   function draw() {
-    if (!enabled) return;
+    frameLoop = 0;
+    if (!enabled || !layer) return;
     if (location.pathname !== path) {
       path = location.pathname;
       selected = [];
-      post({ type: "ready", path: path });
+      post({ type: "ready", path: path, theme: theme() });
       report();
     }
     layer.innerHTML = "";
-    if (hovered && selected.indexOf(hovered) < 0) place(box("#3b82f6", true), hovered);
+    if (hovered && selected.indexOf(hovered) < 0 && hovered.isConnected) place(box("#3b82f6", true), hovered);
     for (var i = 0; i < selected.length; i++) {
       if (selected[i].isConnected) place(box("#2563eb", false), selected[i]);
     }
-    requestAnimationFrame(draw);
+    frameLoop = requestAnimationFrame(draw);
   }
 
   function report() {
@@ -174,7 +216,7 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
     layer.setAttribute("data-locus-overlay", "");
     layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147483647;";
     document.documentElement.appendChild(layer);
-    requestAnimationFrame(draw);
+    if (!frameLoop) frameLoop = requestAnimationFrame(draw);
   }
 
   function disable() {
@@ -182,6 +224,8 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
     enabled = false;
     selected = [];
     hovered = null;
+    if (frameLoop) cancelAnimationFrame(frameLoop);
+    frameLoop = 0;
     if (layer) layer.remove();
     layer = null;
   }
@@ -213,6 +257,19 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
     report();
   }
 
+  function insideEditing(e) {
+    return editing && editing.contains(e.target);
+  }
+
+  // In select mode the page's own controls (menus, dialogs, links, forms) don't react.
+  ["pointerdown", "mousedown", "pointerup", "mouseup", "touchstart"].forEach(function (type) {
+    document.addEventListener(type, function (e) {
+      if (!enabled || insideEditing(e)) return;
+      e.stopPropagation();
+      if (type === "mousedown") e.preventDefault();
+    }, true);
+  });
+
   document.addEventListener("mousemove", function (e) {
     if (!enabled) return;
     hovered = located(e.target);
@@ -220,7 +277,7 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
 
   document.addEventListener("click", function (e) {
     if (!enabled) return;
-    if (editing && editing.contains(e.target)) { e.preventDefault(); return; }
+    if (insideEditing(e)) { e.preventDefault(); return; }
     e.preventDefault();
     e.stopPropagation();
     finishEditing(false);
@@ -281,32 +338,43 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
     }
   }
 
-  // Shows a change before it is saved. Text changes only the selected copy (one element in a
-  // list can render many times); attributes change every copy, as saving them would.
+  // Shows a change before it is saved. Text changes the selected copy (one element in a list
+  // can render many times), or after a reload the copy still showing the old text; attributes
+  // change every copy, as saving them would. Only the editor's own fields can be set.
   function show(change) {
+    if (typeof change.target !== "string") return;
     if (change.kind === "text") {
-      selected.forEach(function (el) {
-        if (el.getAttribute(SRC) === change.target && plainText(el) !== null) el.textContent = change.value;
-      });
+      var value = String(change.value);
+      var picked = selected.filter(function (el) { return el.getAttribute(SRC) === change.target; });
+      if (picked.length === 0) {
+        each(change.target, function (el) {
+          if (picked.length === 0 && plainText(el) !== null && el.textContent === change.from) picked.push(el);
+        });
+      }
+      picked.forEach(function (el) { if (plainText(el) !== null) el.textContent = value; });
       return;
     }
+    if (!SHOWN.hasOwnProperty(change.name)) return;
     each(change.target, function (el) {
-      if (change.name === "className") el.setAttribute("class", change.value);
+      if (change.name === "className") el.setAttribute("class", String(change.value));
       else if (change.name === "newTab") {
         if (change.value) el.setAttribute("target", "_blank"); else el.removeAttribute("target");
-      } else {
-        el.setAttribute(change.name, change.value);
+      } else if (change.name === "href" || change.name === "src") {
+        var v = String(change.value).replace(/[\\u0000-\\u0020]/g, "");
+        if (/^[a-z][a-z0-9+.-]*:/i.test(v) && !/^(https?|mailto|tel):/i.test(v)) return;
+        el.setAttribute(change.name, String(change.value));
         if (change.name === "src") el.removeAttribute("srcset");
+      } else {
+        el.setAttribute(change.name, String(change.value));
       }
     });
   }
 
   window.addEventListener("message", function (e) {
-    if (e.source !== window.parent) return;
+    if (e.source !== window.parent || ORIGINS.indexOf(e.origin) < 0) return;
     var data = e.data;
     if (!data || data.source !== MSG) return;
-    if (parentOrigin === null) parentOrigin = e.origin;
-    if (e.origin !== parentOrigin) return;
+    parentOrigin = e.origin;
     if (data.type === "hello") post({ type: "ready", path: location.pathname, theme: theme() });
     else if (data.type === "enable") { enable(); report(); }
     else if (data.type === "disable") disable();
@@ -318,3 +386,4 @@ export const VISUAL_EDITS_SCRIPT = `(function () {
   window.parent.postMessage({ source: MSG, type: "announce" }, "*");
 })();
 `;
+}

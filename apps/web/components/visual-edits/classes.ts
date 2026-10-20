@@ -16,15 +16,25 @@ export interface StyleGroup {
   options: { value: string; label: string }[];
 }
 
-const colorOf = (prefix: string) => (cls: string) => {
+/** An arbitrary value (`[...]`) that is a colour, not a size, image or position. */
+const ARBITRARY_COLOR =
+  /^\[(#[0-9a-f]{3,8}|(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch|hwb|color)\(.*\)|color:.*|var\(--color.*\))\]$/i;
+
+/** Utilities that share a colour's prefix but aren't colours. */
+const NOT_COLOR: Record<string, RegExp> = {
+  text: /^text-(shadow(-.*)?|ellipsis|clip|wrap|nowrap|balance|pretty)$/,
+  bg: /^bg-(none|gradient.*|linear.*|radial.*|conic.*|clip-.*|origin-.*|fixed|local|scroll|auto|cover|contain|repeat.*|no-repeat|space|round|blend-.*|size-.*|position-.*|top.*|bottom.*|left.*|right.*|center|inherit|current|transparent)$/,
+};
+
+const colorOf = (prefix: "text" | "bg") => (cls: string) => {
   if (!cls.startsWith(`${prefix}-`)) return false;
   const rest = cls.slice(prefix.length + 1);
   if (prefix === "text" && (SIZES.includes(rest) || ALIGN.includes(rest))) return false;
   if (prefix === "text" && TEXT_UTILITIES.includes(rest)) return false;
-  return (
-    /^(\[[^\]]+\]|[a-z]+(-[a-z]+)?(-\d{2,3})?)(\/\d{1,3})?$/.test(rest) &&
-    !/^(none|auto)$/.test(rest)
-  );
+  if (NOT_COLOR[prefix]?.test(cls)) return false;
+  const value = rest.replace(/\/(\d{1,3}|\[[^\]]+\])$/, "");
+  if (value.startsWith("[")) return ARBITRARY_COLOR.test(value);
+  return /^[a-z]+(-[a-z]+)*(-\d{2,3})?$/.test(value);
 };
 
 /** The site's theme colours (CSS variables from `app/globals.css`), then a few fixed ones. */

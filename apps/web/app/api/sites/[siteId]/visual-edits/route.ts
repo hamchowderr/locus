@@ -4,7 +4,7 @@ import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locu
 import { saveVisualEdits } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 
-/** Big enough for a few hundred edits; a body past it is refused unread. */
+/** Big enough for a few hundred edits; a body that says it is bigger is refused unread. */
 const MAX_BODY_BYTES = 512 * 1024;
 
 /**
@@ -20,10 +20,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ sit
   }
   const current = await currentSession();
   if (!current) return Response.json({ error: "Sign in first." }, { status: 401 });
+  const tooMany = () =>
+    Response.json({ error: "That's too many changes at once." }, { status: 413 });
+  if (Number(request.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) return tooMany();
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) {
-    return Response.json({ error: "That's too many changes at once." }, { status: 413 });
-  }
+  if (Buffer.byteLength(raw, "utf8") > MAX_BODY_BYTES) return tooMany();
   let body: unknown;
   try {
     body = JSON.parse(raw);
