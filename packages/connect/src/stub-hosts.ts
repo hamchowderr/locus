@@ -262,6 +262,8 @@ function createStubGitRepos() {
 export function createStubVercel(): typeof fetch {
   /** Domains on the stub project, and whether each is verified. */
   const domains = new Map<string, boolean>();
+  /** Where a domain added with `redirect` sends visitors. */
+  const redirects = new Map<string, string>();
   const created = createStubVercelPublishing();
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const url = new URL(String(input instanceof Request ? input.url : input));
@@ -283,7 +285,7 @@ export function createStubVercel(): typeof fetch {
     }
     return (
       created.handle(url, init?.method ?? "GET", init?.body) ??
-      stubVercelProjects(url, init?.method ?? "GET", init?.body, domains)
+      stubVercelProjects(url, init?.method ?? "GET", init?.body, domains, redirects)
     );
   }) as typeof fetch;
 }
@@ -394,6 +396,7 @@ function stubVercelProjects(
   method: string,
   body: BodyInit | null | undefined,
   domains: Map<string, boolean>,
+  redirects: Map<string, string>,
 ): Response {
   const notFound = json({ error: { code: "not_found", message: "Not found" } }, 404);
   if (url.pathname === "/v10/projects" && method === "GET") {
@@ -424,6 +427,7 @@ function stubVercelProjects(
       name,
       apexName,
       projectId: STUB_VERCEL_PROJECT.id,
+      redirect: redirects.get(name) ?? null,
       verified,
       ...(verified
         ? {}
@@ -440,8 +444,12 @@ function stubVercelProjects(
     };
   };
   if (!rawDomain && method === "POST") {
-    const { name } = JSON.parse(String(body ?? "{}")) as { name: string };
+    const { name, redirect } = JSON.parse(String(body ?? "{}")) as {
+      name: string;
+      redirect?: string;
+    };
     domains.set(name, false);
+    if (redirect) redirects.set(name, redirect);
     return json(shape(name));
   }
   const domain = decodeURIComponent(rawDomain ?? "");
@@ -452,6 +460,7 @@ function stubVercelProjects(
   }
   if (method === "DELETE") {
     domains.delete(domain);
+    redirects.delete(domain);
     return json({});
   }
   return json(shape(domain));

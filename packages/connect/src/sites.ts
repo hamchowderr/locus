@@ -44,7 +44,8 @@ export interface DnsRecord {
   why: "verify" | "point";
 }
 
-export interface DomainStatus {
+/** Where one domain on the site's project stands, and the DNS records still missing. */
+export interface DomainState {
   domain: string;
   /**
    * `verify`: Vercel needs the TXT record before it will use the domain on this project.
@@ -53,6 +54,16 @@ export interface DomainStatus {
    */
   state: "verify" | "point" | "live";
   records: DnsRecord[];
+}
+
+export interface DomainStatus extends DomainState {
+  /**
+   * The other half of an apex/www pair (example.com for www.example.com, and the reverse),
+   * when it is on the project sending visitors to `domain`.
+   */
+  redirect?: DomainState;
+  /** That other half, when it isn't on the project yet and Locus can add it. */
+  partner?: string;
 }
 
 // Vercel's documented defaults, used when the config call recommends nothing.
@@ -77,6 +88,16 @@ export function normalizeDomain(input: string): string {
     throw new ConnectError("That's already a Vercel address. Enter the client's own domain.");
   }
   return domain;
+}
+
+/**
+ * The other half of an apex/www pair: `www.example.com` for `example.com` and the reverse.
+ * Null for any other name (`shop.example.com`), which stands alone.
+ */
+export function pairedDomain(domain: string, apex: string): string | null {
+  if (domain === apex) return `www.${apex}`;
+  if (domain === `www.${apex}`) return apex;
+  return null;
 }
 
 /** At most this many pages of 100 projects are listed for the picker. */
@@ -201,8 +222,11 @@ async function clientSite(
 }
 
 /**
- * Adds a domain to the site's Vercel project and keeps it on the site. Owners and admins only.
- * A site has one custom domain; remove it to use another.
+ * Adds a domain to the site's Vercel project and keeps it on the site, with its apex/www
+ * partner sending visitors to it (`pairedDomain`). Owners and admins only. A site has one
+ * custom domain; remove it to use another. Asking again for the site's own domain adds a
+ * partner that is still missing, and says why if Vercel refuses it; on the first add, a
+ * refused partner is only offered again (`DomainStatus.partner`).
  */
 export async function attachSiteDomain(
   deps: SiteDeps,
@@ -232,13 +256,89 @@ export async function attachSiteDomain(
       // Vercel refuses a domain that is already on this project, which is where we want it:
       // accept the refusal only if the project really has the domain.
       const path = projectPath(row.hostProjectId, `/domains/${encodeURIComponent(domain)}`);
-      const existing = await vercel(deps, grant, "GET", path);
+      const existing = await vercel<ProjectDomain>(deps, grant, "GET", path);
       if (!existing.ok) throw refused(added, "Vercel didn't add that domain. Try again.");
+      // Already there only to send visitors elsewhere: that other domain is the site's.
+      const elsewhere = existing.body.redirect;
+      if (elsewhere) {
+        throw new ConnectError(
+          `${domain} already sends visitors to ${elsewhere}. Connect ${elsewhere} instead.`,
+        );
+      }
     }
     await deps.db.update(site).set({ customDomain: domain }).where(eq(site.id, row.id));
     await audit(deps.db, ctx, client, "site.domain.add", { siteId: row.id, domain });
   }
+  const partner = await addPartner(deps, grant, row.hostProjectId, domain);
+  if (partner.added) {
+    await audit(deps.db, ctx, client, "site.domain.add", {
+      siteId: row.id,
+      domain: partner.added,
+      redirectTo: domain,
+    });
+  }
+  // Asked again for its own domain: the person wants the partner, so say why it wasn't added.
+  if (partner.refused && row.customDomain === domain) throw partner.refused;
   return domainStatus(deps, grant, row.hostProjectId, domain);
+}
+
+/**
+ * Puts the domain's apex/www partner on the project, sending visitors to the domain with a
+ * permanent redirect (308). Leaves alone a partner already on the project, whatever it does.
+ */
+async function addPartner(
+  deps: SiteDeps,
+  grant: VercelGrant,
+  projectId: string,
+  domain: string,
+): Promise<{ added?: string; refused?: ConnectError }> {
+  let partner: string | null;
+  try {
+    partner = partnerOf(domain, await projectDomain(deps, grant, projectId, domain));
+    if (!partner || (await projectDomain(deps, grant, projectId, partner))) return {};
+  } catch (error) {
+    // Vercel didn't answer about the pair: the domain itself is attached all the same.
+    if (error instanceof ConnectError) return { refused: error };
+    throw error;
+  }
+  const added = await vercel(
+    deps,
+    grant,
+    "POST",
+    `/v10/projects/${encodeURIComponent(projectId)}/domains`,
+    { body: { name: partner, redirect: domain, redirectStatusCode: 308 } },
+  );
+  if (added.status === 403 || added.status === 409) {
+    // Vercel's "you don't have access to the domain" or "already in use", not our connection.
+    const why = added.body.error?.message;
+    return {
+      refused: new ConnectError(
+        `Vercel didn't add ${partner}: it's on another Vercel project or account.${why ? ` (${why})` : ""}`,
+      ),
+    };
+  }
+  if (!added.ok) {
+    return { refused: refused(added, `Vercel didn't add ${partner}. Try again.`) };
+  }
+  return { added: partner };
+}
+
+/** The domain's apex/www partner, going by the apex Vercel gives for it. */
+const partnerOf = (domain: string, found: ProjectDomain | null) =>
+  found?.apexName ? pairedDomain(domain, found.apexName) : null;
+
+/** The domain as the project has it; null when it isn't on the project. */
+async function projectDomain(
+  deps: SiteDeps,
+  grant: VercelGrant,
+  projectId: string,
+  domain: string,
+): Promise<ProjectDomain | null> {
+  const path = projectPath(projectId, `/domains/${encodeURIComponent(domain)}`);
+  const got = await vercel<ProjectDomain>(deps, grant, "GET", path);
+  if (got.status === 404) return null;
+  if (!got.ok) throw refused(got, "Vercel didn't show the domain. Try again.");
+  return got.body;
 }
 
 /**
@@ -260,23 +360,48 @@ export async function siteDomainStatus(
 interface ProjectDomain {
   name?: string;
   apexName?: string;
+  /** Where the domain sends visitors, when it redirects. */
+  redirect?: string | null;
   verified?: boolean;
   verification?: { type: string; domain: string; value: string }[];
 }
 
+/** The site's domain, with its apex/www partner: redirecting to it, or still to add. */
 async function domainStatus(
   deps: SiteDeps,
   grant: VercelGrant,
   projectId: string,
   domain: string,
 ): Promise<DomainStatus> {
-  const path = projectPath(projectId, `/domains/${encodeURIComponent(domain)}`);
-  const got = await vercel<ProjectDomain>(deps, grant, "GET", path);
-  if (got.status === 404) {
+  const current = await projectDomain(deps, grant, projectId, domain);
+  if (!current) {
     throw new ConnectError(`${domain} is no longer on this site's Vercel project. Remove it here.`);
   }
-  if (!got.ok) throw refused(got, "Vercel didn't show the domain. Try again.");
-  let current = got.body;
+  const status: DomainStatus = await domainState(deps, grant, projectId, domain, current);
+  const partner = partnerOf(domain, current);
+  if (!partner) return status;
+  try {
+    const other = await projectDomain(deps, grant, projectId, partner);
+    if (!other) return { ...status, partner };
+    // On the project but serving something else (another site's address, say): not this pair's.
+    if (other.redirect !== domain) return status;
+    return { ...status, redirect: await domainState(deps, grant, projectId, partner, other) };
+  } catch (error) {
+    // The pair is extra: a failed lookup leaves the domain's own status standing.
+    if (error instanceof ConnectError) return status;
+    throw error;
+  }
+}
+
+async function domainState(
+  deps: SiteDeps,
+  grant: VercelGrant,
+  projectId: string,
+  domain: string,
+  found: ProjectDomain,
+): Promise<DomainState> {
+  const path = projectPath(projectId, `/domains/${encodeURIComponent(domain)}`);
+  let current = found;
   if (!current.verified) {
     // A failed check is the normal answer until the TXT record is in place.
     const checked = await vercel<ProjectDomain>(deps, grant, "POST", `${path}/verify`);
@@ -345,6 +470,31 @@ export async function removeSiteDomain(
   const row = await clientSite(deps, client, siteId);
   if (!row.customDomain) return;
   const grant = await hostGrant(deps, organizationId);
+  // Its partner first, but only one Locus would have added: redirecting to this domain.
+  const primary = await projectDomain(deps, grant, row.hostProjectId, row.customDomain);
+  // Gone from the project already: the partner is still found by its name alone.
+  const partner = primary
+    ? partnerOf(row.customDomain, primary)
+    : row.customDomain.startsWith("www.")
+      ? row.customDomain.slice(4)
+      : `www.${row.customDomain}`;
+  const other = partner ? await projectDomain(deps, grant, row.hostProjectId, partner) : null;
+  if (partner && other?.redirect === row.customDomain) {
+    const gone = await vercel(
+      deps,
+      grant,
+      "DELETE",
+      projectPath(row.hostProjectId, `/domains/${encodeURIComponent(partner)}`),
+    );
+    if (!gone.ok && gone.status !== 404) {
+      throw refused(gone, `Vercel didn't remove ${partner}. Try again.`);
+    }
+    await audit(deps.db, ctx, client, "site.domain.remove", {
+      siteId: row.id,
+      domain: partner,
+      redirectTo: row.customDomain,
+    });
+  }
   const path = projectPath(row.hostProjectId, `/domains/${encodeURIComponent(row.customDomain)}`);
   const removed = await vercel(deps, grant, "DELETE", path);
   // Already gone from Vercel: still take it off the site.
