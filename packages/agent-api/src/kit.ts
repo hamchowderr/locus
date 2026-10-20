@@ -18,7 +18,7 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { CONTROLLER_ID, openClientSession } from "@locus/harness";
+import { CONTROLLER_ID, openClientSession, TAINT_KEY } from "@locus/harness";
 import type { AgentController, Session } from "@mastra/core/agent-controller";
 import { RequestContext } from "@mastra/core/request-context";
 import { createControllerRoutes } from "./mastra/routes/controller.ts";
@@ -84,7 +84,14 @@ export function kitRoutes(controller: AgentController) {
     if (!threads) return undefined;
     const { identity } = await getSession();
     const work = await threads.sessionForThread(threadId, identity.getResourceId());
-    return work && withHostContext(work, callerOf().context);
+    if (!work) return undefined;
+    // A thread started by a run that read untrusted content stays tainted: every change in it
+    // waits for a person, whoever's reply or answer starts the run.
+    const untrusted = (await threads.threadInfo(threadId))?.untrusted === true;
+    return withHostContext(work, {
+      ...callerOf().context,
+      ...(untrusted ? { [TAINT_KEY]: true } : {}),
+    });
   };
   const deps: ChatServerDeps = {
     getSession,
