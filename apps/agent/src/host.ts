@@ -29,7 +29,14 @@ import {
   type SiteBuilderDeps,
 } from "@locus/builder/host";
 import { type ConnectDeps, clientGhlSession, siteCrm } from "@locus/connect";
-import { type ControlDb, DbSecretStore, openControlDb, provisionerFromEnv } from "@locus/db";
+import {
+  type ControlDb,
+  DbSecretStore,
+  openControlDb,
+  provisionerFromEnv,
+  readAppAccess,
+  tenantDbOver,
+} from "@locus/db";
 import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
 import { type AppConnector, createComposioConnector, createLocusController } from "@locus/harness";
@@ -338,28 +345,27 @@ export function createHost({
     },
     controllerFor: async ({ clientId, locationId }) => {
       const { location } = await anyAuthorized(clientId);
+      // The client's own database, with a token naming only it: Mastra's storage, and the
+      // client's settings for its apps.
+      const clientDb = refreshingClient(
+        async () =>
+          createClient({
+            url: connect.provisioner.url(location.tursoDbHostname),
+            authToken: await mintClientDbToken(connect.provisioner, await anyAuthorized(clientId), {
+              ttl: DB_TOKEN_TTL,
+            }),
+          }),
+        {
+          renewMs: DB_TOKEN_RENEW_MS,
+          // Nobody may open the client any more: stop using the token it still holds.
+          revoked: (error) => error instanceof ClientAccessDenied,
+        },
+      );
       const storage = new LibSQLStore({
         id: `client-${location.id}`,
-        client: refreshingClient(
-          async () =>
-            createClient({
-              url: connect.provisioner.url(location.tursoDbHostname),
-              authToken: await mintClientDbToken(
-                connect.provisioner,
-                await anyAuthorized(clientId),
-                {
-                  ttl: DB_TOKEN_TTL,
-                },
-              ),
-            }),
-          {
-            renewMs: DB_TOKEN_RENEW_MS,
-            // Nobody may open the client any more: stop using the token it still holds.
-            revoked: (error) => error instanceof ClientAccessDenied,
-          },
-          // Mastra types its client as its own SQLite interface, which libSQL's matches at
-          // runtime but not under exactOptionalPropertyTypes.
-        ) as unknown as StoreClient,
+        // Mastra types its client as its own SQLite interface, which libSQL's matches at
+        // runtime but not under exactOptionalPropertyTypes.
+        client: clientDb as unknown as StoreClient,
       });
       /** The staff check for the session a run acts for. */
       const runClient = async (requestContext?: { get: (key: string) => unknown }) => {
@@ -388,6 +394,7 @@ export function createHost({
         : null;
       // One connector per client, so its Composio session is reused across runs.
       const clientApps = apps ? apps(clientId) : null;
+      const appSettings = tenantDbOver(clientDb);
       // The main chat hands longer work to threads of their own (`start_thread`), which run in
       // the background and report back. Its result is the new thread's id and title only.
       const workThreads = clientWorkThreads(storage);
@@ -403,7 +410,9 @@ export function createHost({
               // The same staff check as GHL, before any app is reached.
               apps: async (requestContext) => {
                 await runClient(requestContext);
-                return clientApps;
+                // How the client's owners let the chat use each app, read on every call, so
+                // turning an app off on the Apps page takes effect on the chat's next step.
+                return { ...clientApps, access: () => readAppAccess(appSettings) };
               },
             }
           : {}),
