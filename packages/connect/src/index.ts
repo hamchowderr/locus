@@ -70,6 +70,14 @@ export {
   sitesWithBackend,
 } from "./site-backend.ts";
 export {
+  restoreSiteBackend,
+  SITE_RESTORE_WINDOW_MS,
+  type SiteRestoreDeps,
+  type SiteRestoreState,
+  siteRestoreState,
+  undoSiteBackendRestore,
+} from "./site-backend-restore.ts";
+export {
   BOOKING_LIMITS,
   type BookingInput,
   bookSiteAppointment,
