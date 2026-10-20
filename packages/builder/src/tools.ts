@@ -109,6 +109,8 @@ function writtenContents(writes: Map<string, string>): string {
 }
 
 const IMAGE_EXT = /\.(png)$/i;
+/** How long generate_image waits for the client's Media Library before answering without it. */
+export const MEDIA_LIBRARY_TIMEOUT_MS = 10_000;
 
 const FILE_ACTIONS = ["list", "read", "write", "edit", "delete"] as const;
 const CRM_ACTIONS = [
@@ -781,11 +783,57 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     ),
   });
 
+  /**
+   * Keeps a copy of a generated image in the client's own Media Library (their storage, not
+   * Otaku's). Best effort: the site already has its copy, so a connection that may not write
+   * there, or a GHL failure, only adds a note for the model.
+   */
+  const keepInMediaLibrary = async (
+    session: BuilderSession,
+    path: string,
+    image: { bytes: Uint8Array; mediaType: "image/png" | "image/jpeg" | "image/webp" },
+  ): Promise<{ mediaLibrary?: string; note?: string }> => {
+    if (!session.crm) return {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // The name is the site file's; the CRM tidies it and gives it the type's extension.
+      const saving = session.crm.saveImage({
+        siteId: session.workspace.siteId,
+        name: path.split("/").at(-1) ?? "",
+        bytes: image.bytes,
+        contentType: image.mediaType,
+      });
+      // A slow GHL doesn't hold the tool up: past the limit it answers with the note below.
+      const late = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The Media Library took too long")),
+          MEDIA_LIBRARY_TIMEOUT_MS,
+        );
+      });
+      await Promise.race([saving, late]);
+      return { mediaLibrary: "A copy is in the client's Media Library too." };
+    } catch (error) {
+      const why =
+        error instanceof CrmMediaError
+          ? error.message
+          : "The Media Library couldn't be reached just now.";
+      console.error(
+        `Keeping a generated image of site ${session.workspace.siteId} in the Media Library failed: ${(error as Error)?.name ?? "Error"}`,
+      );
+      return {
+        note: `The image is in the site, but it wasn't saved to the client's Media Library. ${why}`,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const generate_image = createTool({
     id: "generate_image",
     description:
       "Generate an original image (photo or illustration) from a description and save it as " +
-      "a PNG under public/, e.g. public/images/hero.png. Reference it as /images/hero.png.",
+      "a PNG under public/, e.g. public/images/hero.png. Reference it as /images/hero.png. " +
+      "A copy is also kept in the client's Media Library when their CRM allows it.",
     requireApproval: noApproval,
     inputSchema: z.object({
       prompt: z.string().min(3).max(2000),
@@ -815,6 +863,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           saved: path,
           src: `/${path.slice("public/".length)}`,
           bytes: image.bytes.byteLength,
+          ...(await keepInMediaLibrary(session, path, image)),
         };
       },
     ),

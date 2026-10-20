@@ -36,4 +36,6 @@ images whenever they fit: a business looks like itself with its own logo and pho
   exists.
 - Images over 4 MB are refused; ask for a smaller one.
 - With no suitable image, use generate_image, and tell the person they can add their own to
-  the Media Library later.
+  the Media Library later. generate_image also keeps a copy of each image in the Media Library
+  (a "Site images" folder for the site) when the CRM allows it; if its result has a note that
+  it wasn't saved there, the site is still fine; mention it only if the person asks.
