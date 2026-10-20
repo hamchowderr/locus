@@ -1,9 +1,12 @@
 import {
+  MAX_LARGE_SITE_FILE_BYTES,
   MAX_SITE_FILE_BYTES,
+  MAX_SITE_VIDEO_BYTES,
   SITE_DATABASE_ENV,
   SITE_FILE_TYPES,
   SITE_MIGRATIONS_DIR,
   SITE_MIGRATIONS_TABLE,
+  SITE_VIDEO_TYPES,
   STATEMENT_BREAKPOINT,
 } from "@locus/db";
 import type { SiteFile } from "../workspace.ts";
@@ -345,7 +348,9 @@ export const authClient = createAuthClient();
 // Files the site's members upload. The published site sends them to Locus, which keeps them in
 // the client's own HighLevel Media Library; the site holds no HighLevel token and proves it is
 // the site with SITE_FILES_KEY (set on its host when it is published). The preview keeps them in
-// .data/files, and nothing leaves the sandbox. Either way the same kinds and sizes are taken.
+// .data/files, and nothing leaves the sandbox. Files over 4 MB go from the member's browser
+// straight to Locus's upload server with a one-time ticket, because the site's host takes at
+// most 4.5 MB in a request; the preview takes them the ordinary way, up to 25 MB.
 const LOCAL_FILES = ".data/files";
 
 const filesFile = (): SiteFile => ({
@@ -365,9 +370,16 @@ const key = process.env.${SITE_DATABASE_ENV.filesKey};
 /** True in the preview (and a draft): files stay in ${LOCAL_FILES} and go nowhere. */
 export const previewFiles = api === null;
 
-/** What members may upload: the same in the preview as on the published site. */
+/** What members may upload: the same kinds in the preview as on the published site. */
 export const FILE_TYPES: readonly string[] = ${JSON.stringify(SITE_FILE_TYPES)};
+export const VIDEO_TYPES: readonly string[] = ${JSON.stringify(SITE_VIDEO_TYPES)};
+/** Sent through the site's own upload route. */
 export const MAX_FILE_BYTES = ${MAX_SITE_FILE_BYTES};
+/** Sent with a ticket (startBigUpload): other files, and videos. */
+export const MAX_LARGE_FILE_BYTES = ${MAX_LARGE_SITE_FILE_BYTES};
+export const MAX_VIDEO_BYTES = ${MAX_SITE_VIDEO_BYTES};
+/** What the site's own upload route takes: more in the preview, which has no big uploads. */
+export const MAX_ROUTE_BYTES = previewFiles ? MAX_LARGE_FILE_BYTES : MAX_FILE_BYTES;
 
 export class FilesError extends Error {
   constructor(
@@ -404,16 +416,18 @@ const PREVIEW_ID = /^[0-9a-f-]{36}$/;
 const localPath = (fileId: string) =>
   PREVIEW_ID.test(fileId) ? join(${JSON.stringify(LOCAL_FILES)}, fileId) : null;
 
-/** Checks a file the member sent, whatever the browser already checked. */
-function checked(file: File): string {
-  const contentType = file.type.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (!FILE_TYPES.includes(contentType)) {
+const mediaType = (type: string) => type.split(";")[0]?.trim().toLowerCase() ?? "";
+
+/** Checks a file's kind and size, whatever the browser already checked. */
+function checked(type: string, size: number, max: (video: boolean) => number): string {
+  const contentType = mediaType(type);
+  const video = VIDEO_TYPES.includes(contentType);
+  if (!video && !FILE_TYPES.includes(contentType)) {
     throw new FilesError("That kind of file can't be uploaded here.", 415);
   }
-  if (file.size < 1) throw new FilesError("That file is empty.");
-  if (file.size > MAX_FILE_BYTES) {
-    throw new FilesError(\`Files can be up to \${MAX_FILE_BYTES / 1024 / 1024} MB.\`, 413);
-  }
+  if (!Number.isInteger(size) || size < 1) throw new FilesError("That file is empty.");
+  const most = max(video);
+  if (size > most) throw new FilesError(\`Files like this can be up to \${most / 1024 / 1024} MB.\`, 413);
   return contentType;
 }
 
@@ -422,7 +436,7 @@ function checked(file: File): string {
  * forwarding header, for Locus's per-visitor limit.
  */
 export async function keepFile(file: File, visitorIp?: string | null): Promise<KeptFile> {
-  const contentType = checked(file);
+  const contentType = checked(file.type, file.size, () => MAX_ROUTE_BYTES);
   if (previewFiles) {
     const fileId = randomUUID();
     const name = file.name.replace(/[^\\w.-]+/g, "-").slice(-80).replace(/^[.-]+/, "") || "file";
@@ -441,21 +455,53 @@ export async function keepFile(file: File, visitorIp?: string | null): Promise<K
   return (await res.json()) as KeptFile;
 }
 
+export type BigUpload =
+  | { uploadUrl: string; ticket: string; contentType: string; expiresAt: number }
+  | { uploadUrl: null; preview?: true };
+
+/**
+ * Starts an upload of a file over MAX_FILE_BYTES: the member's browser then PUTs the file to
+ * \`uploadUrl\` with \`content-type: contentType\` and \`x-locus-ticket: ticket\`, once, within ten
+ * minutes.
+ * \`uploadUrl\` is null when this host can't take big files (\`preview\` when the preview takes
+ * them through the site's own upload route instead).
+ */
+export async function startBigUpload(
+  meta: { name: string; contentType: string; size: number },
+  visitorIp?: string | null,
+): Promise<BigUpload> {
+  const contentType = checked(meta.contentType, meta.size, (video) =>
+    previewFiles ? MAX_LARGE_FILE_BYTES : video ? MAX_VIDEO_BYTES : MAX_LARGE_FILE_BYTES,
+  );
+  if (previewFiles) return { uploadUrl: null, preview: true };
+  const res = await ask("ticket", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(visitorIp ? { "x-locus-visitor-ip": visitorIp } : {}),
+    },
+    body: JSON.stringify({ name: meta.name.slice(0, 300), contentType, size: meta.size }),
+  });
+  return (await res.json()) as BigUpload;
+}
+
 /** The preview's stand-in for the Media Library: a file kept in ${LOCAL_FILES}, or null. */
 export async function previewFileResponse(fileId: string): Promise<Response | null> {
   const path = previewFiles ? localPath(fileId) : null;
   if (!path) return null;
   const bytes = await readFile(path).catch(() => null);
   const meta = await readFile(\`\${path}.json\`, "utf8").then(JSON.parse, () => null);
-  if (!bytes || !meta || !FILE_TYPES.includes(meta.contentType)) return null;
+  const known = meta && (FILE_TYPES.includes(meta.contentType) || VIDEO_TYPES.includes(meta.contentType));
+  if (!bytes || !known) return null;
   const pdf = meta.contentType === "application/pdf";
+  const shown = pdf || /^(image|video)\\//.test(meta.contentType);
   return new Response(new Uint8Array(bytes), {
     headers: {
       "content-type": meta.contentType,
       "x-content-type-options": "nosniff",
       "cache-control": "private, no-store",
       ...(pdf ? {} : { "content-security-policy": "sandbox; default-src 'none'" }),
-      ...(pdf || meta.contentType.startsWith("image/") ? {} : { "content-disposition": "attachment" }),
+      ...(shown ? {} : { "content-disposition": "attachment" }),
     },
   });
 }
@@ -486,7 +532,7 @@ const filesRouteFile = (): SiteFile => ({
   path: "app/api/files/upload/route.ts",
   content: `import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
-import { FilesError, keepFile, MAX_FILE_BYTES } from "@/lib/files";
+import { FilesError, keepFile, MAX_ROUTE_BYTES } from "@/lib/files";
 
 // Signed-in members only. POST a form with \`file\` → { fileId, url, name, contentType, size }.
 // Save the fileId and url with the app's own record of who uploaded it.
@@ -498,14 +544,54 @@ export async function POST(request: Request) {
   if (!(await auth.api.getSession({ headers: asked }))) {
     return refused("Sign in to upload files.", 401);
   }
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_FILE_BYTES + 64 * 1024) {
-    return refused(\`Files can be up to \${MAX_FILE_BYTES / 1024 / 1024} MB.\`, 413);
+  if (Number(request.headers.get("content-length") ?? 0) > MAX_ROUTE_BYTES + 64 * 1024) {
+    return refused(\`Files can be up to \${MAX_ROUTE_BYTES / 1024 / 1024} MB here.\`, 413);
   }
   const file = (await request.formData().catch(() => null))?.get("file");
   if (!(file instanceof File)) return refused("Send the file.", 400);
   try {
     const visitorIp = asked.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
     return Response.json(await keepFile(file, visitorIp));
+  } catch (error) {
+    if (error instanceof FilesError) return refused(error.message, error.status);
+    throw error;
+  }
+}
+`,
+});
+
+const ticketRouteFile = (): SiteFile => ({
+  path: "app/api/files/ticket/route.ts",
+  content: `import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { FilesError, startBigUpload } from "@/lib/files";
+
+// Signed-in members only. POST { name, contentType, size } for a file over 4 MB → where the
+// browser sends it (see startBigUpload). lib/files-client.ts does all of this.
+
+const refused = (error: string, status: number) => Response.json({ error }, { status });
+
+export async function POST(request: Request) {
+  const asked = await headers();
+  if (!(await auth.api.getSession({ headers: asked }))) {
+    return refused("Sign in to upload files.", 401);
+  }
+  const text = await request.text();
+  if (text.length > 4096) return refused("That's too much to send.", 413);
+  let meta: { name?: unknown; contentType?: unknown; size?: unknown } | null;
+  try {
+    meta = JSON.parse(text);
+  } catch {
+    return refused("Send JSON.", 400);
+  }
+  if (!meta || typeof meta !== "object" || typeof meta.name !== "string" || typeof meta.contentType !== "string" || typeof meta.size !== "number") {
+    return refused("Give the file's name, type and size.", 400);
+  }
+  try {
+    const visitorIp = asked.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+    return Response.json(
+      await startBigUpload({ name: meta.name, contentType: meta.contentType, size: meta.size }, visitorIp),
+    );
   } catch (error) {
     if (error instanceof FilesError) return refused(error.message, error.status);
     throw error;
@@ -536,17 +622,57 @@ export async function GET(_request: Request, { params }: { params: Promise<{ fil
 const filesClientFile = (): SiteFile => ({
   path: "lib/files-client.ts",
   content: `// For "use client" components: uploads a file the member picked and resolves to where it is
-// kept. Save fileId and url with the app's own record; show the file from url.
+// kept. Save fileId and url with the app's own record; show the file from url. Files over 4 MB
+// (and videos) go straight from the browser to Locus's upload server with a one-time ticket.
 
-export async function uploadFile(
-  file: File,
-): Promise<{ fileId: string; url: string; name: string; contentType: string; size: number }> {
+export interface UploadedFile {
+  fileId: string;
+  url: string;
+  name: string;
+  contentType: string;
+  size: number;
+}
+
+const MAX_FILE_BYTES = ${MAX_SITE_FILE_BYTES};
+
+async function kept(res: Response): Promise<UploadedFile> {
+  const body = (await res.json().catch(() => ({}))) as Partial<UploadedFile> & { error?: string };
+  if (!res.ok || !body.fileId) throw new Error(body.error ?? "The file couldn't be uploaded.");
+  return body as UploadedFile;
+}
+
+function sendForm(file: File): Promise<Response> {
   const form = new FormData();
   form.set("file", file, file.name);
-  const res = await fetch("/api/files/upload", { method: "POST", body: form });
-  const body = (await res.json().catch(() => ({}))) as { fileId?: string; error?: string };
-  if (!res.ok || !body.fileId) throw new Error(body.error ?? "The file couldn't be uploaded.");
-  return body as { fileId: string; url: string; name: string; contentType: string; size: number };
+  return fetch("/api/files/upload", { method: "POST", body: form });
+}
+
+export async function uploadFile(file: File): Promise<UploadedFile> {
+  if (file.size <= MAX_FILE_BYTES) return kept(await sendForm(file));
+  const res = await fetch("/api/files/ticket", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: file.name, contentType: file.type, size: file.size }),
+  });
+  const start = (await res.json().catch(() => ({}))) as {
+    uploadUrl?: string | null;
+    ticket?: string;
+    contentType?: string;
+    preview?: boolean;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(start.error ?? "The file couldn't be uploaded.");
+  if (start.preview) return kept(await sendForm(file));
+  if (!start.uploadUrl || !start.ticket || !start.contentType) {
+    throw new Error(\`Files can be up to \${MAX_FILE_BYTES / 1024 / 1024} MB here.\`);
+  }
+  return kept(
+    await fetch(start.uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": start.contentType, "x-locus-ticket": start.ticket },
+      body: file,
+    }),
+  );
 }
 `,
 });
@@ -556,6 +682,7 @@ const LOCUS_FILES = new Set([
   "lib/files.ts",
   "lib/files-client.ts",
   "app/api/files/upload/route.ts",
+  "app/api/files/ticket/route.ts",
   "app/api/files/preview/[fileId]/route.ts",
 ]);
 const RETIRED_FILES = ["app/api/files/[action]/route.ts"];
@@ -574,6 +701,7 @@ export function backendFiles(): SiteFile[] {
     authClientFile(),
     filesFile(),
     filesRouteFile(),
+    ticketRouteFile(),
     previewFilesRouteFile(),
     filesClientFile(),
   ];

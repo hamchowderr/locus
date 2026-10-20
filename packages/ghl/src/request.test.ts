@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { createFakeGhl } from "@locus/testing";
 import { describe, expect, test } from "vitest";
 import { defineOperation } from "./operation.ts";
@@ -220,7 +222,7 @@ describe("ghlRequest", () => {
     expect(req?.body).toEqual({ client_id: "id", grant_type: "authorization_code", code: "c&d" });
   });
 
-  test("sends files and fields as multipart, letting fetch set the boundary", async () => {
+  test("sends files and fields as multipart, with its boundary and exact length", async () => {
     const ghl = createFakeGhl({ "POST /medias/upload-file": { body: { fileId: "f1", url: "u" } } });
     const file = new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
     const out = await ghlRequest(
@@ -231,13 +233,85 @@ describe("ghlRequest", () => {
     );
     expect(out).toEqual({ fileId: "f1", url: "u" });
     const [req] = ghl.requests;
-    expect(req?.headers["content-type"]).toBeUndefined();
+    expect(req?.headers["content-type"]).toMatch(/^multipart\/form-data; boundary=/);
     const form = req?.body as FormData;
     expect(form.get("name")).toBe("photo.png");
     expect(form.get("parentId")).toBe("folder");
     expect((form.get("file") as File).name).toBe("photo.png");
     expect((form.get("file") as File).size).toBe(3);
   });
+
+  test("streams a multipart body to a real server with its length, not chunked", async () => {
+    const received: {
+      headers: Record<string, unknown>;
+      bytes: number;
+      form?: FormData | undefined;
+    } = {
+      headers: {},
+      bytes: 0,
+    };
+    const server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const all = Buffer.concat(chunks);
+      received.headers = req.headers;
+      received.bytes = all.length;
+      received.form = await new Response(all, {
+        headers: { "content-type": String(req.headers["content-type"]) },
+      })
+        .formData()
+        .catch(() => undefined);
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ fileId: "f1", url: "u" }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const bytes = new Uint8Array(300_000).map((_, i) => i % 251);
+      const file = new File([bytes], 'a "quoted"\r\nname.mp4', { type: "video/mp4" });
+      await ghlRequest(
+        uploadMedia,
+        { token: "t", tokenKind: "location", locationId: "loc" },
+        { body: { file, name: "clip", parentId: "folder" } },
+        { baseUrl: `http://127.0.0.1:${port}` },
+      );
+      expect(received.headers["transfer-encoding"]).toBeUndefined();
+      expect(Number(received.headers["content-length"])).toBe(received.bytes);
+      const sent = received.form?.get("file") as File;
+      expect(sent.type).toBe("video/mp4");
+      expect(new Uint8Array(await sent.arrayBuffer())).toEqual(bytes);
+      expect(received.form?.get("name")).toBe("clip");
+      expect(received.form?.get("parentId")).toBe("folder");
+    } finally {
+      server.close();
+    }
+  }, 20_000);
+
+  test("turns an odd answer to a streamed upload into an error, not a crash", async () => {
+    let status = 205;
+    const server = createServer((req, res) => {
+      req.resume();
+      res.writeHead(status);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const send = () =>
+        ghlRequest(
+          uploadMedia,
+          { token: "t", tokenKind: "location", locationId: "loc" },
+          { body: { file: new File(["x"], "a.png", { type: "image/png" }) } },
+          { baseUrl: `http://127.0.0.1:${port}` },
+        );
+      // 205 has no body: an empty answer, which is not JSON GHL would send.
+      await expect(send()).resolves.toBeUndefined();
+      status = 103;
+      await expect(send()).rejects.toThrow();
+    } finally {
+      server.close();
+    }
+  }, 20_000);
 
   test("refuses nested values in form and multipart bodies, before sending", async () => {
     const ghl = createFakeGhl({});
