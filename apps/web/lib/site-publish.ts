@@ -7,6 +7,7 @@ import {
   type PublishDeps,
   type SiteRow,
 } from "@locus/connect";
+import { publishLatestVersion, type SiteBuilderDeps, SiteInputError } from "./site-builder.ts";
 
 // The Sites page's publishing steps for an owner or admin: give a site a GitHub repository in
 // the agency's account, then a project on the agency's Vercel team that builds it. The client
@@ -39,6 +40,31 @@ export async function giveSiteRepo(
   choice: RepoChoice,
 ): Promise<SiteRow> {
   return ensureSiteRepo(deps, ctx, client, repoInput(choice));
+}
+
+/**
+ * The Sites page's repository step: gives the site its repository (`giveSiteRepo`), then sends
+ * its latest version there straight away, so the Vercel project created next builds the site
+ * instead of failing on an empty repository. If that first publish is refused, the repository
+ * stays linked and the refusal comes back for the page.
+ */
+export async function giveSiteRepoAndPublish(
+  deps: PublishDeps,
+  builder: Pick<SiteBuilderDeps, "db" | "openClientDb" | "publish" | "locusUrl">,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  choice: RepoChoice,
+): Promise<SiteRow> {
+  const row = await giveSiteRepo(deps, ctx, client, choice);
+  try {
+    await publishLatestVersion(builder, ctx, client, row.id);
+  } catch (error) {
+    if (!(error instanceof SiteInputError)) throw error;
+    throw new ConnectError(
+      `The repository is linked, but the site wasn't sent to it yet: ${error.message} Press Publish to try again.`,
+    );
+  }
+  return row;
 }
 
 /** Gives the client's site a Vercel project that builds its repository. Owners and admins only. */

@@ -37,7 +37,7 @@ import {
   SiteInputError,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { giveSiteProject, giveSiteRepo } from "@/lib/site-publish";
+import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -497,7 +497,7 @@ export async function unlinkSiteProject(form: FormData) {
 export async function giveSiteRepository(form: FormData) {
   await siteAction(
     (ctx, client) =>
-      giveSiteRepo(publishDeps(), ctx, client, {
+      giveSiteRepoAndPublish(publishDeps(), siteBuilderDeps(), ctx, client, {
         siteId: text(form, "siteId"),
         repo: text(form, "repo"),
         name: text(form, "name"),

@@ -86,6 +86,7 @@ import {
   toMeasurement,
   usageMeter,
 } from "./site-builder.ts";
+import { giveSiteRepoAndPublish } from "./site-publish.ts";
 
 let dir: string;
 let db: ControlDb;
@@ -510,6 +511,34 @@ describe("publishing saved versions", () => {
     );
     expect(published.version).toBe(2);
     expect(github.repoFiles(repoFullName as string)?.["app/about/page.tsx"]).toBe("about");
+  });
+
+  it("sends the latest version as soon as the site gets its repository", async () => {
+    const { client, siteId } = await startedSite();
+    const row = await giveSiteRepoAndPublish(publishDeps(), deps(), ctx("owner"), client, {
+      siteId,
+      repo: "",
+      name: "a-site",
+    });
+    const pushed = github.repoFiles(row.repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain(`"https://locus.test/api/sites/${siteId}/leads"`);
+    const [saved] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(saved).toMatchObject({ repoFullName: row.repoFullName, status: "pushed" });
+  });
+
+  it("keeps the repository linked when the first publish is refused", async () => {
+    const { client, siteId } = await startedSite();
+    const giving = giveSiteRepoAndPublish(
+      publishDeps(),
+      deps({ publish: null }),
+      ctx("owner"),
+      client,
+      { siteId, repo: "", name: "a-site" },
+    );
+    await expect(giving).rejects.toBeInstanceOf(ConnectError);
+    await expect(giving).rejects.toThrow(/repository is linked.*Press Publish/);
+    const [saved] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(saved?.repoFullName).toBeTruthy();
   });
 
   it("refuses to publish another client's site from the Sites page", async () => {
