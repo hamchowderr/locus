@@ -176,6 +176,20 @@ describe("the agent server", () => {
     expect((await host.fetch(new Request("http://agent.test/health"))).status).toBe(200);
   });
 
+  test("answers sites' uploads readably for their pages even when it takes none", async () => {
+    const { host } = await hostFor({ as: null });
+    const off = await host.fetch(
+      new Request("http://agent.test/site-files/upload", {
+        method: "PUT",
+        headers: { origin: "https://some-site.test", "x-locus-ticket": "t" },
+        body: "x",
+      }),
+    );
+    expect(off.status).toBe(503);
+    expect(off.headers.get("access-control-allow-origin")).toBe("*");
+    expect(await off.json()).toEqual({ error: "Files can be up to 4 MB here." });
+  });
+
   test("a deletion in the signed-in member's client waits, then goes through with that client's token", async () => {
     mock().llm.on(
       { userMessage: /delete contact c1/i, hasToolResult: false },

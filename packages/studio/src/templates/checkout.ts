@@ -12,6 +12,48 @@ import type { SiteFile } from "../workspace.ts";
 
 export const BUY_BUTTON_PATH = "components/buy-button.tsx";
 
+/** One thing a site sells: a GHL product at one of its prices. */
+export interface CheckoutItem {
+  productId: string;
+  priceId: string;
+}
+
+/**
+ * A prop written as a string literal: `p="x"`, `p={"x"}` or a template with no `${}` in it.
+ * Anything worked out at run time (`p={item.id}`, `p={"x" + y}`) doesn't match.
+ */
+const literalProp = (prop: string) =>
+  new RegExp(
+    String.raw`(?:^|\s)${prop}\s*=\s*(?:\{\s*(["'\x60])([A-Za-z0-9]{1,64})\1\s*\}|(["'\x60])([A-Za-z0-9]{1,64})\3)`,
+  );
+const PRODUCT_ID = literalProp("productId");
+const PRICE_ID = literalProp("priceId");
+
+const propValue = (tag: string, prop: RegExp) => {
+  const found = tag.match(prop);
+  return found?.[2] ?? found?.[4];
+};
+
+/**
+ * The product and price pairs a site's code sells: each `<BuyButton>` whose `productId` and
+ * `priceId` are both written as literals. Locus reads them at publish and sells only those pairs;
+ * a button whose ids are worked out at run time (`productId={item.id}`) sells nothing.
+ */
+export function checkoutItems(
+  files: { path: string; content: string | Uint8Array }[],
+): CheckoutItem[] {
+  const items = new Map<string, CheckoutItem>();
+  for (const file of files) {
+    if (typeof file.content !== "string" || !/\.(tsx|jsx)$/.test(file.path)) continue;
+    for (const tag of file.content.matchAll(/<BuyButton\b[^>]*>/g)) {
+      const productId = propValue(tag[0], PRODUCT_ID);
+      const priceId = propValue(tag[0], PRICE_ID);
+      if (productId && priceId) items.set(`${productId}/${priceId}`, { productId, priceId });
+    }
+  }
+  return [...items.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([, v]) => v);
+}
+
 /** The site's own buy button, for one of the client's products at one of its prices. */
 export function buyButtonFile(): SiteFile {
   return {
