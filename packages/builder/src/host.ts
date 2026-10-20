@@ -241,6 +241,9 @@ const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
 const GENERIC_PUBLISH_ERROR =
   "The version is saved, but GitHub refused it. Check that the Locus app can still reach the " +
   "site's repository, then save again.";
+const SITES_PAGE_PUBLISH_ERROR =
+  "GitHub refused the publish. Check that the Locus app can still reach the site's " +
+  "repository, then publish again.";
 
 /** What runs after each saved version (`BuilderSession.onVersionSaved`). */
 export type VersionSavedHook = NonNullable<BuilderSession["onVersionSaved"]>;
@@ -289,6 +292,64 @@ export function publishHook(
       throw error;
     }
   };
+}
+
+/**
+ * Sends a site's latest saved version to its repository from the Sites page, as a save in the
+ * chat does (`publishHook`), for a deployment without the chat or a site whose repository came
+ * after its last save. Owners and admins only. The client is the session's; the site must be
+ * one of its and have a repository. Vercel deploys the push.
+ */
+export async function publishLatestVersion(
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "publish" | "locusUrl">,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<{ version: number; commitSha: string }> {
+  assertAuthorizedClient(client);
+  await requireAgencyManager(deps.db, ctx);
+  const row = await clientSite(deps.db, client, siteId);
+  if (!row.repoFullName) {
+    throw new SiteInputError("Give the site a GitHub repository first.");
+  }
+  if (!deps.publish) throw new SiteInputError("Publishing to GitHub isn't set up here yet.");
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    const workspace = new SiteWorkspace(tenant, siteId);
+    const hook = publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl);
+    let version = await workspace.latestVersion();
+    if (!version) throw new SiteInputError("This site has no saved version to publish yet.");
+    // A save in the chat can land while this commits; the newest version must end up on top,
+    // so a newer one seen afterwards is published too (each push builds on the branch head).
+    for (let attempt = 0; ; attempt++) {
+      const files = await workspace.versionFiles(version.id);
+      let published: Awaited<ReturnType<VersionSavedHook>>;
+      try {
+        published = await hook(version, files);
+      } catch (error) {
+        if (error instanceof PublishError) {
+          throw new SiteInputError(
+            error.message === GENERIC_PUBLISH_ERROR ? SITES_PAGE_PUBLISH_ERROR : error.message,
+          );
+        }
+        throw error;
+      }
+      if (!published?.commitSha) {
+        throw new SiteInputError("Give the site a GitHub repository first.");
+      }
+      // The commit is on GitHub either way; only the version's record of it can fail here.
+      await workspace.setCommitSha(version.id, published.commitSha).catch((error: unknown) => {
+        console.error(`Recording the commit for site ${siteId} failed`, error);
+      });
+      const latest = await workspace.latestVersion();
+      if (!latest || latest.id === version.id || attempt >= 2) {
+        return { version: version.number, commitSha: published.commitSha };
+      }
+      version = latest;
+    }
+  } finally {
+    release();
+  }
 }
 
 // One pooled connection per client database, shared by every builder in the process. It is
