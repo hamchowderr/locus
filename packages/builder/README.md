@@ -43,7 +43,7 @@ still in the tool):
 | `check_site` | Install + `next build`; returns ok or the errors to fix |
 | `preview` | The live preview URL; with `logs`, only the dev server's output |
 | `fetch_reference` | Reads a reference site's outline, fetched inside the sandbox |
-| `generate_image` | An original PNG into `public/`, from `ImageGenerator` |
+| `generate_image` | An original PNG into `public/`, from `ImageGenerator`; a copy goes to the client's Media Library (`crm.saveImage`) when the connection has `medias.write` |
 | `versions` | `save` `list` `restore`; a save calls `onVersionSaved` (e.g. commit to the agency's GitHub) |
 
 ## Skills

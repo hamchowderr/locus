@@ -27,12 +27,14 @@ import {
   type ConnectDeps,
   ConnectError,
   checkClientGhl,
+  clientGhl,
   clientGhlSession,
   connectAgency,
   ghlSecretRef,
   syncLocations,
 } from "./agency.ts";
 import { authorizeUrl, exchangeCode, type GhlAppConfig } from "./ghl-oauth.ts";
+import { CrmMediaError, siteCrm } from "./site-crm.ts";
 import { importStaffAccess, listAgencyStaff } from "./staff.ts";
 import { createStubGhl, STUB_AGENCY, STUB_CODE, type StubAgency } from "./stub.ts";
 import { handleGhlWebhook, verifyGhlSignature } from "./webhook.ts";
@@ -287,6 +289,43 @@ describe("sub-account sessions", () => {
     expect(seen).toEqual(["POST /oauth/location-token"]);
 
     expect(await checkClientGhl(deps, client)).toEqual({ name: "Harbor Realty" });
+  });
+
+  it("asks GHL for nothing, not even a token, for a Media Library write the scopes don't allow", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
+    // The stub's grant has no medias.write, and the agency token is due for renewal: a mint
+    // would renew it and then mint, so either would show up below.
+    clock += 24 * 3_600_000;
+    const crm = siteCrm(async () => ({
+      ...(await clientGhl(deps, client)),
+      ...(deps.http ? { http: deps.http } : {}),
+    }));
+    seen = [];
+    await expect(
+      crm.saveImage({
+        siteId: "site-1",
+        name: "hero.png",
+        bytes: new Uint8Array([137, 80, 78, 71]),
+        contentType: "image/png",
+      }),
+    ).rejects.toBeInstanceOf(CrmMediaError);
+    expect(seen).toEqual([]);
+
+    // The session is minted when a call needs it, for the authorized client only.
+    const { session, scopes } = await clientGhl(deps, client);
+    expect(scopes).toEqual(["locations.readonly", "oauth.readonly", "oauth.write"]);
+    expect(seen).toEqual([]);
+    expect(await session()).toMatchObject({ locationId: harbor.ghlLocationId });
+    expect(seen).toEqual(["POST /oauth/token", "POST /oauth/location-token"]);
+
+    const forged: AuthorizedClient = {
+      location: { ...harbor, siteBuilder: true },
+      memberId: "owner@agency-a",
+    };
+    seen = [];
+    await expect(clientGhl(deps, forged)).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(seen).toEqual([]);
   });
 
   it("never stores the sub-account token", async () => {
