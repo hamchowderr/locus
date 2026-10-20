@@ -38,14 +38,19 @@ export function createFakeGhl(routes: FakeRoutes): FakeGhl {
     const form = headers["content-type"]?.startsWith("application/x-www-form-urlencoded");
     // Form bodies (GHL's OAuth endpoints) are recorded as a plain object of their fields.
     // Multipart bodies (uploads) are recorded as the FormData itself, to read fields and files.
+    const multipart = headers["content-type"]?.startsWith("multipart/form-data");
     const body =
       init?.body instanceof FormData
         ? init.body
-        : raw === undefined
-          ? undefined
-          : form
-            ? Object.fromEntries(new URLSearchParams(raw))
-            : JSON.parse(raw);
+        : multipart && init?.body
+          ? await new Response(init.body, {
+              headers: { "content-type": headers["content-type"] ?? "" },
+            }).formData()
+          : raw === undefined
+            ? undefined
+            : form
+              ? Object.fromEntries(new URLSearchParams(raw))
+              : JSON.parse(raw);
     const recorded: RecordedRequest = { method, url, headers, body };
     requests.push(recorded);
 
