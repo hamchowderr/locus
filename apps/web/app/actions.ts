@@ -544,7 +544,7 @@ export async function copySite(form: FormData) {
   }
   revalidatePath("/sites", "layout");
   redirect(
-    elsewhere ? `${home}?copied=elsewhere` : `/sites/${encodeURIComponent(copy)}?copied=here`,
+    elsewhere ? "/sites?copied=elsewhere" : `/sites/${encodeURIComponent(copy)}?copied=here`,
   );
 }
 
@@ -646,8 +646,13 @@ async function rememberActiveSite(siteId: string) {
 
 /** Takes a linked Vercel project off the active client. */
 export async function unlinkSiteProject(form: FormData) {
-  await siteAction(form, (ctx, client) =>
-    unlinkHostProject(siteDeps(), ctx, client, text(form, "siteId")),
+  await siteAction(
+    form,
+    (ctx, client) => unlinkHostProject(siteDeps(), ctx, client, text(form, "siteId")),
+    undefined,
+    // A linked project that wasn't made in Locus is the whole site: unlinking removes it, so
+    // its own pages are gone.
+    () => "/sites",
   );
 }
 

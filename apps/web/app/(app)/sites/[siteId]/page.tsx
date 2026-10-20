@@ -27,7 +27,7 @@ export default async function BuildSite({
   }>;
 }) {
   const { siteId } = await params;
-  const { site, name, refusal } = await siteForPage(siteId, `/sites/${siteId}`);
+  const { site, name, unread, refusal } = await siteForPage(siteId, `/sites/${siteId}`);
   const { version: asked, error, created, published, deploys, copied } = await searchParams;
   const version = asked && /^\d{1,6}$/.test(asked) ? Number(asked) : null;
 
@@ -47,6 +47,16 @@ export default async function BuildSite({
     </>
   );
 
+  if (unread) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-4 px-6 py-8">
+        {notices}
+        <Notice tone="error">
+          Locus couldn't read this site's details just now. Reload to try again.
+        </Notice>
+      </div>
+    );
+  }
   if (name === null) {
     return (
       <div className="mx-auto max-w-2xl space-y-4 px-6 py-8">
