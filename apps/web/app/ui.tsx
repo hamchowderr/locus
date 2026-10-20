@@ -8,17 +8,25 @@ export function Page({
   title,
   description,
   width = "narrow",
+  actions,
   children,
 }: {
   title: string;
   description?: ReactNode;
   width?: "narrow" | "wide";
+  /** Buttons for the title bar, on its right. */
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <div className={`mx-auto w-full px-6 py-8 ${width === "wide" ? "max-w-5xl" : "max-w-2xl"}`}>
-      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-      {description && <p className="mt-1 text-sm text-neutral-600">{description}</p>}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          {description && <p className="mt-1 text-sm text-neutral-600">{description}</p>}
+        </div>
+        {actions}
+      </div>
       <div className="mt-6 space-y-4">{children}</div>
     </div>
   );
