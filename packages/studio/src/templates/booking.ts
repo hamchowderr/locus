@@ -11,6 +11,22 @@ import type { SiteFile } from "../workspace.ts";
 // The builder writes either one into a site when the person wants booking (`crm` tool).
 
 export const BOOKING_COMPONENT_PATH = "components/booking.tsx";
+
+/**
+ * The calendars a site's code books on: each `calendarId="…"` written as a literal on a
+ * `<Booking>`. Locus reads them at publish and accepts bookings on those calendars only.
+ */
+export function bookingCalendarIds(files: { path: string; content: string | Uint8Array }[]) {
+  const ids = new Set<string>();
+  for (const file of files) {
+    if (typeof file.content !== "string" || !/\.(tsx|jsx)$/.test(file.path)) continue;
+    for (const tag of file.content.matchAll(/<Booking\b[^>]*>/g)) {
+      const id = tag[0].match(/\bcalendarId=(?:\{\s*)?["'`]([A-Za-z0-9]{1,64})["'`]/)?.[1];
+      if (id) ids.add(id);
+    }
+  }
+  return [...ids].sort();
+}
 export const CALENDAR_EMBED_PATH = "components/calendar-embed.tsx";
 
 /** The site's own booking UI, for one of the client's calendars. */
@@ -20,7 +36,7 @@ export function bookingComponentFile(): SiteFile {
     content: `"use client";
 
 import { CalendarCheckIcon, CheckIcon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -34,10 +50,15 @@ type Day = { date: string; slots: string[] };
 const DAYS = 7;
 
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);
+/** Today where the visitor is, as the calendar's days are keyed. */
+const today = (timezone: string) =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(new Date());
 
 export function Booking({ calendarId, form = "booking" }: { calendarId: string; form?: string }) {
-  const timezone = useMemo(() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", []);
-  const [start, setStart] = useState(() => isoDay(new Date()));
+  // The visitor's timezone is only known in their browser, so the times load after the page
+  // has rendered there (the server's render shows "Loading times…").
+  const [timezone, setTimezone] = useState<string | null>(null);
+  const [start, setStart] = useState<string | null>(null);
   const [days, setDays] = useState<Day[] | null>(null);
   const [day, setDay] = useState<string | null>(null);
   const [slot, setSlot] = useState<string | null>(null);
@@ -47,8 +68,15 @@ export function Booking({ calendarId, form = "booking" }: { calendarId: string; 
   const [reload, setReload] = useState(0);
   const shownAt = useRef(Date.now());
 
+  useEffect(() => {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    setTimezone(zone);
+    setStart(today(zone));
+  }, []);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: \`reload\` asks for the times again
   useEffect(() => {
+    if (!timezone || !start) return;
     let live = true;
     setDays(null);
     setLoadError("");
@@ -73,7 +101,11 @@ export function Booking({ calendarId, form = "booking" }: { calendarId: string; 
   }, [calendarId, start, timezone, reload]);
 
   const time = (iso: string) =>
-    new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: timezone });
+    new Date(iso).toLocaleTimeString(undefined, {
+      hour: "numeric",
+      minute: "2-digit",
+      ...(timezone ? { timeZone: timezone } : {}),
+    });
   const dayLabel = (date: string) =>
     new Date(\`\${date}T12:00:00Z\`).toLocaleDateString(undefined, {
       weekday: "short",
@@ -81,10 +113,18 @@ export function Booking({ calendarId, form = "booking" }: { calendarId: string; 
       day: "numeric",
       timeZone: "UTC",
     });
+  const pick = (next: string | null) => {
+    setSlot(next);
+    setState("idle");
+    setError("");
+  };
   const move = (by: number) => {
+    if (!start || !timezone) return;
     const next = new Date(\`\${start}T00:00:00Z\`);
     next.setUTCDate(next.getUTCDate() + by * DAYS);
-    if (isoDay(next) >= isoDay(new Date())) setStart(isoDay(next));
+    const day = isoDay(next) < today(timezone) ? today(timezone) : isoDay(next);
+    pick(null);
+    setStart(day);
   };
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -99,7 +139,7 @@ export function Booking({ calendarId, form = "booking" }: { calendarId: string; 
         ...data,
         calendarId,
         startTime: slot,
-        timezone,
+        timezone: timezone ?? "UTC",
         form,
         page: window.location.pathname,
         elapsedMs: Date.now() - shownAt.current,
@@ -129,10 +169,10 @@ export function Booking({ calendarId, form = "booking" }: { calendarId: string; 
   return (
     <div className="grid gap-6">
       <div className="flex items-center justify-between gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => move(-1)} disabled={start <= isoDay(new Date())}>
+        <Button type="button" variant="outline" size="sm" onClick={() => move(-1)} disabled={!start || !timezone || start <= today(timezone)}>
           Earlier
         </Button>
-        <p className="text-sm text-muted-foreground">Times shown in {timezone}</p>
+        <p className="text-sm text-muted-foreground">{timezone && \`Times shown in \${timezone}\`}</p>
         <Button type="button" variant="outline" size="sm" onClick={() => move(1)}>
           Later
         </Button>
@@ -155,7 +195,7 @@ export function Booking({ calendarId, form = "booking" }: { calendarId: string; 
                 type="button"
                 variant={d.date === day ? "default" : "outline"}
                 aria-pressed={d.date === day}
-                onClick={() => (setDay(d.date), setSlot(null))}
+                onClick={() => (setDay(d.date), pick(null))}
               >
                 {dayLabel(d.date)}
               </Button>
@@ -169,7 +209,7 @@ export function Booking({ calendarId, form = "booking" }: { calendarId: string; 
                 size="sm"
                 variant={s === slot ? "default" : "secondary"}
                 aria-pressed={s === slot}
-                onClick={() => setSlot(s)}
+                onClick={() => pick(s)}
               >
                 {time(s)}
               </Button>

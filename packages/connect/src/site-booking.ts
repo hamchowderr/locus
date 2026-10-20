@@ -5,11 +5,11 @@ import {
   countWithDeadline,
   logGhlFailure,
   MAX_LEAD_BODY_BYTES,
+  type PublishedSite,
   parseLead,
   publishedSite,
   type SiteGhl,
   type SiteLeadDeps,
-  type SiteLeadOutcome,
   sendToGhl,
   siteGhl,
 } from "./site-leads.ts";
@@ -21,20 +21,26 @@ import {
 //
 // Two public calls: the free times of a calendar, and booking one of them. As with forms, the
 // site id is public and the client is read from the site's registry row, never from the
-// request; no token reaches the site. The visitor names a calendar, but only one of the site's
-// own client's active calendars is accepted: GHL's calendar lookup is checked against the
-// sub-account the session is for, so another sub-account's calendar id gets nothing.
+// request; no token reaches the site. The visitor names a calendar, but only one the site's
+// published code books on (`site.bookingCalendars`, read from the code at publish) is
+// accepted, and GHL's answer for it is checked against the sub-account the session is for. So
+// another sub-account's calendar, or one of this client's the site doesn't offer (a paid or
+// personal one), gets nothing.
 //
 // A booking is also a lead: the contact goes through the same path as a form (found or created
 // by email or phone, only blank fields filled, tagged, noted), then GHL books the time for that
 // contact. GHL checks the time against the calendar's own rules (notice, hours, buffers), so a
 // time that was just taken or was never offered is refused there too, not only here.
 
-/** Limits for reading free times: generous, since a visitor clicks through days. */
+/**
+ * Limits for reading free times. Each read costs the client two or three GHL calls from the
+ * budget its agents share, and the per-IP hint can be spoofed, so the per-site ceilings are
+ * what really bound it: well under GHL's 100 calls per 10 seconds.
+ */
 export const SLOT_LIMITS = {
-  perSite: { max: 2_000, windowMs: 60 * 60_000 },
-  perSiteBurst: { max: 120, windowMs: 60_000 },
-  perIp: { max: 60, windowMs: 10 * 60_000 },
+  perSite: { max: 600, windowMs: 60 * 60_000 },
+  perSiteBurst: { max: 40, windowMs: 60_000 },
+  perIp: { max: 40, windowMs: 10 * 60_000 },
 };
 
 /** Limits for booking: tighter than reading, like a form. */
@@ -88,6 +94,10 @@ export function validTimezone(value: unknown): string | null {
   }
 }
 
+/** Whether the site's published code books on this calendar. */
+const offers = (row: PublishedSite, calendarId: string) =>
+  (row.site.bookingCalendars ?? []).includes(calendarId);
+
 interface GhlCalendar {
   id?: string;
   locationId?: string;
@@ -101,7 +111,12 @@ interface GhlCalendar {
  * The calendar, only when it is one of this client's and active. GHL is asked with the
  * client's own session and its answer is checked against that sub-account too.
  */
-async function bookableCalendar(ghl: SiteGhl, calendarId: string): Promise<GhlCalendar | null> {
+async function bookableCalendar(
+  ghl: SiteGhl,
+  row: PublishedSite,
+  calendarId: string,
+): Promise<GhlCalendar | null> {
+  if (!offers(row, calendarId)) return null;
   try {
     const found = await ghlRequest<{ calendar?: GhlCalendar }>(
       operation("calendars.get-calendar"),
@@ -114,7 +129,9 @@ async function bookableCalendar(ghl: SiteGhl, calendarId: string): Promise<GhlCa
     if (calendar.isActive === false) return null;
     return calendar;
   } catch (error) {
-    if (error instanceof GhlError && error.status >= 400 && error.status < 500) return null;
+    // No such calendar. A refused token or scope (401/403) or a rate limit is an outage, not
+    // a wrong id: it is thrown, logged and answered as one.
+    if (error instanceof GhlError && [400, 404, 422].includes(error.status)) return null;
     throw error;
   }
 }
@@ -163,7 +180,8 @@ export async function siteSlots(deps: SiteLeadDeps, query: SlotQuery): Promise<S
   const timezone = validTimezone(query.timezone ?? "UTC");
   if (!timezone) return refuse(400, "That timezone isn't one we know.");
   const now = deps.now?.() ?? Date.now();
-  const today = new Date(now).toISOString().slice(0, 10);
+  // Today where the visitor is, as GHL keys its days in the timezone asked for.
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: timezone }).format(now);
   const start = query.start ?? today;
   if (!DAY.test(start) || Number.isNaN(Date.parse(`${start}T00:00:00Z`))) {
     return refuse(400, "That date isn't one we can read.");
@@ -172,11 +190,14 @@ export async function siteSlots(deps: SiteLeadDeps, query: SlotQuery): Promise<S
   if (!Number.isInteger(days) || days < 1 || days > MAX_SLOT_DAYS) {
     return refuse(400, `Ask for 1 to ${MAX_SLOT_DAYS} days at a time.`);
   }
-  // From the start of that day (a day early, so no timezone loses its morning), never before
-  // yesterday and never further ahead than a year.
-  const startMs = Math.max(Date.parse(`${start}T00:00:00Z`) - DAY_MS, now - DAY_MS);
-  if (startMs > now + 366 * DAY_MS) return refuse(400, "That date is too far ahead.");
-  const endMs = startMs + (days + 1) * DAY_MS - 1;
+  // A day either side of the days asked for in UTC, so no timezone loses its morning or its
+  // evening (the days are then cut to the visitor's own); never before yesterday, never more
+  // than a year ahead, and at most MAX_SLOT_DAYS + 2 days, well within GHL's 31.
+  const first = Date.parse(`${start}T00:00:00Z`);
+  if (first > now + 366 * DAY_MS) return refuse(400, "That date is too far ahead.");
+  const startMs = Math.max(first - DAY_MS, now - DAY_MS);
+  const endMs = first + (days + 1) * DAY_MS - 1;
+  if (endMs <= startMs) return refuse(400, "That date has passed.");
 
   const row = await publishedSite(deps.db, query.siteId);
   if (!row) return refuse(404, NOT_CONNECTED);
@@ -189,10 +210,12 @@ export async function siteSlots(deps: SiteLeadDeps, query: SlotQuery): Promise<S
     "slots",
   );
   if (limited !== null) return tooMany(limited);
+  // A calendar the site doesn't book on costs the client nothing from its GHL budget.
+  if (!offers(row, calendarId)) return refuse(404, NO_CALENDAR);
 
   try {
     const ghl = await siteGhl(deps, row.location);
-    const calendar = await bookableCalendar(ghl, calendarId);
+    const calendar = await bookableCalendar(ghl, row, calendarId);
     if (!calendar) return refuse(404, NO_CALENDAR);
     const all = await freeSlots(ghl, calendarId, startMs, endMs, timezone);
     // Only the days asked for, in the visitor's timezone.
@@ -272,11 +295,12 @@ export async function bookSiteAppointment(
     "booking",
   );
   if (limited !== null) return tooMany(limited);
+  if (!offers(row, calendarId)) return refuse(404, NO_CALENDAR);
 
   let ghl: SiteGhl;
   try {
     ghl = await siteGhl(deps, row.location);
-    const calendar = await bookableCalendar(ghl, calendarId);
+    const calendar = await bookableCalendar(ghl, row, calendarId);
     if (!calendar) return refuse(404, NO_CALENDAR);
     // The time must be one GHL offers now: a clear answer when it was just taken.
     const day = new Date(startMs).toISOString().slice(0, 10);
@@ -290,22 +314,44 @@ export async function bookSiteAppointment(
     return refuse(502, "We couldn't book that just now. Please try again.");
   }
 
-  let outcome: SiteLeadOutcome = "delivered";
-  let refused: SiteBookingResult | null = null;
+  // The contact first, then the booking, then the note, which says what really happened: a
+  // contact whose time was refused gets a note saying nothing was booked.
+  let booked: unknown = null;
   try {
-    const contactId = await sendToGhl(ghl, lead, [`Booked: ${start} (${zone})`]);
-    await bookFor(ghl, { calendarId, contactId, startTime: start });
+    await sendToGhl(ghl, lead, async (contactId) => {
+      try {
+        await bookFor(ghl, { calendarId, contactId, startTime: start });
+        booked = true;
+        return [`Booked: ${start} (${zone})`];
+      } catch (error) {
+        booked = error;
+        return [`Asked to book ${start} (${zone}), but it couldn't be booked. Nothing was booked.`];
+      }
+    });
   } catch (error) {
-    outcome = "failed";
-    logGhlFailure(`Booking for site ${row.site.id}`, error);
-    // GHL's own slot rules said no (taken in the meantime, too soon, outside hours).
-    if (error instanceof GhlError && (error.status === 400 || error.status === 422)) {
-      refused = refuse(409, "That time can't be booked any more. Please choose another.");
+    // The contact itself failed (no note reached the CRM).
+    if (booked === null) booked = error;
+    else if (booked === true) {
+      // Booked, and only the note failed: the visitor has their time.
+      logGhlFailure(`Booking note for site ${row.site.id}`, error);
     }
   }
-  await countWithDeadline(deps, row, outcome, now);
-  if (outcome === "delivered") return { status: 200, body: { ok: true, startTime: start } };
-  return refused ?? refuse(502, "We couldn't book that just now. Please try again.");
+  if (booked === true) {
+    await countWithDeadline(deps, row, "delivered", now);
+    return { status: 200, body: { ok: true, startTime: start } };
+  }
+  logGhlFailure(`Booking for site ${row.site.id}`, booked);
+  // GHL's own slot rules said no (taken in the meantime, too soon, outside hours): the visitor
+  // picks another time. Not a failure of the site's forms, so not counted as one.
+  const slotRefused =
+    booked instanceof GhlError &&
+    booked.operationId === "calendars.create-appointment" &&
+    (booked.status === 400 || booked.status === 422);
+  if (slotRefused) {
+    return refuse(409, "That time can't be booked any more. Please choose another.");
+  }
+  await countWithDeadline(deps, row, "failed", now);
+  return refuse(502, "We couldn't book that just now. Please try again.");
 }
 
 /**

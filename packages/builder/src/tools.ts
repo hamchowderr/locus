@@ -4,6 +4,10 @@ import {
   briefForAgent,
   calendarEmbedFile,
   DesignBrief,
+  LOCUS_PROXY_PATH,
+  LOCUS_SETTINGS_PATH,
+  locusProxyFile,
+  locusSettingsFile,
   normalizeSitePath,
   openQuestions,
   readBrief,
@@ -864,8 +868,21 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
                 .join("\n"),
             };
           }
-          case "add_booking":
-            return addPiece(session, bookingComponentFile(), input.overwrite ?? false);
+          case "add_booking": {
+            const added = await addPiece(session, bookingComponentFile(), input.overwrite ?? false);
+            // A site made before booking lacks Locus's route (and lib/locus.ts its siteApi);
+            // the preview needs both now, not only after the next publish.
+            await session.workspace.writeFile(LOCUS_PROXY_PATH, locusProxyFile().content);
+            const settings = await session.workspace.readFile(LOCUS_SETTINGS_PATH);
+            if (typeof settings !== "string" || !settings.includes("siteApi")) {
+              const { path, content } = locusSettingsFile({ leadEndpoint: null, siteApi: null });
+              await session.workspace.writeFile(path, content);
+            }
+            return {
+              ...added,
+              note: 'Use <Booking calendarId="<id>" /> with the id written out as text: Locus reads it when the site is published and takes bookings on that calendar only.',
+            };
+          }
           case "add_calendar_embed":
             return addPiece(session, calendarEmbedFile(), input.overwrite ?? false);
         }

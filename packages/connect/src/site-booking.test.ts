@@ -122,8 +122,15 @@ beforeEach(async () => {
     status: "active",
   });
   await db.insert(site).values([
-    { id: "site-live", locationId: "sunrise", status: "deployed", repoFullName: "a/live" },
-    { id: "site-draft", locationId: "sunrise", status: "draft" },
+    {
+      id: "site-live",
+      locationId: "sunrise",
+      status: "deployed",
+      repoFullName: "a/live",
+      bookingCalendars: ["cal1"],
+    },
+    { id: "site-other", locationId: "sunrise", status: "deployed", repoFullName: "a/other" },
+    { id: "site-draft", locationId: "sunrise", status: "draft", bookingCalendars: ["cal1"] },
   ]);
   await secrets.set(
     ghlSecretRef("agency-a"),
@@ -176,9 +183,52 @@ describe("a published site's free times", () => {
     expect(slots?.url.searchParams.get("timezone")).toBe("America/New_York");
     const start = Number(slots?.url.searchParams.get("startDate"));
     const end = Number(slots?.url.searchParams.get("endDate"));
-    // A day early so no timezone loses its morning, and never more than GHL's 31 days.
+    // A day either side, so no timezone loses its morning or evening; within GHL's 31 days.
     expect(start).toBe(Date.parse("2026-10-14T00:00:00Z"));
+    expect(end).toBe(Date.parse("2026-10-18T00:00:00Z") - 1);
     expect(end - start).toBeLessThan(31 * 86_400_000);
+  });
+
+  it("keeps the evening of the last day for a visitor west of UTC", async () => {
+    const evening = "2026-10-16T20:00:00-10:00"; // 06:00 UTC on the 17th
+    const d = deps({
+      ...okRoutes,
+      "GET /calendars/cal1/free-slots": (req) => {
+        const end = Number(req.url.searchParams.get("endDate"));
+        return {
+          body: {
+            "2026-10-16": { slots: Date.parse(evening) <= end ? [evening] : [] },
+          },
+        };
+      },
+    });
+    const result = await siteSlots(d, slotQuery({ timezone: "Pacific/Honolulu" }));
+    expect(result.body).toMatchObject({ days: [{ date: "2026-10-16", slots: [evening] }] });
+  });
+
+  it("starts at today where the visitor is, when no day is given", async () => {
+    // 12:00 UTC on the 14th is already the 15th in Auckland.
+    await siteSlots(deps(), slotQuery({ start: null, timezone: "Pacific/Auckland" }));
+    expect(Number(fake.requests[2]?.url.searchParams.get("endDate"))).toBe(
+      Date.parse("2026-10-18T00:00:00Z") - 1,
+    );
+  });
+
+  it("asks GHL nothing for a calendar the site's code doesn't book on", async () => {
+    for (const over of [{ calendarId: "cal2" }, { siteId: "site-other" }]) {
+      expect((await siteSlots(deps(), slotQuery(over))).status).toBe(404);
+      expect(fake.requests).toHaveLength(0);
+    }
+  });
+
+  it("answers a broken GHL connection as an outage, not a missing calendar", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await siteSlots(
+      deps({ ...okRoutes, "GET /calendars/cal1": { status: 401, body: { message: "no" } } }),
+      slotQuery(),
+    );
+    expect(result.status).toBe(502);
+    expect(errors.mock.calls.flat().join(" ")).toContain("calendars.get-calendar 401");
   });
 
   it("refuses another sub-account's calendar and an inactive one", async () => {
@@ -221,7 +271,7 @@ describe("a published site's free times", () => {
 
   it("limits how often one visitor reads times", async () => {
     const d = deps();
-    for (let i = 0; i < 60; i++) expect((await siteSlots(d, slotQuery())).status).toBe(200);
+    for (let i = 0; i < 40; i++) expect((await siteSlots(d, slotQuery())).status).toBe(200);
     const result = await siteSlots(d, slotQuery());
     expect(result.status).toBe(429);
   }, 30_000);
@@ -238,8 +288,8 @@ describe("booking on a published site", () => {
       "POST /contacts/upsert",
       "POST /contacts/contact-1/tags",
       "PUT /contacts/contact-1",
-      "POST /contacts/contact-1/notes",
       "POST /calendars/events/appointments",
+      "POST /contacts/contact-1/notes",
     ]);
     const tags = fake.requests.find((r) => r.url.pathname.endsWith("/tags"));
     expect(tags?.body).toEqual({ tags: ["website lead", "website form: booking"] });
@@ -248,7 +298,9 @@ describe("booking on a published site", () => {
       title: "Website form: booking",
       body: `First visit\n\nPage: /book\nBooked: ${SLOT} (America/New_York)`,
     });
-    const appointment = fake.requests.at(-1);
+    const appointment = fake.requests.find(
+      (r) => r.url.pathname === "/calendars/events/appointments",
+    );
     expect(appointment?.headers.authorization).toBe(`Bearer location-token-${GHL_LOCATION}`);
     // The location is the session's; GHL's slot checks stay on.
     expect(appointment?.body).toEqual({
@@ -266,7 +318,7 @@ describe("booking on a published site", () => {
     expect(paths()).not.toContain("POST /calendars/events/appointments");
   });
 
-  it("says the time can't be booked when GHL's own rules refuse it", async () => {
+  it("says the time can't be booked when GHL's own rules refuse it, and notes nothing booked", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await book(
       deps({
@@ -282,6 +334,30 @@ describe("booking on a published site", () => {
       status: 409,
       body: { error: "That time can't be booked any more. Please choose another." },
     });
+    // The booking is tried before the note is written, and the note says what happened.
+    expect(paths().slice(-2)).toEqual([
+      "POST /calendars/events/appointments",
+      "POST /contacts/contact-1/notes",
+    ]);
+    const note = String((fake.requests.at(-1)?.body as { body?: string } | undefined)?.body);
+    expect(note).toContain("couldn't be booked. Nothing was booked.");
+    expect(note).not.toContain("Booked:");
+  });
+
+  it("doesn't blame the time when the contact itself is refused", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await book(
+      deps({ ...okRoutes, "POST /contacts/upsert": { status: 422, body: { message: "bad" } } }),
+      booking,
+    );
+    expect(result.status).toBe(502);
+    expect(paths()).not.toContain("POST /calendars/events/appointments");
+  });
+
+  it("books only on a calendar the site's code names", async () => {
+    expect((await book(deps(), { ...booking, calendarId: "cal2" })).status).toBe(404);
+    expect((await book(deps(), booking, "site-other")).status).toBe(404);
+    expect(fake.requests).toHaveLength(0);
   });
 
   it("never books on another sub-account's calendar", async () => {
