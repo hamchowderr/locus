@@ -1,8 +1,11 @@
 import {
   ClientAccessDenied,
   listAccessibleClients,
+  listSiteMembers,
   requireAgencyManager,
   resolveActiveClient,
+  type SiteMember,
+  viewOnlySites,
 } from "@locus/auth";
 import {
   ConnectError,
@@ -43,6 +46,7 @@ import {
   giveSiteVercelProject,
   linkSiteProject,
   publishSite,
+  saveSiteAccess,
   unlinkSiteProject,
 } from "../actions";
 import { Button, Field, Notice, Page } from "../ui";
@@ -121,6 +125,13 @@ export default async function Sites({
     },
   );
   const sites = await listSites(locus().db, client);
+  const builderOn = client.location.siteBuilder;
+  const viewOnly = await viewOnlySites(locus().db, client);
+  const canBuild = (siteId: string) => builderOn && !viewOnly.has(siteId);
+  // Members restricted to some clients, this one included, and their access to each site.
+  const siteMembers = manager
+    ? await Promise.all(sites.map((s) => listSiteMembers(locus().db, ctx, client, s.id)))
+    : sites.map((): SiteMember[] => []);
   // Where a copy can go: this client or any other this member works on.
   const clients = await listAccessibleClients(locus().db, ctx);
   // Filed sites first, by folder name, then the ones in no folder; each group oldest first.
@@ -185,6 +196,16 @@ export default async function Sites({
   return (
     <Page title={`Sites · ${client.location.name}`}>
       {error && <Notice tone="error">{error}</Notice>}
+      {!builderOn && (
+        <Notice tone="info">
+          The site builder is turned off for this client, so its sites can't be created, copied in,
+          built or published. {manager ? "Turn it on" : "An owner or admin can turn it on"} on the{" "}
+          <Link href="/clients" className="underline">
+            Clients
+          </Link>{" "}
+          page.
+        </Notice>
+      )}
       {created && <Notice tone="info">Site created from its template as version 1.</Notice>}
       {deleted && <Notice tone="info">Site deleted.</Notice>}
       {copied === "here" && (
@@ -245,7 +266,11 @@ export default async function Sites({
                   s.hostProjectId ??
                   "Untitled site"}
               </h2>
-              {!briefNames.has(s.id) ? null : activeSite === s.id ? (
+              {!briefNames.has(s.id) ? null : viewOnly.has(s.id) ? (
+                <p className="text-sm text-neutral-600">
+                  You can view this site but not change it.
+                </p>
+              ) : !builderOn ? null : activeSite === s.id ? (
                 <p className="text-sm text-neutral-600">The site builder works on this site.</p>
               ) : (
                 <form action={chooseSite} className="text-sm">
@@ -299,7 +324,7 @@ export default async function Sites({
                   choices={repoChoices}
                 />
               )}
-              {manager && s.repoFullName && briefNames.has(s.id) && (
+              {manager && builderOn && s.repoFullName && briefNames.has(s.id) && (
                 <form action={publishSite} className="space-y-2">
                   <input type="hidden" name="siteId" value={s.id} />
                   {s.hostProjectId && <input type="hidden" name="deploys" value="yes" />}
@@ -328,14 +353,19 @@ export default async function Sites({
                   </button>
                 </form>
               )}
-              <FolderForm siteId={s.id} folder={s.folder} folders={folders} />
-              {briefNames.has(s.id) && (
+              {!viewOnly.has(s.id) && (
+                <FolderForm siteId={s.id} folder={s.folder} folders={folders} />
+              )}
+              {briefNames.has(s.id) && canBuild(s.id) && (
                 <CopyForm
                   siteId={s.id}
                   name={briefNames.get(s.id) ?? ""}
                   clientId={client.location.id}
                   clients={clients}
                 />
+              )}
+              {(siteMembers[i]?.length ?? 0) > 0 && (
+                <AccessForm siteId={s.id} members={siteMembers[i] ?? []} />
               )}
               {manager && !s.repoFullName && !s.hostProjectId && !s.customDomain && (
                 <details className="text-sm">
@@ -355,46 +385,48 @@ export default async function Sites({
         );
       })}
 
-      <form action={createSite} className="space-y-2 pt-2">
-        <h2 className="font-semibold">New site</h2>
-        <Field
-          label="Name"
-          name="name"
-          placeholder="Bright Smiles Dental"
-          required
-          maxLength={120}
-        />
-        <label className="block text-sm">
-          <span className="text-neutral-700">Kind</span>
-          <select
-            name="kind"
-            defaultValue="website"
-            className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
-          >
-            {SITE_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABELS[k]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-sm">
-          <span className="text-neutral-700">Template</span>
-          <select
-            name="templateId"
-            defaultValue=""
-            className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
-          >
-            <option value="">The one that fits the kind</option>
-            {TEMPLATES.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.title}: {t.summary}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button>Create site</Button>
-      </form>
+      {builderOn && (
+        <form action={createSite} className="space-y-2 pt-2">
+          <h2 className="font-semibold">New site</h2>
+          <Field
+            label="Name"
+            name="name"
+            placeholder="Bright Smiles Dental"
+            required
+            maxLength={120}
+          />
+          <label className="block text-sm">
+            <span className="text-neutral-700">Kind</span>
+            <select
+              name="kind"
+              defaultValue="website"
+              className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+            >
+              {SITE_KINDS.map((k) => (
+                <option key={k} value={k}>
+                  {KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-sm">
+            <span className="text-neutral-700">Template</span>
+            <select
+              name="templateId"
+              defaultValue=""
+              className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+            >
+              <option value="">The one that fits the kind</option>
+              {TEMPLATES.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.title}: {t.summary}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button>Create site</Button>
+        </form>
+      )}
 
       {linkable.length > 0 && (
         <form action={linkSiteProject} className="space-y-2 pt-2">
@@ -421,6 +453,38 @@ export default async function Sites({
         </form>
       )}
     </Page>
+  );
+}
+
+/** Which members who work on this client may only view the site; the rest manage it. */
+function AccessForm({ siteId, members }: { siteId: string; members: SiteMember[] }) {
+  const viewers = members.filter((m) => m.level === "view").length;
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-neutral-600">
+        Who can change it
+        {viewers > 0 ? ` (${viewers} view only)` : ""}
+      </summary>
+      <form action={saveSiteAccess} className="space-y-2 pt-2">
+        <input type="hidden" name="siteId" value={siteId} />
+        <p className="text-neutral-600">
+          Members who work on this client can build and change the site. Tick the ones who should
+          only view it. Owners and admins can always change it.
+        </p>
+        {members.map((m) => (
+          <label key={m.memberId} className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              name="viewOnly"
+              value={m.memberId}
+              defaultChecked={m.level === "view"}
+            />
+            {m.name} <span className="text-neutral-500">· {m.email} · view only</span>
+          </label>
+        ))}
+        <Button>Save access</Button>
+      </form>
+    </details>
   );
 }
 

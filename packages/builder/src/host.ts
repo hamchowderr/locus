@@ -13,6 +13,7 @@ import {
   recordUsage,
   requireAgencyManager,
   type SessionContext,
+  siteAccessLevel,
   type UsageMeasurement,
 } from "@locus/auth";
 import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
@@ -143,7 +144,7 @@ export const siteRuntimeKey = (client: AuthorizedClient, siteId: string) =>
  * The control `site` row for `siteId`, only if it is this client's. Refuses (403, saying no
  * more) a missing site and another client's site alike.
  */
-export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
+async function siteOfClient(db: ControlDb, client: AuthorizedClient, siteId: string) {
   assertAuthorizedClient(client);
   const [row] = siteId
     ? await db
@@ -152,6 +153,37 @@ export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId
         .where(and(eq(site.id, siteId), eq(site.locationId, client.location.id)))
     : [];
   if (!row) throw new ClientAccessDenied("site is not this client's");
+  return row;
+}
+
+export const SITE_BUILDER_OFF =
+  "The site builder is turned off for this client. An owner or admin can turn it on on the Clients page.";
+export const SITE_VIEW_ONLY =
+  "You can view this site but not change it. An owner or admin can change that on the Sites page.";
+
+/**
+ * Why the member behind `client` may not build `siteId` (a site of the client), or null: the
+ * site builder is off for the client, or the member is view-only on the site.
+ */
+export async function buildRefusal(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<string | null> {
+  if (!client.location.siteBuilder) return SITE_BUILDER_OFF;
+  if ((await siteAccessLevel(db, client, siteId)) === "view") return SITE_VIEW_ONLY;
+  return null;
+}
+
+/**
+ * The control `site` row for `siteId`, only if it is this client's and the member behind
+ * `client` may build it (`buildRefusal`). Refuses (403, saying no more) a missing site, another
+ * client's site and one the member may not build alike; check `buildRefusal` first to say why.
+ */
+export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
+  const row = await siteOfClient(db, client, siteId);
+  const refusal = await buildRefusal(db, client, row.id);
+  if (refusal) throw new ClientAccessDenied(refusal);
   return row;
 }
 
@@ -633,7 +665,12 @@ export function createSiteBuilder(
       throw new ClientAccessDenied("request is for another client");
     }
     const { client, userId } = await reauthorize(deps.db, requester);
-    await clientSite(deps.db, client, siteId);
+    const refusal = await buildRefusal(
+      deps.db,
+      client,
+      (await siteOfClient(deps.db, client, siteId)).id,
+    );
+    if (refusal) throw new BuilderError(refusal);
     const lease = await leaseClientDb(deps.openClientDb, client);
     const onVersionSaved = deps.publish
       ? publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl)
@@ -704,8 +741,9 @@ export async function activeSiteIdFor(
 
 /**
  * Records `siteId` as the site the builder works on for this signed-in session, after checking
- * it is `client`'s (a refused site throws `ClientAccessDenied`). The agent server, which gets no
- * cookies, reads it back with `activeSiteIdForSession`.
+ * it is `client`'s (another client's site throws `ClientAccessDenied`, one the member may not
+ * build `SiteInputError`). The agent server, which gets no cookies, reads it back with
+ * `activeSiteIdForSession`.
  */
 export async function chooseActiveSite(
   db: ControlDb,
@@ -713,7 +751,9 @@ export async function chooseActiveSite(
   client: AuthorizedClient,
   siteId: string,
 ): Promise<string> {
-  const row = await clientSite(db, client, siteId);
+  const row = await siteOfClient(db, client, siteId);
+  const refusal = await buildRefusal(db, client, row.id);
+  if (refusal) throw new SiteInputError(refusal);
   await db.update(session).set({ activeSiteId: row.id }).where(eq(session.id, ctx.id));
   return row.id;
 }
@@ -839,6 +879,7 @@ export async function createClientSite(
   if (templateId && !templateById(templateId)) {
     throw new SiteInputError("Pick one of the templates.");
   }
+  if (!client.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
   if (deps.billing) {
     const refusal = await newSiteRefusal(deps.db, client.location.organizationId);
     if (refusal) throw new SiteInputError(refusal);
@@ -905,7 +946,10 @@ export async function copyClientSite(
   if (!name || name.length > 120) {
     throw new SiteInputError("Give the copy a name of up to 120 characters.");
   }
-  const source = await clientSite(deps.db, from, siteId);
+  const source = await siteOfClient(deps.db, from, siteId);
+  const refusal = await buildRefusal(deps.db, from, source.id);
+  if (refusal) throw new SiteInputError(refusal);
+  if (!to.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
   if (deps.billing) {
     const refusal = await newSiteRefusal(deps.db, to.location.organizationId);
     if (refusal) throw new SiteInputError(refusal);
@@ -998,7 +1042,8 @@ export async function deleteClientSite(
 ): Promise<void> {
   assertAuthorizedClient(client);
   await requireAgencyManager(deps.db, ctx);
-  const row = await clientSite(deps.db, client, siteId);
+  // Not `clientSite`: owners and admins may tidy away drafts with the site builder off.
+  const row = await siteOfClient(deps.db, client, siteId);
   if (row.repoFullName || row.hostProjectId || row.customDomain) {
     throw new SiteInputError(
       "This site is saved to GitHub or published on Vercel, so it can't be deleted here.",
