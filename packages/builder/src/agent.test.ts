@@ -151,7 +151,8 @@ test("the builder loads a skill, reads its files, and gets a clean error for an 
     lines: expect.stringMatching(/^1-3 of \d+$/),
   });
   expect(outputs.call_bad).toEqual({
-    error: 'There\'s no skill called "colours". Skills: impeccable, shadcn, site-forms.',
+    error:
+      'There\'s no skill called "colours". Skills: impeccable, shadcn, site-booking, site-forms, site-media.',
   });
   expect(outputs.call_badfile?.error).toMatch(/^site-forms has no file reference\/nope\.md/);
   // Skills are the package's own text: loading one never opens the client's site.
@@ -165,7 +166,13 @@ test("the bundled skills match their sources, parse, and keep their licences", a
   expect(SKILL_FILES).toEqual(await readSkillFiles());
   const skills = siteBuilderSkills();
   expect(skills.map((s) => s.name)).toEqual(SITE_BUILDER_SKILL_NAMES);
-  expect(SITE_BUILDER_SKILL_NAMES).toEqual(["impeccable", "shadcn", "site-forms"]);
+  expect(SITE_BUILDER_SKILL_NAMES).toEqual([
+    "impeccable",
+    "shadcn",
+    "site-booking",
+    "site-forms",
+    "site-media",
+  ]);
   for (const name of SITE_BUILDER_SKILL_NAMES) {
     expect(SITE_BUILDER_INSTRUCTIONS).toContain(`- ${name}: `);
   }

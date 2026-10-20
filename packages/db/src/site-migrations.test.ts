@@ -115,3 +115,32 @@ describe("site migrations", () => {
     expect(Number(children.rows[0]?.n)).toBe(1);
   });
 });
+
+describe("publishing at the same time", () => {
+  it("treats a migration another publish just applied as done", async () => {
+    const migrations = siteMigrationsIn(files);
+    // The other publish lands between this one's check and its apply.
+    const racing = {
+      execute: db.execute.bind(db),
+      migrate: async (statements: Parameters<Client["migrate"]>[0]) => {
+        await applySiteMigrations(db, migrations);
+        return db.migrate(statements);
+      },
+    } as unknown as Client;
+    await expect(applySiteMigrations(racing, migrations)).resolves.toEqual({ applied: [] });
+    const ledger = await db.execute(`select name from ${SITE_MIGRATIONS_TABLE} order by name`);
+    expect(ledger.rows.map((r) => r.name)).toEqual(["0000_bookings", "0001_notes"]);
+  });
+
+  it("leaves a lost connection as it is, not as the migration's fault", async () => {
+    const offline = {
+      execute: db.execute.bind(db),
+      migrate: async () => {
+        throw Object.assign(new Error("fetch failed"), { code: "SERVER_ERROR" });
+      },
+    } as unknown as Client;
+    const failure = await applySiteMigrations(offline, siteMigrationsIn(files)).catch((e) => e);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(SiteMigrationError);
+  });
+});

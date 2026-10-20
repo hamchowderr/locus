@@ -69,11 +69,15 @@ describe("TursoProvisioner", () => {
     await provisioner.mintToken("loc-abc", { ttl: "1h", readOnly: true });
     expect(calls[1]?.url.searchParams.get("authorization")).toBe("read-only");
 
-    for (const ttl of ["", "never", "10", "10s"]) {
+    // A published site's own token: reset by rotating its database's keys.
+    await provisioner.mintToken("site-abc", { ttl: "never" });
+    expect(calls[2]?.url.searchParams.get("expiration")).toBe("never");
+
+    for (const ttl of ["", "forever", "Never", "10", "10s"]) {
       await expect(provisioner.mintToken("loc-abc", { ttl })).rejects.toThrow(/lifetime/);
     }
     await expect(provisioner.mintToken("../other", { ttl: "10m" })).rejects.toThrow(/name/);
-    expect(calls).toHaveLength(2);
+    expect(calls).toHaveLength(3);
   });
 
   it("deletes, and treats a database that is already gone as deleted", async () => {
