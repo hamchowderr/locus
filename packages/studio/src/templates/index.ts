@@ -45,7 +45,6 @@ export {
   GHL_TRACKING_PATH,
   type GhlTracking,
   ghlTrackingFile,
-  isGhlTrackingHost,
   layoutWithTracking,
   parseTrackingSnippet,
 } from "./tracking.ts";
