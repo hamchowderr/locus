@@ -72,6 +72,8 @@ export interface PublishDeps extends SiteDeps {
   githubApp: GithubAppCredentials;
   /** Reaches app-style sites' own databases (`site-backend.ts`). Plain websites don't need it. */
   provisioner?: TenantProvisioner;
+  /** App-style sites' files keys (`siteFilesKey`); absent where Locus has no file storage. */
+  siteFilesKey?: (siteId: string) => string;
   /** GitHub's API (`fetch`, `apiBaseUrl`). `http` is Vercel's, as for sites. */
   github?: GithubHttp;
   /** Defaults to one cache per process. */
