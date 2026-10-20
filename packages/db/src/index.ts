@@ -8,6 +8,7 @@ export {
   TENANT_MIGRATIONS,
   type TenantDb,
 } from "./client.ts";
+export { type DownloadMigrationsOptions, downloadControlMigrations } from "./control-migrations.ts";
 export {
   finishProvisioning,
   offboardLocation,

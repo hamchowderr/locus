@@ -63,6 +63,14 @@ then brings every client's database up to date with `migrateTenants`: on Product
 the `staging` branch's Preview. Other Preview builds skip it, so a branch's unmerged migration
 never reaches staging's clients.
 
+Other Preview builds (pull requests) don't apply their own control migrations to the shared
+development database either: they check them on an empty in-memory database, then bring the
+shared one up to `main`'s migrations, read from GitHub. A pull request's migrations change
+under review (renumbered, regenerated), and each version that reached the shared database
+used to fail later builds ("duplicate column") or make Drizzle skip `main`'s older-dated
+migrations. So a Preview of a branch with a new control table runs without that table until
+the branch is merged.
+
 Agencies' own tokens are not in Infisical: they are sealed in the control database with
 `LOCUS_SECRETS_KEY`, which is itself one of those Infisical values.
 
