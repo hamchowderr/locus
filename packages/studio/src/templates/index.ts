@@ -41,6 +41,13 @@ export {
   withSearchFiles,
 } from "./search.ts";
 export { SHADCN_COMPONENTS } from "./shadcn.ts";
+export {
+  GHL_TRACKING_PATH,
+  type GhlTracking,
+  ghlTrackingFile,
+  layoutWithTracking,
+  parseTrackingSnippet,
+} from "./tracking.ts";
 
 export interface SiteTemplate {
   id: string;
