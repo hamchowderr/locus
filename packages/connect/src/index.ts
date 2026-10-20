@@ -117,6 +117,7 @@ export {
   type SiteFileStore,
   type SiteFilesDeps,
   type StoredSiteFile,
+  siteFileHeaders,
   siteFilesFolder,
   siteFilesKey,
   siteFilesOverview,

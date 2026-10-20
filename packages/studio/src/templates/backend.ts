@@ -1,5 +1,7 @@
 import {
+  MAX_SITE_FILE_BYTES,
   SITE_DATABASE_ENV,
+  SITE_FILE_TYPES,
   SITE_MIGRATIONS_DIR,
   SITE_MIGRATIONS_TABLE,
   STATEMENT_BREAKPOINT,
@@ -381,30 +383,73 @@ async function ask(path: string, init: RequestInit = {}): Promise<Response> {
 }
 
 const localPath = (pathname: string) => {
-  if (!/^sites\\/preview\\/[\\w-]+\\/[\\w.-]+$/.test(pathname)) return null;
+  if (!/^sites\\/preview\\/[0-9a-f-]{36}\\/[\\w-][\\w.-]{0,79}$/.test(pathname)) return null;
   return join(${JSON.stringify(LOCAL_FILES)}, pathname);
 };
+
+/** What members may upload: the same in the preview as on the published site. */
+export const FILE_TYPES: readonly string[] = ${JSON.stringify(SITE_FILE_TYPES)};
+export const MAX_FILE_BYTES = ${MAX_SITE_FILE_BYTES};
+
+/** The headers a file is sent with: never sniffed, never run as a page. */
+function fileHeaders(contentType: string): Record<string, string> {
+  const pdf = contentType === "application/pdf";
+  const shown = pdf || contentType.startsWith("image/");
+  return {
+    "content-type": contentType,
+    "x-content-type-options": "nosniff",
+    "cache-control": "private, no-store",
+    ...(pdf ? {} : { "content-security-policy": "sandbox; default-src 'none'" }),
+    ...(shown ? {} : { "content-disposition": "attachment" }),
+  };
+}
 
 /** Starts an upload: where the file will be, and the token the browser sends it with. */
 export async function startUpload(file: { name: string; contentType: string; size: number }) {
   if (previewFiles) {
-    const name = file.name.replace(/[^\\w.-]+/g, "-").replace(/^[.-]+/, "").slice(-80) || "file";
-    return { pathname: \`sites/preview/\${randomUUID()}/\${name}\`, token: null };
+    const contentType = file.contentType.toLowerCase();
+    if (!FILE_TYPES.includes(contentType)) {
+      throw new FilesError("That kind of file can't be uploaded here.");
+    }
+    if (!Number.isInteger(file.size) || file.size < 1 || file.size > MAX_FILE_BYTES) {
+      throw new FilesError(\`Files can be up to \${MAX_FILE_BYTES / 1024 / 1024} MB.\`);
+    }
+    const name =
+      file.name.split(/[\\\\/]/).pop()?.replace(/[^\\w.-]+/g, "-").slice(-80).replace(/^[.-]+/, "") ||
+      "file";
+    return { pathname: \`sites/preview/\${randomUUID()}/\${name}\`, token: null, contentType };
   }
   const res = await ask("upload", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(file),
   });
-  return (await res.json()) as { pathname: string; token: string };
+  return (await res.json()) as { pathname: string; token: string; contentType: string };
 }
 
-/** The preview's stand-in for storage: keeps an uploaded file in ${LOCAL_FILES}. */
-export async function savePreviewFile(pathname: string, bytes: ArrayBuffer) {
+/**
+ * The preview's stand-in for storage: keeps one new file in ${LOCAL_FILES}, with its type next
+ * to it. Refuses a file that is too big, of a kind members can't upload, or already there.
+ */
+export async function savePreviewFile(pathname: string, request: Request) {
   const path = previewFiles ? localPath(pathname) : null;
   if (!path) throw new FilesError("That isn't a file this preview can keep.");
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+  if (!FILE_TYPES.includes(contentType)) {
+    throw new FilesError("That kind of file can't be uploaded here.");
+  }
+  if (Number(request.headers.get("content-length") ?? 0) > MAX_FILE_BYTES) {
+    throw new FilesError("That file is too big.");
+  }
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength < 1 || bytes.byteLength > MAX_FILE_BYTES) {
+    throw new FilesError("That file is too big.");
+  }
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, Buffer.from(bytes));
+  await writeFile(path, bytes, { flag: "wx" }).catch(() => {
+    throw new FilesError("That file is already there.");
+  });
+  await writeFile(\`\${path}.type\`, contentType);
 }
 
 /** A file, as a response to send the member, or null when there is none. */
@@ -412,15 +457,15 @@ export async function fileResponse(pathname: string): Promise<Response | null> {
   if (previewFiles) {
     const path = localPath(pathname);
     const bytes = path ? await readFile(path).catch(() => null) : null;
-    return bytes ? new Response(new Uint8Array(bytes)) : null;
+    if (!path || !bytes) return null;
+    const contentType = await readFile(\`\${path}.type\`, "utf8").catch(() => "");
+    if (!FILE_TYPES.includes(contentType)) return null;
+    return new Response(new Uint8Array(bytes), { headers: fileHeaders(contentType) });
   }
   const res = await ask(\`read?pathname=\${encodeURIComponent(pathname)}\`);
   if (res.status === 404) return null;
   return new Response(res.body, {
-    headers: {
-      "content-type": res.headers.get("content-type") ?? "application/octet-stream",
-      "x-content-type-options": "nosniff",
-    },
+    headers: fileHeaders(res.headers.get("content-type") ?? "application/octet-stream"),
   });
 }
 
@@ -431,6 +476,7 @@ export async function deleteFiles(pathnames: string[]) {
     for (const pathname of pathnames) {
       const path = localPath(pathname);
       if (path) await rm(path, { force: true });
+      if (path) await rm(\`\${path}.type\`, { force: true });
     }
     return;
   }
@@ -488,7 +534,7 @@ export async function PUT(request: Request, { params }: Params) {
   if (!(await member())) return refused("Sign in to upload files.", 401);
   const pathname = new URL(request.url).searchParams.get("pathname") ?? "";
   try {
-    await savePreviewFile(pathname, await request.arrayBuffer());
+    await savePreviewFile(pathname, request);
     return Response.json({ pathname });
   } catch (error) {
     if (error instanceof FilesError) return refused(error.message, 400);
@@ -523,18 +569,24 @@ export async function uploadFile(file: File): Promise<{ pathname: string }> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: file.name, contentType: file.type, size: file.size }),
   });
-  const start = (await res.json()) as { pathname?: string; token?: string | null; error?: string };
+  const start = (await res.json()) as {
+    pathname?: string;
+    token?: string | null;
+    contentType?: string;
+    error?: string;
+  };
   if (!res.ok || !start.pathname) throw new Error(start.error ?? "The file couldn't be uploaded.");
   if (start.token) {
     await put(start.pathname, file, {
       access: "private",
       token: start.token,
-      contentType: file.type,
+      contentType: start.contentType ?? file.type,
       multipart: file.size > 5 * 1024 * 1024,
     });
   } else {
     const saved = await fetch(\`/api/files/preview?pathname=\${encodeURIComponent(start.pathname)}\`, {
       method: "PUT",
+      headers: { "content-type": start.contentType ?? file.type },
       body: file,
     });
     if (!saved.ok) throw new Error("The file couldn't be uploaded.");

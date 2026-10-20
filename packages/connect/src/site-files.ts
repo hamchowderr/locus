@@ -1,6 +1,6 @@
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { type AuthorizedClient, assertAuthorizedClient } from "@locus/auth";
-import type { ControlDb } from "@locus/db";
+import { type ControlDb, MAX_SITE_FILE_BYTES, SITE_FILE_TYPES } from "@locus/db";
 import { location, site, siteBackend } from "@locus/db/control";
 import { and, eq } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
@@ -18,24 +18,7 @@ import { ConnectError } from "./errors.ts";
 // paths under the site's own folder are accepted. Which client the site belongs to comes from
 // its registry row, never from the request.
 
-/** The largest file a site's member may upload. */
-export const MAX_SITE_FILE_BYTES = 25 * 1024 * 1024;
-
-/** What a site's members may upload: pictures and everyday documents. */
-export const SITE_FILE_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "image/avif",
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-] as const;
+export { MAX_SITE_FILE_BYTES, SITE_FILE_TYPES };
 
 /** How long an upload token lives. */
 const UPLOAD_TTL_MS = 10 * 60 * 1000;
@@ -97,9 +80,25 @@ function safeName(name: string): string {
   const cleaned = base
     .normalize("NFKD")
     .replace(/[^\w.-]+/g, "-")
-    .replace(/^[.-]+/, "")
-    .slice(-80);
+    .slice(-80)
+    .replace(/^[.-]+/, "");
   return cleaned || "file";
+}
+
+/**
+ * How a member's file is sent back: with its own type, never sniffed, never run as a page, and
+ * downloaded rather than shown unless it is a picture or a PDF.
+ */
+export function siteFileHeaders(contentType: string): Record<string, string> {
+  const pdf = contentType === "application/pdf";
+  const shown = pdf || contentType.startsWith("image/");
+  return {
+    "content-type": contentType,
+    "x-content-type-options": "nosniff",
+    // Browsers won't open a PDF under a sandbox policy; a PDF can't run the site's scripts.
+    ...(pdf ? {} : { "content-security-policy": "sandbox; default-src 'none'" }),
+    ...(shown ? {} : { "content-disposition": "attachment" }),
+  };
 }
 
 export type SiteFileAnswer =
@@ -128,17 +127,22 @@ async function siteFor(deps: SiteFilesDeps, siteId: string, authorization: strin
   return row?.status === "active" ? row.siteId : null;
 }
 
-/** A path the site named, if it is one of its own files. */
+/**
+ * A path the site named, if it is one of its own files. Only the exact shape Locus hands out
+ * is accepted (`sites/<siteId>/<uuid>/<safe name>`): storage builds a URL from the path, and
+ * a URL parser turns `%2e%2e` or `\\` into a step up into another site's folder.
+ */
 function ownPath(siteId: string, value: unknown): string | null {
-  if (typeof value !== "string" || value.length > 400) return null;
-  const folder = siteFilesFolder(siteId);
-  if (!value.startsWith(folder)) return null;
-  const rest = value.slice(folder.length);
-  if (!rest || rest.split("/").some((part) => !part || part === "." || part === "..")) {
-    return null;
-  }
-  return value;
+  if (typeof value !== "string") return null;
+  const rest = value.startsWith(siteFilesFolder(siteId))
+    ? value.slice(siteFilesFolder(siteId).length)
+    : null;
+  return rest !== null && OWN_FILE.test(rest) ? value : null;
 }
+
+/** `<uuid>/<name>`, the name as `safeName` makes it. */
+const OWN_FILE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[\w-][\w.-]{0,79}$/;
 
 /** A new upload: the client token and where the file will be. */
 export async function startSiteFileUpload(
@@ -169,7 +173,7 @@ export async function startSiteFileUpload(
     maxBytes: Math.min(body.size, MAX_SITE_FILE_BYTES),
     validUntil,
   });
-  return { status: 200, body: { pathname, token, validUntil } };
+  return { status: 200, body: { pathname, token, validUntil, contentType } };
 }
 
 /** One of the site's files, for the site's route to stream to its member. */
