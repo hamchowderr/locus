@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Find the contacts with an email address at example.org.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 1,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "Search all contacts and filter in SQL.",
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\":\"c\",\"operation\":\"contacts.search-contacts-advanced\",\"params\":{\"body\":{\"pageLimit\":100}}}], \"sql\": \"SELECT id, firstName, lastName, email FROM c WHERE lower(email) LIKE '%@example.org' ORDER BY lastName\"}",
+            "id": "toolu_01Lee9GYnKcTjLBNR1a3mJWV"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 6653,
+          "completion_tokens": 176,
+          "total_tokens": 6829,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.030132,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.030132
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1422,
+        "interChunkDelaysMs": [
+          0, 0, 0, 102, 35, 52, 51, 48, 81, 118, 53, 57, 48, 40, 51, 52, 66, 131, 3, 0
+        ],
+        "totalDurationMs": 2410
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

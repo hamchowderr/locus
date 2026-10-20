@@ -1,0 +1,54 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the contact Casey Placeholder.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 4,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "One match: fake-contact-03.",
+        "toolCalls": [
+          {
+            "name": "perform_action",
+            "arguments": "{\"operation\": \"contacts.delete-contact\", \"params\": {\"path\": {\"contactId\": \"fake-contact-03\"}}}",
+            "id": "toolu_01EjPv6hZgJGiwCAMqYq9WG7"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 7745,
+          "completion_tokens": 110,
+          "total_tokens": 7855,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.03318,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.03318
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 2094,
+        "interChunkDelaysMs": [0, 0, 9, 0, 69, 48, 152, 51, 49, 181, 3, 0],
+        "totalDurationMs": 2656
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
