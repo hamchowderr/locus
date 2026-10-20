@@ -35,6 +35,7 @@ import {
   siteBackendOf,
 } from "./site-backend.ts";
 import {
+  resetSiteDatabaseKey,
   restoreSiteBackend,
   SITE_RESTORE_WINDOW_MS,
   type SiteRestoreDeps,
@@ -530,5 +531,90 @@ describe("restoring a site's database", () => {
     expect(await files()).toEqual([]);
     expect(await db.select().from(siteBackendRestore)).toEqual([]);
     expect(row.tursoDbName).toBe(siteDbName(SITE));
+  });
+});
+
+describe("resetting a site's database key", () => {
+  const revoked: string[] = [];
+  const revoking = () => {
+    revoked.length = 0;
+    const p = Object.create(provisioner) as LocalProvisioner;
+    p.revokeTokens = async (name: string) => {
+      revoked.push(name);
+    };
+    return { ...deps(), provisioner: p };
+  };
+
+  it("revokes every old key, gives the live site a new one and deploys it", async () => {
+    const { owner, row } = await withDatabase();
+    calls = [];
+    expect(await resetSiteDatabaseKey(revoking(), ctx("owner"), owner, { siteId: SITE })).toEqual({
+      redeployed: true,
+    });
+    expect(revoked).toEqual([row.tursoDbName]);
+    // The new key replaces the old one in place, and production is deployed again.
+    expect(paths("PATCH")).toContain("/v9/projects/prj_1/env/env_SITE_DATABASE_TOKEN");
+    expect(paths("DELETE")).toEqual([]);
+    expect(paths("POST")).toContain("/v13/deployments");
+    const [logged] = await db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, "site.backend.key.reset"));
+    expect(logged?.detail).toMatchObject({ siteId: SITE, dbName: row.tursoDbName });
+    expect((await restoreRow())?.busyUntil).toBeNull();
+  });
+
+  it("is for owners and admins, on the session's client, one change at a time", async () => {
+    await withDatabase();
+    const staff = await authorizeClient(db, ctx("staff"), "client-1");
+    await expect(
+      resetSiteDatabaseKey(revoking(), ctx("staff"), staff, { siteId: SITE }),
+    ).rejects.toThrow();
+    const other = await authorizeClient(db, ctx("owner"), "client-2");
+    await expect(
+      resetSiteDatabaseKey(revoking(), ctx("owner"), other, { siteId: SITE }),
+    ).rejects.toThrow("That site isn't one of this client's.");
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    // A restore or publish holds the site.
+    await db.insert(siteBackendRestore).values({
+      siteId: SITE,
+      locationId: "client-1",
+      currentSince: new Date(clock),
+      busyUntil: new Date(Date.now() + 60_000),
+    });
+    await expect(
+      resetSiteDatabaseKey(revoking(), ctx("owner"), owner, { siteId: SITE }),
+    ).rejects.toThrow(BUSY);
+    expect(revoked).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("only resets the key of a site that isn't published yet", async () => {
+    const { owner, row } = await withDatabase();
+    await db.update(site).set({ hostProjectId: null }).where(eq(site.id, SITE));
+    calls = [];
+    expect(await resetSiteDatabaseKey(revoking(), ctx("owner"), owner, { siteId: SITE })).toEqual({
+      redeployed: false,
+    });
+    expect(revoked).toEqual([row.tursoDbName]);
+    expect(calls).toEqual([]);
+  });
+
+  it("leaves the new key to the next publish when Vercel won't take it", async () => {
+    const { owner, row } = await withDatabase();
+    failing = (method) => method === "PATCH";
+    await expect(
+      resetSiteDatabaseKey(revoking(), ctx("owner"), owner, { siteId: SITE }),
+    ).rejects.toThrow("Publish the site to finish.");
+    expect(revoked).toEqual([row.tursoDbName]);
+    expect(await restoreRow()).toMatchObject({ envStale: true, busyUntil: null });
+
+    failing = () => false;
+    calls = [];
+    expect(await ensureSiteBackendEnv(deps(), owner, { siteId: SITE })).toEqual([
+      "SITE_DATABASE_URL",
+      "SITE_DATABASE_TOKEN",
+    ]);
+    expect((await restoreRow())?.envStale).toBe(false);
   });
 });

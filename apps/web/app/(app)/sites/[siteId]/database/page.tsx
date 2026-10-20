@@ -19,7 +19,7 @@ import { configured, connectDeps } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { restoreDatabase, undoDatabaseRestore } from "./actions";
+import { resetDatabaseKey, restoreDatabase, undoDatabaseRestore } from "./actions";
 
 const PAGE_SIZE = 50;
 
@@ -68,13 +68,14 @@ export default async function SiteDatabase({
     error?: string;
     restored?: string;
     undone?: string;
+    keyReset?: string;
   }>;
 }) {
   const { siteId } = await params;
   const current = await currentSession();
   if (!current) redirect(`/sign-in?next=${encodeURIComponent(`/sites/${siteId}/database`)}`);
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { table, page, error: actionError, restored, undone } = await searchParams;
+  const { table, page, error: actionError, restored, undone, keyReset } = await searchParams;
   const client = await resolveActiveClient(locus().db, sessionContext(current)).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
     throw e;
@@ -177,6 +178,14 @@ export default async function SiteDatabase({
           {(restored ?? undone) === "live"
             ? "The live site switches over once its new deployment is ready, in a minute or two."
             : "The site uses it from its next publish."}
+        </Notice>
+      )}
+      {keyReset && (
+        <Notice tone="info">
+          The database has a new key and every old one has stopped working.{" "}
+          {keyReset === "live"
+            ? "The live site can reach its database again once its new deployment is ready, in a minute or two."
+            : "The site gets the new key with its next publish."}
         </Notice>
       )}
       {overview && (
@@ -382,6 +391,30 @@ export default async function SiteDatabase({
               </button>
             </form>
           )}
+        </section>
+      )}
+      {restore && (
+        <section className="space-y-2">
+          <h2 className="font-semibold">Database key</h2>
+          <p className="text-xs text-neutral-500">
+            The live site reaches its database with a key that only works for this database. If you
+            think it has leaked, reset it: every old key stops working and the live site is deployed
+            again with a new one. Until that deployment is ready, in a minute or two, the live site
+            can't reach its database.
+          </p>
+          <form action={resetDatabaseKey} className="space-y-2 text-sm">
+            <input type="hidden" name="siteId" value={siteId} />
+            <label className="flex items-center gap-2">
+              <input type="checkbox" name="confirm" value="yes" required />
+              <span>I understand sign-ins and sign-ups stop for a minute or two.</span>
+            </label>
+            <button
+              type="submit"
+              className="rounded-md border border-neutral-300 px-3 py-1 font-medium"
+            >
+              Reset the key
+            </button>
+          </form>
         </section>
       )}
     </Page>
