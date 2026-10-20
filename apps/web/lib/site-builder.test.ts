@@ -951,6 +951,13 @@ describe("view-only access to a site", () => {
     ]);
     expect(await siteAccessLevel(db, staff, siteId)).toBe("view");
     expect(await siteAccessLevel(db, owner, siteId)).toBe("manage");
+    // Promoted to admin: they manage everything, and saving the site's access leaves their
+    // setting alone for if they're made a member again.
+    await db.update(member).set({ role: "admin" }).where(eq(member.id, "staff@agency-a"));
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("manage");
+    await setSiteAccess(db, ctx("owner"), owner, siteId, []);
+    await db.update(member).set({ role: "member" }).where(eq(member.id, "staff@agency-a"));
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("view");
     await setSiteAccess(db, ctx("owner"), owner, siteId, []);
     expect(await siteAccessLevel(db, staff, siteId)).toBe("manage");
   });
@@ -1093,15 +1100,23 @@ describe("deleting a site", () => {
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
   });
 
-  it.each([
-    { repoFullName: "agency/a-site" },
-    { hostProjectId: "prj_1" },
-    { customDomain: "www.example.com" },
-  ])("refuses a published site (%o), and leaves it as it was", async (published) => {
+  it("deletes a site saved to GitHub from Locus only", async () => {
     const { client, siteId } = await draft();
-    await db.update(site).set(published).where(eq(site.id, siteId));
+    await db.update(site).set({ repoFullName: "agency/a-site" }).where(eq(site.id, siteId));
+    await deleteClientSite(deps(), ctx("owner"), client, siteId);
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 0, briefs: 0 });
+  });
+
+  it.each([
+    { repoFullName: "agency/a-site", hostProjectId: "prj_1" },
+    { hostProjectId: "prj_1" },
+    { hostProjectId: "prj_1", customDomain: "www.example.com" },
+  ])("refuses a site that may be live on Vercel (%o), and leaves it as it was", async (live) => {
+    const { client, siteId } = await draft();
+    await db.update(site).set(live).where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
-      /can't be deleted here/,
+      /unlink its Vercel project first/,
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });

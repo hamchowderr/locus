@@ -341,6 +341,7 @@ export async function publishLatestVersion(
 ): Promise<{ version: number; commitSha: string }> {
   assertAuthorizedClient(client);
   await requireAgencyManager(deps.db, ctx);
+  if (!client.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
   const row = await clientSite(deps.db, client, siteId);
   if (!row.repoFullName) {
     throw new SiteInputError("Give the site a GitHub repository first.");
@@ -1024,14 +1025,16 @@ export async function copyClientSite(
 }
 
 /**
- * Deletes a draft site of the session's client (the client from `client`, never the form):
- * its files, versions, brief and runs in the client's own database, then its control row, with
- * an audit entry; any session that had chosen it forgets it. Owners and admins only.
+ * Deletes a site of the session's client (the client from `client`, never the form): its
+ * files, versions, brief and runs in the client's own database, then its control row, with an
+ * audit entry; any session that had chosen it forgets it. Owners and admins only.
  *
- * A site with a repository or a Vercel project is refused: its published copy would keep
- * sending leads to a site Locus no longer knows, and Locus never deletes anything on the
- * agency's GitHub or Vercel. The site's `site.create` entry stays, so deleting doesn't give
- * back plan allowance. The site's sandbox is not removed yet: no one can reach it once the row
+ * A site saved to a repository can be deleted too: Locus never deletes anything on the
+ * agency's GitHub, so the repository stays. A site with a Vercel project or a custom domain is
+ * refused: its copy may be live (on `*.vercel.app` or a domain added on Vercel), and its forms
+ * would stop reaching the CRM with no way to point them at a new site. Unlinking the project
+ * first (`unlinkHostProject`) is the owner's deliberate step.
+ * The site's `site.create` entry stays, so deleting doesn't give back plan allowance. The site's sandbox is not removed yet: no one can reach it once the row
  * is gone, and Vercel stops it when its timeout ends.
  */
 export async function deleteClientSite(
@@ -1044,9 +1047,9 @@ export async function deleteClientSite(
   await requireAgencyManager(deps.db, ctx);
   // Not `clientSite`: owners and admins may tidy away drafts with the site builder off.
   const row = await siteOfClient(deps.db, client, siteId);
-  if (row.repoFullName || row.hostProjectId || row.customDomain) {
+  if (row.hostProjectId || row.customDomain) {
     throw new SiteInputError(
-      "This site is saved to GitHub or published on Vercel, so it can't be deleted here.",
+      "This site may be live on Vercel. Remove its domain and unlink its Vercel project first, then delete the site.",
     );
   }
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
@@ -1084,8 +1087,8 @@ export async function deleteClientSite(
   } finally {
     release();
   }
-  // The row goes only if it is still an unpublished draft of this client: a repository or
-  // project linked while the files were being deleted keeps it.
+  // The row goes only if it is still this client's and not on Vercel: a project or domain
+  // added while the files were being deleted keeps it.
   const [, removed] = await deps.db.batch([
     deps.db.update(session).set({ activeSiteId: null }).where(eq(session.activeSiteId, siteId)),
     deps.db
@@ -1094,7 +1097,6 @@ export async function deleteClientSite(
         and(
           eq(site.id, siteId),
           eq(site.locationId, client.location.id),
-          isNull(site.repoFullName),
           isNull(site.hostProjectId),
           isNull(site.customDomain),
         ),
@@ -1102,9 +1104,7 @@ export async function deleteClientSite(
       .returning({ id: site.id }),
   ]);
   if (removed.length === 0) {
-    throw new SiteInputError(
-      "The site was saved to GitHub or published while it was being deleted. Reload the page.",
-    );
+    throw new SiteInputError("The site got a domain while it was being deleted. Reload the page.");
   }
   await deps.db.insert(auditLog).values({
     id: randomUUID(),

@@ -381,7 +381,16 @@ export async function setSiteAccess(
   if (wanted.some((id) => !known.has(id))) {
     throw new ClientAccessDenied("member doesn't work on this client");
   }
-  const clear = db.delete(siteMemberAccess).where(eq(siteMemberAccess.siteId, siteId));
+  // Only the members listed here: a member who was promoted to admin or taken off this client
+  // meanwhile keeps their setting for when that changes back.
+  const clear = known.size
+    ? db
+        .delete(siteMemberAccess)
+        .where(
+          and(eq(siteMemberAccess.siteId, siteId), inArray(siteMemberAccess.memberId, [...known])),
+        )
+    : null;
+  if (!clear) return;
   if (wanted.length === 0) {
     await clear;
     return;
