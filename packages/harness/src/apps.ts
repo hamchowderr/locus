@@ -1,5 +1,5 @@
 /**
- * Connected apps: Gmail, Slack and the other services a client connects on its Connections page,
+ * Connected apps: Gmail, Slack and the other services a client connects on its Apps page,
  * offered to the agent next to GoHighLevel. GHL itself never goes through here.
  *
  * The rules, all in code:
@@ -87,7 +87,7 @@ export function createAppTools(
           ...(notConnected.length > 0
             ? {
                 notConnected,
-                note: "These apps aren't connected for this client. Someone can connect them on the Connections page.",
+                note: "These apps aren't connected for this client. Someone can connect them on the Apps page.",
               }
             : {}),
         };

@@ -4,7 +4,7 @@
  *
  * Each Locus client is one Composio user (`appUserId`), so a client's chat can only ever use
  * the accounts that client connected. The session is built for that user with Locus's allowed
- * apps only, can't create sign-in links (connecting happens on the Connections page, by a
+ * apps only, can't create sign-in links (connecting happens on the Apps page, by a
  * person), and never falls back to Composio-owned "Instant" accounts, which Composio charges for.
  */
 
@@ -135,7 +135,7 @@ export interface AppConnection {
 }
 
 /**
- * Connecting and disconnecting a client's apps, for the Connections page. Callers check the
+ * Connecting and disconnecting a client's apps, for the Apps page. Callers check the
  * member may manage the client first; the client id comes from that check, never a form.
  * Connected-account ids are looked up for the client here, so nothing a browser sends can name
  * another client's account.
@@ -158,6 +158,21 @@ export function createComposioConnections({
     });
   const states = async (clientId: string) =>
     (await (await sessionFor(clientId)).toolkits({ toolkits: [...APP_TOOLKITS] })).items;
+  /** Every account the client has for the app, in any state, across Composio's pages. */
+  const accounts = async (clientId: string, slug: string) => {
+    const found: { id: string; status: string }[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const page = await composio.connectedAccounts.list({
+        userIds: [appUserId(clientId)],
+        toolkitSlugs: [slug],
+        ...(cursor ? { cursor } : {}),
+      });
+      found.push(...page.items.map((a) => ({ id: a.id, status: a.status })));
+      cursor = page.nextCursor;
+    } while (cursor);
+    return found;
+  };
   const offered = (toolkit: string) => {
     if (!allowed(toolkit)) throw new AppServiceError(`Locus doesn't offer ${toolkit}`);
     return toolkit.toLowerCase();
@@ -176,20 +191,28 @@ export function createComposioConnections({
       });
     },
 
-    /** The app's own sign-in page; it comes back to `callbackUrl` when the person is done. */
+    /**
+     * The app's own sign-in page; it comes back to `callbackUrl` when the person is done.
+     * Accounts left half-connected or expired by earlier tries are removed first, so they can't
+     * pile up where nobody can see or remove them.
+     */
     async connect(clientId: string, toolkit: string, callbackUrl: string): Promise<string> {
       const slug = offered(toolkit);
+      for (const account of await accounts(clientId, slug)) {
+        if (account.status !== "ACTIVE") await composio.connectedAccounts.delete(account.id);
+      }
       const request = await (await sessionFor(clientId)).authorize(slug, { callbackUrl });
       if (!request.redirectUrl)
         throw new AppServiceError(`Composio gave no sign-in link for ${toolkit}`);
       return request.redirectUrl;
     },
 
+    /** Removes every account the client has for the app, so none is left for the chat to use. */
     async disconnect(clientId: string, toolkit: string): Promise<void> {
       const slug = offered(toolkit);
-      const item = (await states(clientId)).find((i) => i.slug.toLowerCase() === slug);
-      const account = item?.connection?.connectedAccount?.id;
-      if (account) await composio.connectedAccounts.delete(account);
+      for (const account of await accounts(clientId, slug)) {
+        await composio.connectedAccounts.delete(account.id);
+      }
     },
   };
 }
