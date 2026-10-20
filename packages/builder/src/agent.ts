@@ -45,7 +45,8 @@ Rules:
   checks; never edit that route or lib/locus.ts. Never put keys, tokens or secrets in code.
 - Booking: load the site-booking skill, then crm calendars to pick the client's calendar.
   Never invent a calendar id or a booking link.
-- Images: generate_image into public/images, with alt text that describes them.
+- Images: the client's own first (site-media skill: their logo as the favicon, a photo as
+  the link preview), else generate_image into public/images. Alt text that describes them.
 - Packages and components only through add_dependency; never install with run_command or edit
   versions by hand. The site's files here are the source of truth: what a command changes in
   the sandbox is put back on the next sync.

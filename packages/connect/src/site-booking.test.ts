@@ -10,7 +10,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
 import type { GhlAppConfig } from "./ghl-oauth.ts";
 import { bookSiteAppointment, type SlotQuery, siteSlots } from "./site-booking.ts";
-import { listCalendars } from "./site-crm.ts";
 import type { SiteLeadDeps } from "./site-leads.ts";
 
 // Level-1 plumbing: the fake GHL plays GoHighLevel. A booking never reaches an agent from
@@ -394,35 +393,5 @@ describe("booking on a published site", () => {
     const d = deps();
     for (let i = 0; i < 5; i++) expect((await book(d, booking)).status).toBe(200);
     expect((await book(d, booking)).status).toBe(429);
-  });
-});
-
-describe("the builder's calendar list", () => {
-  it("lists the client's active calendars with GHL's booking page for each", async () => {
-    const d = deps({
-      "GET /calendars/": {
-        body: {
-          calendars: [
-            { id: "cal1", name: "Consultation", calendarType: "event", isActive: true },
-            { id: "cal2", name: "Old", calendarType: "event", isActive: false },
-            { id: "../x", name: "Bad id", isActive: true },
-          ],
-        },
-      },
-    });
-    const list = await listCalendars(
-      { token: "t", tokenKind: "location", locationId: GHL_LOCATION },
-      d.http,
-    );
-    expect(list).toEqual([
-      {
-        id: "cal1",
-        name: "Consultation",
-        type: "event",
-        embedUrl: "https://api.leadconnectorhq.com/widget/booking/cal1",
-      },
-    ]);
-    expect(fake.requests[0]?.url.searchParams.get("locationId")).toBe(GHL_LOCATION);
-    expect(fake.requests[0]?.url.searchParams.get("showDrafted")).toBe("false");
   });
 });

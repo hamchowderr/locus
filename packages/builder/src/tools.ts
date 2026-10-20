@@ -1,3 +1,4 @@
+import { CrmMediaError, type MediaFormat } from "@locus/connect";
 import { InvalidPathError, type SiteRuntime } from "@locus/sandbox";
 import {
   bookingComponentFile,
@@ -101,7 +102,33 @@ function writtenContents(writes: Map<string, string>): string {
 const IMAGE_EXT = /\.(png)$/i;
 
 const FILE_ACTIONS = ["list", "read", "write", "edit", "delete"] as const;
-const CRM_ACTIONS = ["calendars", "add_booking", "add_calendar_embed"] as const;
+const CRM_ACTIONS = [
+  "calendars",
+  "add_booking",
+  "add_calendar_embed",
+  "media",
+  "use_media",
+] as const;
+const MEDIA_USES = ["favicon", "share", "image"] as const;
+
+/**
+ * Where a Media Library image goes for each use, by format, in Next's own file conventions:
+ * `app/icon.*` / `app/favicon.ico` become the site's icon, `app/opengraph-image.*` its link
+ * preview. A format Next can't use there is missing.
+ */
+const MEDIA_TARGETS: Record<"favicon" | "share", Partial<Record<MediaFormat, string>>> = {
+  favicon: { png: "app/icon.png", jpg: "app/icon.jpg", ico: "app/favicon.ico" },
+  share: {
+    png: "app/opengraph-image.png",
+    jpg: "app/opengraph-image.jpg",
+    gif: "app/opengraph-image.gif",
+  },
+};
+/** Files that would compete with a new icon or link-preview image. */
+const MEDIA_RIVALS = {
+  favicon: /^app\/(icon\.[a-z]+|favicon\.ico)$/,
+  share: /^app\/opengraph-image\.[a-z]+$/,
+};
 const VERSION_ACTIONS = ["save", "list", "restore"] as const;
 
 /** A field an action needs, or a fixable error naming it. */
@@ -832,6 +859,57 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     return { written: piece.path };
   };
 
+  /** Copies a Media Library image into the site where its use needs it. */
+  const useMedia = async (
+    session: BuilderSession,
+    input: { id: string; as: (typeof MEDIA_USES)[number]; path?: string | undefined },
+  ) => {
+    if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+    let file: Awaited<ReturnType<NonNullable<BuilderSession["crm"]>["mediaFile"]>>;
+    try {
+      file = await session.crm.mediaFile(input.id);
+    } catch (error) {
+      if (error instanceof CrmMediaError) throw new BuilderError(error.message);
+      throw error;
+    }
+    let path: string;
+    if (input.as === "image") {
+      const name = file.name
+        .toLowerCase()
+        .replace(/\.[a-z0-9]+$/, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 60);
+      path = normalizeSitePath(input.path ?? `public/images/${name || input.id}.${file.format}`);
+      const ext = path.split(".").at(-1)?.toLowerCase();
+      const same = ext === file.format || (file.format === "jpg" && ext === "jpeg");
+      if (!path.startsWith("public/") || !same) {
+        throw new BuilderError(`Save it under public/ with a .${file.format} name.`);
+      }
+    } else {
+      const target = MEDIA_TARGETS[input.as][file.format];
+      if (!target) {
+        const formats = Object.keys(MEDIA_TARGETS[input.as]);
+        const fits = `${formats.slice(0, -1).join(", ")} or ${formats.at(-1)}`;
+        throw new BuilderError(
+          `A ${file.format} image can't be the site's ${input.as === "favicon" ? "icon" : "link preview"}; pick a ${fits} image.`,
+        );
+      }
+      path = target;
+      // One icon (or preview image) only: Next would refuse two.
+      const rivals = (await session.workspace.listFiles())
+        .map((f) => f.path)
+        .filter((p) => MEDIA_RIVALS[input.as as "favicon" | "share"].test(p) && p !== path);
+      if (rivals.length > 0) await session.workspace.deleteFiles(rivals);
+    }
+    await session.workspace.writeFile(path, file.bytes);
+    return {
+      saved: path,
+      ...(path.startsWith("public/") ? { src: `/${path.slice("public/".length)}` } : {}),
+      bytes: file.bytes.byteLength,
+    };
+  };
+
   const crm = createTool({
     id: "crm",
     description:
@@ -840,13 +918,30 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "components/booking.tsx, the site's own booking UI (<Booking calendarId=... />). " +
       "add_calendar_embed: write components/calendar-embed.tsx, GHL's own booking widget " +
       "(<CalendarEmbed src=embedUrl />). An existing file is kept unless `overwrite`. Load the " +
-      "site-booking skill first.",
+      "site-booking skill first. media: the client's Media Library images (id, name, format), " +
+      "newest first; `search` matches names. use_media: copy image `id` into the site `as` " +
+      "favicon (the site's icon), share (the link-preview image) or image (under public/, at " +
+      "`path` if given).",
     requireApproval: noApproval,
-    inputSchema: z.object({ action: z.enum(CRM_ACTIONS), overwrite: z.boolean().optional() }),
+    inputSchema: z.object({
+      action: z.enum(CRM_ACTIONS),
+      overwrite: z.boolean().optional(),
+      search: z.string().max(100).optional(),
+      id: z.string().max(64).optional(),
+      as: z.enum(MEDIA_USES).optional(),
+      path: z.string().optional(),
+    }),
     execute: withSession(
       async (
         session,
-        input: { action: (typeof CRM_ACTIONS)[number]; overwrite?: boolean | undefined },
+        input: {
+          action: (typeof CRM_ACTIONS)[number];
+          overwrite?: boolean | undefined;
+          search?: string | undefined;
+          id?: string | undefined;
+          as?: (typeof MEDIA_USES)[number] | undefined;
+          path?: string | undefined;
+        },
       ) => {
         switch (input.action) {
           case "calendars": {
@@ -885,6 +980,29 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           case "add_calendar_embed":
             return addPiece(session, calendarEmbedFile(), input.overwrite ?? false);
+          case "media": {
+            if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+            const media = await session.crm.media(input.search);
+            if (media.length === 0) {
+              return {
+                media: "",
+                note: input.search
+                  ? "No images match that name."
+                  : "The client's Media Library has no images yet.",
+              };
+            }
+            return {
+              media: media
+                .map((m) => `id: ${m.id} | name: ${m.name} | format: ${m.format}`)
+                .join("\n"),
+            };
+          }
+          case "use_media":
+            return useMedia(session, {
+              id: need(input.id, "use_media needs the image's id from media"),
+              as: need(input.as, "use_media needs `as`: favicon, share or image"),
+              path: input.path,
+            });
         }
       },
     ),
