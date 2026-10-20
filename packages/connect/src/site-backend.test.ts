@@ -36,6 +36,7 @@ import {
   siteBackendOf,
   siteBackendOverview,
   siteBackendRows,
+  sitesWithBackend,
 } from "./site-backend.ts";
 import { vercelSecretRef } from "./vercel.ts";
 
@@ -162,6 +163,16 @@ describe("site backend", () => {
     await expect(
       siteBackendRows(deps, staff, { siteId: SITE, table: "sqlite_master" }),
     ).rejects.toBeInstanceOf(ConnectError);
+    // Password hashes and session tokens never reach the dashboard.
+    for (const table of ["account", "session", "verification"]) {
+      await expect(siteBackendRows(deps, staff, { siteId: SITE, table })).rejects.toThrow(
+        "That table holds login secrets, so Locus doesn't show its rows.",
+      );
+    }
+    expect(await sitesWithBackend(db, staff)).toEqual(new Set([SITE]));
+    expect(await sitesWithBackend(db, await authorizeClient(db, ctx("owner"), "client-2"))).toEqual(
+      new Set(),
+    );
   });
 
   it("deletes the database and its row, for owners and admins only", async () => {
