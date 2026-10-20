@@ -174,6 +174,21 @@ beforeEach(async () => {
   });
 });
 
+/** Gives the agency's connection these scopes, as if it had been re-approved with them. */
+async function grant(scopes: string) {
+  await secrets.set(
+    ghlSecretRef("agency-a"),
+    JSON.stringify({
+      accessToken: "agency-token",
+      refreshToken: "refresh-token",
+      expiresAt: CLOCK + 2 * DAY,
+      scopes,
+      companyId: "company-1",
+      installedBy: "user-1",
+    }),
+  );
+}
+
 afterEach(async () => {
   vi.restoreAllMocks();
   db.$client.close();
@@ -428,8 +443,13 @@ describe("checkout on a published site", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     for (const invoiceUrl of [
       "http://link.msgsndr.com/invoice/inv1",
-      "https://evil.test/invoice/inv1",
+      // Not GHL's, and not a link to this invoice.
+      "https://evil.test/invoice/other",
+      "https://evil.test/inv1x",
       "https://link.msgsndr.com.evil.test/x",
+      "https://user:pw@link.example.test/invoice/inv1",
+      "https://link.example.test:8443/invoice/inv1",
+      "https://localhost/invoice/inv1",
       "https://user:pw@link.msgsndr.com/x",
       "javascript:alert(1)",
       undefined,
@@ -452,6 +472,47 @@ describe("checkout on a published site", () => {
       );
       expect(noteBody()).not.toContain("Nothing was charged");
     }
+  });
+
+  it("opens the payment page on an agency's white-label domain when it links to this invoice", async () => {
+    const whiteLabel = "https://link.agency.test/invoice/inv1?locale=en";
+    const result = await checkout(
+      deps({
+        ...okRoutes,
+        "POST /invoices/text2pay": {
+          body: { invoice: { _id: "inv1", invoiceNumber: 7 }, invoiceUrl: whiteLabel },
+        },
+      }),
+      order,
+    );
+    expect(result).toEqual({ status: 200, body: { ok: true, payUrl: whiteLabel } });
+    expect(noteBody()).toContain("invoice 7");
+    expect(noteBody()).not.toContain("couldn't open its payment page");
+  });
+
+  it("names the invoice with the sub-account's prefix when it may read invoice settings", async () => {
+    await grant(`${GRANTED} invoices.readonly`);
+    const result = await checkout(
+      deps({ ...okRoutes, "GET /invoices/settings": { body: { invoiceNumberPrefix: "INV-" } } }),
+      order,
+    );
+    expect(result.status).toBe(200);
+    const settings = fake.requests.find((r) => r.url.pathname === "/invoices/settings");
+    expect(settings?.url.searchParams.get("altId")).toBe(GHL_LOCATION);
+    expect(settings?.url.searchParams.get("altType")).toBe("location");
+    expect(noteBody()).toContain("(149.50 USD each) (test mode), invoice INV-1001");
+  });
+
+  it("keeps the bare invoice number when the settings can't be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await grant(`${GRANTED} invoices.readonly`);
+    const result = await checkout(
+      deps({ ...okRoutes, "GET /invoices/settings": { status: 500, body: { message: "no" } } }),
+      order,
+    );
+    // The invoice is made and answered all the same.
+    expect(result).toEqual({ status: 200, body: { ok: true, payUrl: PAY_URL } });
+    expect(noteBody()).toContain("(test mode), invoice 1001");
   });
 
   it("says the invoice may not have been made when GHL doesn't answer clearly", async () => {
@@ -624,5 +685,14 @@ describe("a payment page's address", () => {
     expect(isGhlPayUrl("https://link.msgsndr.com:8443/invoice/1")).toBe(false);
     expect(isGhlPayUrl("https://notmsgsndr.com/invoice/1")).toBe(false);
     expect(isGhlPayUrl(42)).toBe(false);
+  });
+
+  it("is on an agency's own domain only when it links to this very invoice", () => {
+    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1", "inv1")).toBe(true);
+    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1")).toBe(false);
+    expect(isGhlPayUrl("https://link.agency.test/invoice/inv2", "inv1")).toBe(false);
+    expect(isGhlPayUrl("https://link.agency.test/?invoice=inv1", "inv1")).toBe(false);
+    expect(isGhlPayUrl("http://link.agency.test/invoice/inv1", "inv1")).toBe(false);
+    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1", "../x")).toBe(false);
   });
 });
