@@ -2,7 +2,7 @@
 
 import { CheckIcon, PlugIcon } from 'lucide-react';
 import { useState } from 'react';
-import { useConnectPopup } from '@/app/apps/use-connect-popup';
+import { useConnectPopup } from '@/app/(app)/apps/use-connect-popup';
 import { Button } from '@/components/ui/button';
 
 const NAMES: Record<string, string> = {

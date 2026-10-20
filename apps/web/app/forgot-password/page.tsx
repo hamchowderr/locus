@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { requestPasswordReset } from "../actions";
-import { Button, Field, Notice, Page } from "../ui";
+import { AuthPage, Button, Field, Notice } from "../ui";
 
 export default async function ForgotPassword({
   searchParams,
@@ -10,7 +10,7 @@ export default async function ForgotPassword({
   const { sent } = await searchParams;
   if (sent) {
     return (
-      <Page title="Check your email">
+      <AuthPage title="Check your email">
         <Notice tone="info">
           If that address has a Locus account, we sent it a link to choose a new password. The link
           works once, for an hour.
@@ -20,11 +20,11 @@ export default async function ForgotPassword({
             Back to sign in
           </Link>
         </p>
-      </Page>
+      </AuthPage>
     );
   }
   return (
-    <Page title="Reset your password">
+    <AuthPage title="Reset your password">
       <p className="text-sm text-neutral-600">
         Enter your account's email and we'll send you a link to choose a new password.
       </p>
@@ -38,6 +38,6 @@ export default async function ForgotPassword({
           Sign in
         </Link>
       </p>
-    </Page>
+    </AuthPage>
   );
 }
