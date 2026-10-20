@@ -108,6 +108,9 @@ importers:
       '@locus/ghl':
         specifier: workspace:*
         version: link:../../packages/ghl
+      '@locus/harness':
+        specifier: workspace:*
+        version: link:../../packages/harness
       '@locus/sandbox':
         specifier: workspace:*
         version: link:../../packages/sandbox
