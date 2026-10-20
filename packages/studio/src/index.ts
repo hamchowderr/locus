@@ -20,12 +20,13 @@ export {
 } from "./paths.ts";
 export {
   DESCRIPTION_MAX,
+  imagesWithoutAlt,
   type PageSeo,
   pageRoute,
+  pageSeo,
   type SeoIssue,
   seoIssues,
   siteFacts,
-  sitePages,
   TITLE_MAX,
 } from "./seo.ts";
 export { startSite } from "./start.ts";

@@ -1,4 +1,4 @@
-import { siteFacts, sitePages } from "../seo.ts";
+import { pageSeo, siteFacts } from "../seo.ts";
 import type { SiteFile } from "../workspace.ts";
 import { withSearchFiles } from "./search.ts";
 
@@ -82,7 +82,7 @@ export function withLocusSettings(
   const facts = siteFacts(files);
   const name = facts.name || site.name || "Home";
   const description = facts.description ?? "";
-  const pages = sitePages(files)
+  const pages = pageSeo(files)
     .filter((p) => !p.noindex)
     .map((p) => ({
       path: p.path,

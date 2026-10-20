@@ -43,12 +43,12 @@ import {
 } from "@locus/sandbox";
 import {
   type PageSeo,
+  pageSeo,
   readBrief,
   type SeoIssue,
   SITE_KINDS,
   SiteWorkspace,
   seoIssues,
-  sitePages,
   startSite,
   templateById,
   type VersionInfo,
@@ -1079,7 +1079,7 @@ export async function siteSeo(
       const files = await workspace.versionFiles(version.id);
       checks.set(id, {
         version: version.number,
-        pages: sitePages(files),
+        pages: pageSeo(files),
         issues: seoIssues(files),
       });
     }
