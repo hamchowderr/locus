@@ -522,6 +522,11 @@ function findLiteral(
   if (match.path.startsWith("components/ui/")) {
     throw new EditRefused(`This comes from the item's design. ${ASK_CHAT}`);
   }
+  // A string that holds a link (e.g. `href: "https://..."` in data, or a prop rendered as both
+  // a link and its text) only ever becomes a link a site can use.
+  if (/^\s*(https?:|mailto:|tel:|\/|#)/i.test(from) && !safeUrl(to)) {
+    throw new EditRefused("That link isn't one a site can use.");
+  }
   if (match.attr) {
     // e.g. <Tag label="Contact" /> rendering {label}.
     return [match.path, { start: match.node.start, end: match.node.end, text: attrValue(to) }];

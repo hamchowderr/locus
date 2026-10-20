@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
 import { annotateSource, isAnnotatable } from "./visual-edits.ts";
 import { SOURCE_ATTR, VISUAL_EDITS_MESSAGE } from "./visual-edits-protocol.ts";
@@ -8,6 +9,23 @@ export const VISUAL_EDITS_SCRIPT_PATH = "public/__locus/visual-edits.js";
 const SCRIPT_URL = "/__locus/visual-edits.js";
 
 export { VISUAL_EDITS_MESSAGE } from "./visual-edits-protocol.ts";
+
+/**
+ * A fingerprint of the draft's files. The preview's script carries the one it was made from
+ * and the editor sends it with a save, so an edit is never placed by offsets taken from a
+ * page the draft has moved on from.
+ */
+export function draftFingerprint(files: SiteFile[]): string {
+  const hash = createHash("sha256");
+  for (const file of [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
+    hash.update(file.path).update("\0");
+    hash.update(
+      typeof file.content === "string" ? Buffer.from(file.content, "utf8") : file.content,
+    );
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
 
 /**
  * What the sandbox runs for the live preview: the draft, plus what visual edits need. Every
@@ -41,7 +59,7 @@ export function previewFiles(
   if (loadsScript) {
     out.push({
       path: VISUAL_EDITS_SCRIPT_PATH,
-      content: visualEditsScript(options.editorOrigins ?? []),
+      content: visualEditsScript(options.editorOrigins ?? [], draftFingerprint(files)),
     });
   }
   return out;
@@ -102,13 +120,14 @@ export function editorOrigin(url: string | null | undefined): string | null {
  * happens in Locus. It holds no credentials and only talks to the window that framed it, and
  * only when that window is one of `origins` (the Locus web app).
  */
-export function visualEditsScript(origins: string[]): string {
+export function visualEditsScript(origins: string[], draft = ""): string {
   return `(function () {
   if (window.__locusVisualEdits || window.parent === window) return;
   window.__locusVisualEdits = true;
   var SRC = ${JSON.stringify(SOURCE_ATTR)};
   var MSG = ${JSON.stringify(VISUAL_EDITS_MESSAGE)};
   var ORIGINS = ${JSON.stringify(origins)};
+  var DRAFT = ${JSON.stringify(draft)};
   var SHOWN = { src: 1, alt: 1, href: 1, className: 1, placeholder: 1, newTab: 1 };
   var parentOrigin = null;
   var enabled = false;
@@ -193,7 +212,7 @@ export function visualEditsScript(origins: string[]): string {
     if (location.pathname !== path) {
       path = location.pathname;
       selected = [];
-      post({ type: "ready", path: path, theme: theme() });
+      post({ type: "ready", path: path, theme: theme(), draft: DRAFT });
       report();
     }
     layer.innerHTML = "";
@@ -375,7 +394,7 @@ export function visualEditsScript(origins: string[]): string {
     var data = e.data;
     if (!data || data.source !== MSG) return;
     parentOrigin = e.origin;
-    if (data.type === "hello") post({ type: "ready", path: location.pathname, theme: theme() });
+    if (data.type === "hello") post({ type: "ready", path: location.pathname, theme: theme(), draft: DRAFT });
     else if (data.type === "enable") { enable(); report(); }
     else if (data.type === "disable") disable();
     else if (data.type === "clear") { selected = []; report(); }

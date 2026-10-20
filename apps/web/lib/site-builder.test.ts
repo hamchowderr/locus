@@ -48,7 +48,13 @@ import {
 } from "@locus/db/control";
 import { FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
-import { annotateSource, readBrief, SiteWorkspace, SOURCE_ATTR } from "@locus/studio";
+import {
+  annotateSource,
+  draftFingerprint,
+  readBrief,
+  SiteWorkspace,
+  SOURCE_ATTR,
+} from "@locus/studio";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -1273,15 +1279,22 @@ describe("visual edits", () => {
     const page = (await ws.readFile("app/services/page.tsx")) as string;
     const annotated = annotateSource("app/services/page.tsx", page);
     const target = new RegExp(`<h1 ${SOURCE_ATTR}="([^"]+)"`).exec(annotated)?.[1] ?? "";
-    return { client, siteId, ws, target };
+    const draft = draftFingerprint(await ws.snapshot());
+    return { client, siteId, ws, target, draft };
   }
 
   it("saves the changes as an edit version and updates the preview", async () => {
-    const { client, siteId, ws, target } = await siteWithHeading();
-    const saved = await saveVisualEdits(deps(), client, siteId, [
-      { kind: "text", target, from: "Services", to: "What we do" },
-      { kind: "text", target: "app/page.tsx:1", from: "x", to: "y" },
-    ]);
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
+    const saved = await saveVisualEdits(
+      deps(),
+      client,
+      siteId,
+      [
+        { kind: "text", target, from: "Services", to: "What we do" },
+        { kind: "text", target: "app/page.tsx:1", from: "x", to: "y" },
+      ],
+      draft,
+    );
     expect(saved).toMatchObject({ version: 2, applied: 1 });
     expect(saved.failed).toHaveLength(1);
     expect(await ws.latestVersion()).toMatchObject({
@@ -1302,36 +1315,78 @@ describe("visual edits", () => {
     );
     // The draft never carries the preview's annotations.
     expect(await ws.readFile("app/services/page.tsx")).not.toContain(SOURCE_ATTR);
+    // The preview's script knows which draft it shows, and the save says what the draft is now.
+    expect(saved.draft).toBe(draftFingerprint(await ws.snapshot()));
+    expect(runtime.files.get("public/__locus/visual-edits.js")).toContain(
+      `var DRAFT = "${saved.draft}"`,
+    );
+  });
+
+  it("refuses edits made on a preview of older files", async () => {
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
+    // The site builder changed the page after the preview loaded.
+    const page = (await ws.readFile("app/services/page.tsx")) as string;
+    await ws.writeFiles([{ path: "app/services/page.tsx", content: `\n${page}` }]);
+    await expect(
+      saveVisualEdits(
+        deps(),
+        client,
+        siteId,
+        [{ kind: "text", target, from: "Services", to: "What we do" }],
+        draft,
+      ),
+    ).rejects.toThrow(/changed since this preview loaded/);
+    expect((await ws.latestVersion())?.number).toBe(1);
   });
 
   it("saves nothing when no change applies", async () => {
-    const { client, siteId, ws, target } = await siteWithHeading();
-    const saved = await saveVisualEdits(deps(), client, siteId, [
-      { kind: "text", target, from: "Not what it says", to: "x" },
-    ]);
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
+    const saved = await saveVisualEdits(
+      deps(),
+      client,
+      siteId,
+      [{ kind: "text", target, from: "Not what it says", to: "x" }],
+      draft,
+    );
     expect(saved).toMatchObject({ version: null, applied: 0 });
     expect((await ws.latestVersion())?.number).toBe(1);
   });
 
   it("refuses another client's site and staff without access", async () => {
-    const { siteId, target } = await siteWithHeading();
+    const { siteId, target, draft } = await siteWithHeading();
     const owner = await authorized("owner", clientB);
     await expect(
-      saveVisualEdits(deps(), owner, siteId, [{ kind: "text", target, from: "Services", to: "x" }]),
+      saveVisualEdits(
+        deps(),
+        owner,
+        siteId,
+        [{ kind: "text", target, from: "Services", to: "x" }],
+        draft,
+      ),
     ).rejects.toBeInstanceOf(ClientAccessDenied);
     await db.delete(memberLocation);
     const staff = { ...(await authorized("owner", clientA)), memberId: "staff@agency-a" };
     await expect(
-      saveVisualEdits(deps(), staff, siteId, [{ kind: "text", target, from: "Services", to: "x" }]),
+      saveVisualEdits(
+        deps(),
+        staff,
+        siteId,
+        [{ kind: "text", target, from: "Services", to: "x" }],
+        draft,
+      ),
     ).rejects.toThrow();
   });
 
   it("commits the edit version to the site's repository", async () => {
-    const { client, siteId, ws, target } = await siteWithHeading();
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
     await db.update(site).set({ repoFullName: "agency/bright" }).where(eq(site.id, siteId));
-    const saved = await saveVisualEdits(deps(), client, siteId, [
-      { kind: "text", target, from: "Services", to: "What we do" },
-    ]);
+    const saved = await saveVisualEdits(
+      deps(),
+      client,
+      siteId,
+      [{ kind: "text", target, from: "Services", to: "What we do" }],
+      draft,
+    );
     expect(saved.version).toBe(2);
     // Without a GitHub installation the save stands and says why it wasn't sent.
     expect(saved.publishError ?? "").not.toBe("");

@@ -51,6 +51,7 @@ export {
   VisualEdits,
 } from "./visual-edits.ts";
 export {
+  draftFingerprint,
   editorOrigin,
   previewFiles,
   VISUAL_EDITS_MESSAGE,
