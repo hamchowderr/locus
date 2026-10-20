@@ -247,9 +247,9 @@ const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^Locus won't publish "[^"\n]{1,300}": environment files can hold secrets and never go in the repository\.$/,
   /^"[^"\n]{1,300}" is in the version twice\.$/,
   // An app-style site's own database: the reason is the database's, for SQL the agent wrote.
-  /^The site's database change didn't apply: [^\n]{1,1000}$/,
+  /^The site's database change didn't apply: [^\n]{1,1500}$/,
   /^This site's database isn't set up on this deployment yet\.$/,
-  /^Vercel didn't (show|take) the site's (database )?settings\. Try again\.$/,
+  /^Vercel didn't (show|take|remove) the site's (database )?settings\. Try again\.$/,
   /^Vercel refused\. Reconnect Vercel on the Connections page and allow access to all projects\.$/,
 ];
 

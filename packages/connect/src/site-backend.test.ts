@@ -272,7 +272,10 @@ describe("publishing a site with a database", () => {
 
   type Call = { method: string; path: string; body: unknown };
   let calls: Call[];
-  let envKeys: string[];
+  type Env = { id: string; key: string; target: string[]; gitBranch?: string };
+  let envs: Env[];
+  let postAnswer: (body: unknown) => unknown;
+  const live = (key: string): Env => ({ id: `env_${key}`, key, target: ["production"] });
 
   function release(options: { provisioner?: boolean } = {}): SiteReleaseDeps {
     const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -280,10 +283,9 @@ describe("publishing a site with a database", () => {
       const method = init?.method ?? "GET";
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, path: url.pathname, body });
-      if (method === "GET") {
-        return new Response(JSON.stringify({ envs: envKeys.map((key) => ({ key })) }));
-      }
-      return new Response(JSON.stringify({ created: body }), { status: 201 });
+      if (method === "GET") return new Response(JSON.stringify({ envs }));
+      if (method === "DELETE") return new Response("{}");
+      return new Response(JSON.stringify(postAnswer(body)), { status: 201 });
     }) as typeof globalThis.fetch;
     return {
       db,
@@ -296,7 +298,8 @@ describe("publishing a site with a database", () => {
   let secrets: MemorySecretStore;
   beforeEach(async () => {
     calls = [];
-    envKeys = [];
+    envs = [];
+    postAnswer = (body) => ({ created: body });
     secrets = new MemorySecretStore();
     const secretRef = vercelSecretRef("agency-a");
     await secrets.set(secretRef, JSON.stringify({ accessToken: "vercel-token", teamId: "team_a" }));
@@ -349,7 +352,9 @@ describe("publishing a site with a database", () => {
     const broken = { path: "db/migrations/0000_logins.sql", content: "create tabel member (id)" };
     await expect(
       migrateSiteBackend(release(), owner, { siteId: SITE, files: [broken] }),
-    ).rejects.toThrow(/^The site's database change didn't apply: 0000_logins failed: /);
+    ).rejects.toThrow(
+      /^The site's database change didn't apply: 0000_logins failed: .*new migration/,
+    );
     await expect(
       migrateSiteBackend(release({ provisioner: false }), owner, { siteId: SITE, files: [logins] }),
     ).rejects.toThrow("This site's database isn't set up on this deployment yet.");
@@ -369,21 +374,59 @@ describe("publishing a site with a database", () => {
     expect(post?.path).toBe("/v10/projects/prj_1/env");
     const body = post?.body as { key: string; value: string; type: string; target: string[] }[];
     expect(body.map((v) => [v.key, v.type, v.target])).toEqual([
-      ["SITE_DATABASE_URL", "sensitive", ["production", "preview"]],
-      ["SITE_DATABASE_TOKEN", "sensitive", ["production", "preview"]],
-      ["SITE_AUTH_SECRET", "sensitive", ["production", "preview"]],
+      ["SITE_DATABASE_URL", "sensitive", ["production"]],
+      ["SITE_DATABASE_TOKEN", "sensitive", ["production"]],
+      ["SITE_AUTH_SECRET", "sensitive", ["production"]],
     ]);
     expect(body[0]?.value).toBe(provisioner.url(row.tursoDbHostname));
     expect(body[2]?.value).toMatch(/^[\w-]{43}$/);
 
     // Already there: left alone, and the secret is never replaced.
     calls = [];
-    envKeys = ["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"];
+    envs = ["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"].map(live);
     expect(await ensureSiteBackendEnv(release(), owner, { siteId: SITE })).toEqual([]);
     expect(calls.map((c) => c.method)).toEqual(["GET"]);
 
     // Another client's staff can't reach it.
     const other = await authorizeClient(db, ctx("owner"), "client-2");
     expect(await ensureSiteBackendEnv(release(), other, { siteId: SITE })).toEqual([]);
+  });
+
+  it("only counts settings the live site reads, and notices ones Vercel refused", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    await db.update(site).set({ hostProjectId: "prj_1" }).where(eq(site.id, SITE));
+    // Someone's development-only or one-branch values don't reach production.
+    envs = [
+      { id: "e1", key: "SITE_DATABASE_URL", target: ["development"] },
+      { id: "e2", key: "SITE_DATABASE_TOKEN", target: ["production"], gitBranch: "test" },
+      live("SITE_AUTH_SECRET"),
+    ];
+    expect(await ensureSiteBackendEnv(release(), owner, { siteId: SITE })).toEqual([
+      "SITE_DATABASE_URL",
+      "SITE_DATABASE_TOKEN",
+    ]);
+
+    postAnswer = () => ({ created: [], failed: [{ error: { code: "ENV_CONFLICT" } }] });
+    await expect(ensureSiteBackendEnv(release(), owner, { siteId: SITE })).rejects.toThrow(
+      "Vercel didn't take the site's database settings. Try again.",
+    );
+  });
+
+  it("takes the database settings off the project when the database goes", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    await db.update(site).set({ hostProjectId: "prj_1" }).where(eq(site.id, SITE));
+    envs = [
+      ...["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"].map(live),
+      { id: "other", key: "NEXT_PUBLIC_THEME", target: ["production"] },
+    ];
+    await removeSiteBackend({ ...release(), provisioner }, ctx("owner"), owner, { siteId: SITE });
+    expect(calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
+      "/v9/projects/prj_1/env/env_SITE_DATABASE_URL",
+      "/v9/projects/prj_1/env/env_SITE_DATABASE_TOKEN",
+      "/v9/projects/prj_1/env/env_SITE_AUTH_SECRET",
+    ]);
+    expect(await siteBackendOf(db, owner, SITE)).toBeNull();
   });
 });
