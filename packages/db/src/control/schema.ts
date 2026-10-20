@@ -221,11 +221,22 @@ export const usageEvent = sqliteTable(
     credits: integer("credits").notNull(),
     /** The measurement the credits were priced from: model and tokens, image count, seconds. */
     detail: text("detail", { mode: "json" }),
+    /**
+     * The part of `credits` past the plan's monthly credits that the agency pays for as extra
+     * usage (`usage_overage`). Zero unless extra usage was on when the event was recorded.
+     */
+    overageCredits: integer("overage_credits").notNull().default(0),
+    /** When the overage was sent to Stripe's meter; null while it is still to send. */
+    overageReportedAt: integer("overage_reported_at", { mode: "timestamp_ms" }),
     createdAt: createdAt(),
   },
   (t) => [
     index("usage_event_location_created_idx").on(t.locationId, t.createdAt),
     index("usage_event_org_created_idx").on(t.organizationId, t.createdAt),
+    // Only events still to send to Stripe, so the report job reads nothing else.
+    index("usage_event_overage_unreported_idx")
+      .on(t.createdAt)
+      .where(sql`${t.overageCredits} > 0 and ${t.overageReportedAt} is null`),
   ],
 );
 
@@ -245,6 +256,8 @@ export const usageMonth = sqliteTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     /** Hundredths of a credit. */
     credits: integer("credits").notNull(),
+    /** The part of `credits` billed as extra usage, in hundredths of a credit. */
+    overageCredits: integer("overage_credits").notNull().default(0),
   },
   (t) => [
     primaryKey({ columns: [t.locationId, t.month] }),
@@ -261,6 +274,21 @@ export const usageLimit = sqliteTable("usage_limit", {
   monthlyCreditCap: integer("monthly_credit_cap"),
   alertAtPercent: integer("alert_at_percent").notNull().default(80),
   paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/**
+ * An agency's extra usage: credits past its plan's monthly credits, billed through Stripe's meter
+ * at the end of the billing period. No row, or `enabled` false, means generation stops at the
+ * plan's credits.
+ */
+export const usageOverage = sqliteTable("usage_overage", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  /** Extra credits the agency allows per calendar month (UTC), in hundredths of a credit. */
+  monthlyCreditLimit: integer("monthly_credit_limit").notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
