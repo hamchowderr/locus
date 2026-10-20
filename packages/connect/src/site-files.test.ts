@@ -15,12 +15,15 @@ import type { GhlAppConfig } from "./ghl-oauth.ts";
 import { enableSiteBackend } from "./site-backend.ts";
 import {
   deleteSiteFiles,
+  issueSiteUploadTicket,
   MAX_SITE_FILE_BYTES,
   type SiteFilesDeps,
   siteFilesFolderName,
   siteFilesKey,
   siteFilesOverview,
+  siteUploadTicket,
   uploadSiteFile,
+  uploadSiteFileWithTicket,
 } from "./site-files.ts";
 
 // Level-1 plumbing: the fake GHL plays the client's Media Library. No model is on this path.
@@ -314,5 +317,175 @@ describe("a site's files", () => {
     await expect(siteFilesOverview(deps(), other, { siteId: SITE })).rejects.toBeInstanceOf(
       ConnectError,
     );
+  });
+});
+
+describe("a site's bigger files, sent with a ticket", () => {
+  const TICKET_KEY = new Uint8Array(32).fill(9);
+  const UPLOAD_URL = "https://agent.test/site-files/upload";
+  const MB = 1024 * 1024;
+  const ticketDeps = (now = CLOCK) => ({
+    ...deps(),
+    now: () => now,
+    ticketKey: TICKET_KEY,
+    uploadUrl: UPLOAD_URL as string | null,
+  });
+  const ask = (
+    body: unknown,
+    d = ticketDeps(),
+    authorization: string | null = bearer(SITE),
+    siteId = SITE,
+  ) => issueSiteUploadTicket(d, { siteId, authorization, body, visitorIp: "203.0.113.9" });
+  const video = (bytes: number) => new Blob([new Uint8Array(bytes)], { type: "video/mp4" });
+
+  it("lets the member's browser send one file of the size and type it was given for", async () => {
+    const asked = await ask({ name: "Tour (1).mp4", contentType: "video/mp4", size: 30 * MB });
+    expect(asked).toMatchObject({
+      status: 200,
+      body: { uploadUrl: UPLOAD_URL, contentType: "video/mp4", expiresAt: CLOCK + 600_000 },
+    });
+    const ticket = (asked.body as { ticket: string }).ticket;
+    expect(siteUploadTicket(TICKET_KEY, ticket, CLOCK)).toEqual({
+      siteId: SITE,
+      name: "Tour (1).mp4",
+      contentType: "video/mp4",
+      size: 30 * MB,
+    });
+    // Asking for a ticket touches nothing in HighLevel.
+    expect(fake.requests).toEqual([]);
+
+    const d = ticketDeps();
+    const sent = await uploadSiteFileWithTicket(d, {
+      ticket,
+      file: video(30 * MB),
+      contentType: "video/mp4",
+    });
+    expect(sent).toMatchObject({
+      status: 200,
+      body: { fileId: "file1", name: "Tour-1-.mp4", contentType: "video/mp4", size: 30 * MB },
+    });
+    expect(fake.requests[0]?.body).toMatchObject({ locationId: "ghl-client-1" });
+    expect(library[1]).toMatchObject({ type: "file", parentId: library[0]?._id });
+
+    // Once only.
+    expect(
+      await uploadSiteFileWithTicket(ticketDeps(), {
+        ticket,
+        file: video(30 * MB),
+        contentType: "video/mp4",
+      }),
+    ).toMatchObject({ status: 401 });
+  });
+
+  it("refuses a file that isn't the one the ticket names, and keeps the ticket", async () => {
+    const asked = await ask({ name: "a.pdf", contentType: "application/pdf", size: 10 * MB });
+    const ticket = (asked.body as { ticket: string }).ticket;
+    const pdf = (bytes: number) => new Blob([new Uint8Array(bytes)], { type: "application/pdf" });
+    for (const [file, contentType] of [
+      [pdf(10 * MB + 1), "application/pdf"],
+      [pdf(10 * MB), "image/png"],
+    ] as const) {
+      expect(await uploadSiteFileWithTicket(ticketDeps(), { ticket, file, contentType })).toEqual({
+        status: 400,
+        body: { error: "That isn't the file this upload was for." },
+      });
+    }
+    expect(library).toEqual([]);
+    // The right file still goes through.
+    expect(
+      await uploadSiteFileWithTicket(ticketDeps(), {
+        ticket,
+        file: pdf(10 * MB),
+        contentType: "application/pdf",
+      }),
+    ).toMatchObject({ status: 200 });
+  });
+
+  it("refuses a ticket that is forged, changed, expired, or for a site that no longer keeps files", async () => {
+    const asked = await ask({ name: "a.mp4", contentType: "video/mp4", size: 10 });
+    const ticket = (asked.body as { ticket: string }).ticket;
+    const [payload, mac] = ticket.split(".");
+    const bigger = Buffer.from(
+      JSON.stringify({
+        ...JSON.parse(Buffer.from(payload ?? "", "base64url").toString()),
+        z: 500 * MB,
+      }),
+    ).toString("base64url");
+    const send = (value: string | null, now = CLOCK) =>
+      uploadSiteFileWithTicket(ticketDeps(now), {
+        ticket: value,
+        file: video(10),
+        contentType: "video/mp4",
+      });
+    for (const value of [null, "", "x.y", `${bigger}.${mac}`, `${payload}.${mac}x`]) {
+      expect(await send(value)).toMatchObject({ status: 401 });
+    }
+    expect(siteUploadTicket(TICKET_KEY, ticket, CLOCK + 600_001)).toBeNull();
+    expect(await send(ticket, CLOCK + 600_001)).toMatchObject({ status: 401 });
+    // A file that began to arrive in time, though, is still taken when it has all arrived.
+    expect(
+      await uploadSiteFileWithTicket(ticketDeps(CLOCK + 3_600_000), {
+        ticket,
+        file: video(10),
+        contentType: "video/mp4",
+        startedAt: CLOCK + 599_000,
+      }),
+    ).toMatchObject({ status: 200 });
+    expect(library.filter((f) => f.type === "file")).toHaveLength(1);
+    library = [];
+    // Signed with another key (say, another deployment's): refused.
+    expect(siteUploadTicket(new Uint8Array(32).fill(1), ticket, CLOCK)).toBeNull();
+
+    const again = await ask({ name: "a.mp4", contentType: "video/mp4", size: 10 });
+    await db.update(site).set({ status: "draft" }).where(eq(site.id, SITE));
+    expect(await send((again.body as { ticket: string }).ticket)).toEqual({
+      status: 401,
+      body: { error: "This site can't keep files." },
+    });
+    expect(library).toEqual([]);
+  });
+
+  it("only gives tickets to the site itself, for files of a sensible kind and size", async () => {
+    for (const [authorization, siteId] of [
+      [null, SITE],
+      [bearer(OTHER), SITE],
+      [bearer(OTHER), OTHER],
+    ] as const) {
+      expect(
+        await ask(
+          { name: "a.mp4", contentType: "video/mp4", size: 10 },
+          ticketDeps(),
+          authorization,
+          siteId,
+        ),
+      ).toMatchObject({ status: 401 });
+    }
+    expect((await ask({ name: "a.mp4", contentType: "video/mp4", size: 501 * MB })).status).toBe(
+      413,
+    );
+    expect((await ask({ name: "a.png", contentType: "image/png", size: 26 * MB })).status).toBe(
+      413,
+    );
+    expect((await ask({ name: "a.svg", contentType: "image/svg+xml", size: 10 })).status).toBe(415);
+    expect((await ask({ name: "a.png", contentType: "image/png", size: 0 })).status).toBe(400);
+    expect((await ask({ contentType: "image/png", size: 10 })).status).toBe(400);
+    expect((await ask({ name: "a.png", contentType: "image/png", size: 1.5 })).status).toBe(400);
+  });
+
+  it("says there's nowhere to send big files when Locus has no upload server", async () => {
+    expect(
+      await ask(
+        { name: "a.mp4", contentType: "video/mp4", size: 10 },
+        { ...ticketDeps(), uploadUrl: null },
+      ),
+    ).toEqual({ status: 200, body: { uploadUrl: null } });
+  });
+
+  it("counts tickets against the site's upload limits", async () => {
+    const d = { ...ticketDeps(), limits: { perIp: { max: 1, windowMs: 60_000 } } };
+    expect((await ask({ name: "a.mp4", contentType: "video/mp4", size: 10 }, d)).status).toBe(200);
+    expect(await ask({ name: "a.mp4", contentType: "video/mp4", size: 10 }, d)).toMatchObject({
+      status: 429,
+    });
   });
 });

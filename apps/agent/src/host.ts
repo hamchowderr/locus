@@ -33,11 +33,12 @@ import { type ControlDb, DbSecretStore, openControlDb, provisionerFromEnv } from
 import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
 import { type AppConnector, createComposioConnector, createLocusController } from "@locus/harness";
-import { secretsFromEnv } from "@locus/secrets";
+import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { LibSQLStore } from "@mastra/libsql";
 import { eq } from "drizzle-orm";
 import { refreshingClient } from "./refreshing-client.ts";
+import { SITE_UPLOAD_PATH, type SiteUploadDeps, siteUploads } from "./site-uploads.ts";
 
 export const PREFIX = "/api/agent";
 
@@ -110,6 +111,11 @@ export interface HostDeps {
    * leaves app tools out of the chat.
    */
   apps?: ((clientId: string) => AppConnector) | null;
+  /**
+   * Bigger files members upload on app-style sites, sent here with a ticket because Vercel
+   * caps a request at 4.5 MB. Null, the default, leaves the route out.
+   */
+  siteUploads?: SiteUploadDeps | null;
 }
 
 /** The agent holds no sandbox credentials: every sandbox goes through the web app. */
@@ -134,6 +140,16 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
   });
   const kitSession = sessionFromKitToken(db, chatKitKey(config.authSecret));
   const provisioner = provisionerFromEnv(".data/tenants", env);
+  const secrets = secretsFromEnv(
+    { localFile: ".data/secrets.json", encrypted: (cipher) => new DbSecretStore(db, cipher) },
+    env,
+  );
+  // The agent never runs the OAuth flow, so the redirect and scopes are never sent.
+  const ghl = {
+    ...config.ghl,
+    redirectUri: `${config.authUrl}/api/connect/crm/callback`,
+    scopes: [],
+  };
   const webApp = {
     url: config.authUrl,
     authSecret: config.authSecret,
@@ -153,13 +169,9 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
     },
     connect: {
       db,
-      secrets: secretsFromEnv(
-        { localFile: ".data/secrets.json", encrypted: (cipher) => new DbSecretStore(db, cipher) },
-        env,
-      ),
+      secrets,
       provisioner,
-      // The agent never runs the OAuth flow, so the redirect and scopes are never sent.
-      ghl: { ...config.ghl, redirectUri: `${config.authUrl}/api/connect/crm/callback`, scopes: [] },
+      ghl,
     },
     model: config.model,
     origin: new URL(config.authUrl).origin,
@@ -174,6 +186,17 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
       publishVersion: remotePublish(webApp),
       locusUrl: config.authUrl,
     },
+    // Sites' bigger uploads: the files and ticket keys are derived from the secrets key.
+    siteUploads: env.LOCUS_SECRETS_KEY
+      ? {
+          db,
+          secrets,
+          ghl,
+          filesKey: deriveSecretsSubkey("locus/site-files", env),
+          ticketKey: deriveSecretsSubkey("locus/site-file-ticket", env),
+          ipHashKey: deriveSecretsSubkey("locus/site-lead-ip", env),
+        }
+      : null,
     // Connected apps are on once Otaku's Composio key is set.
     apps: env.COMPOSIO_API_KEY
       ? (clientId) => createComposioConnector({ apiKey: env.COMPOSIO_API_KEY as string, clientId })
@@ -231,7 +254,9 @@ export function createHost({
     error === undefined ? console.error(message) : console.error(message, error),
   siteBuilder = null,
   apps = null,
+  siteUploads: uploadDeps = null,
 }: HostDeps) {
+  const uploads = uploadDeps ? siteUploads(uploadDeps, logError) : null;
   // Per client, the sessions that opened it, newest last: its database token is the client's,
   // not one run's, so any of them still allowed in will do.
   const openers = new Map<string, Map<string, SessionContext>>();
@@ -406,6 +431,8 @@ export function createHost({
   const serve = async (request: Request): Promise<Response> => {
     const { pathname } = new URL(request.url);
     if (pathname === "/health") return new Response("ok");
+    // Ticketed, cookie-free and from any site's page: before the origin and JSON rules below.
+    if (pathname === SITE_UPLOAD_PATH && uploads) return uploads(request);
     if (request.method === "GET" || request.method === "HEAD") {
       return guardStream(request, await api.fetch(request));
     }

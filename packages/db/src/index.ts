@@ -36,13 +36,16 @@ export {
 } from "./site-db.ts";
 export {
   applySiteMigrations,
+  MAX_LARGE_SITE_FILE_BYTES,
   MAX_SITE_FILE_BYTES,
+  MAX_SITE_VIDEO_BYTES,
   migrationStatements,
   pendingSiteMigrations,
   SITE_DATABASE_ENV,
   SITE_FILE_TYPES,
   SITE_MIGRATIONS_DIR,
   SITE_MIGRATIONS_TABLE,
+  SITE_VIDEO_TYPES,
   type SiteMigration,
   SiteMigrationError,
   STATEMENT_BREAKPOINT,

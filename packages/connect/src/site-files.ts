@@ -1,6 +1,12 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
-import { type AuthorizedClient, assertAuthorizedClient } from "@locus/auth";
-import { MAX_SITE_FILE_BYTES, SITE_FILE_TYPES } from "@locus/db";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { type AuthorizedClient, assertAuthorizedClient, consumeAttempt } from "@locus/auth";
+import {
+  MAX_LARGE_SITE_FILE_BYTES,
+  MAX_SITE_FILE_BYTES,
+  MAX_SITE_VIDEO_BYTES,
+  SITE_FILE_TYPES,
+  SITE_VIDEO_TYPES,
+} from "@locus/db";
 import { location, site, siteBackend } from "@locus/db/control";
 import { type GhlOperation, ghlRequest } from "@locus/ghl";
 import { operationById } from "@locus/skills";
@@ -29,7 +35,13 @@ import {
 // random name: anyone who has a file's link can open it, so a site shows links only to members
 // its own records allow.
 
-export { MAX_SITE_FILE_BYTES, SITE_FILE_TYPES };
+export {
+  MAX_LARGE_SITE_FILE_BYTES,
+  MAX_SITE_FILE_BYTES,
+  MAX_SITE_VIDEO_BYTES,
+  SITE_FILE_TYPES,
+  SITE_VIDEO_TYPES,
+};
 
 /** Uploads a site may make, on top of GHL's own per-client budget. */
 export const SITE_FILE_LIMITS: Pick<SiteLeadLimits, "perIp" | "perSiteBurst" | "perSite"> = {
@@ -252,44 +264,51 @@ async function folderFiles(
 /** Whether the agency's GHL connection may write to the Media Library. */
 const canWriteMedia = (ghl: SiteGhl) => ghl.scopes.includes("medias.write");
 
-/**
- * A member's upload, sent on to the client's Media Library. `file` is what the site's route
- * forwarded; its type and size are checked here whatever the site already checked.
- */
-export async function uploadSiteFile(
-  deps: SiteFilesDeps,
-  input: {
-    siteId: string;
-    authorization: string | null;
-    file: File | null;
-    visitorIp: string | null;
-  },
-): Promise<SiteFileAnswer> {
-  const row = await siteFor(deps, input.siteId, input.authorization);
-  if (!row) return refuse(401, CANT_KEEP);
-  const file = input.file;
-  if (!file) return refuse(400, "Send the file.");
-  const contentType = file.type.split(";")[0]?.trim().toLowerCase() ?? "";
-  if (!(SITE_FILE_TYPES as readonly string[]).includes(contentType)) {
+/** Why a file of this kind and size can't be kept, or null when it can. */
+function fileRefusal(contentType: string, size: number, large: boolean): SiteFileAnswer | null {
+  const video = (SITE_VIDEO_TYPES as readonly string[]).includes(contentType);
+  if (!video && !(SITE_FILE_TYPES as readonly string[]).includes(contentType)) {
     return refuse(415, "That kind of file can't be uploaded here.");
   }
-  if (file.size < 1) return refuse(400, "That file is empty.");
-  if (file.size > MAX_SITE_FILE_BYTES) {
-    return refuse(413, `Files can be up to ${MAX_SITE_FILE_BYTES / 1024 / 1024} MB.`);
-  }
+  if (!Number.isInteger(size) || size < 1) return refuse(400, "That file is empty.");
+  const max = !large
+    ? MAX_SITE_FILE_BYTES
+    : video
+      ? MAX_SITE_VIDEO_BYTES
+      : MAX_LARGE_SITE_FILE_BYTES;
+  if (size > max) return refuse(413, `Files like this can be up to ${max / 1024 / 1024} MB.`);
+  return null;
+}
+
+const mediaType = (type: string) => type.split(";")[0]?.trim().toLowerCase() ?? "";
+
+async function uploadLimited(
+  deps: SiteFilesDeps,
+  siteId: string,
+  visitorIp: string | null,
+): Promise<SiteFileAnswer | null> {
   const limits = { ...SITE_FILE_LIMITS, ...deps.limits };
   const now = deps.now?.() ?? Date.now();
-  const wait = await consumeSiteLimits(deps, row.site.id, input.visitorIp, limits, now, "file");
-  if (wait !== null) {
-    return {
-      status: 429,
-      body: { error: "Too many uploads just now. Try again in a little while." },
-      retryAfterSeconds: wait,
-    };
-  }
+  const wait = await consumeSiteLimits(deps, siteId, visitorIp, limits, now, "file");
+  if (wait === null) return null;
+  return {
+    status: 429,
+    body: { error: "Too many uploads just now. Try again in a little while." },
+    retryAfterSeconds: wait,
+  };
+}
+
+/** Sends one checked file to the site's folder in its client's Media Library. */
+async function keepInMediaLibrary(
+  deps: SiteFilesDeps,
+  row: NonNullable<Awaited<ReturnType<typeof siteFor>>>,
+  file: Blob,
+  givenName: string,
+  contentType: string,
+): Promise<SiteFileAnswer> {
   const ghl = await siteGhl(deps, row.location);
   if (!canWriteMedia(ghl)) return refuse(403, "This site's HighLevel connection can't keep files.");
-  const name = safeName(file.name);
+  const name = safeName(givenName);
   try {
     const folderId = await uploadFolder(ghl, row.site.id);
     const sent = await ghlRequest<{ fileId?: string; url?: string }>(
@@ -323,6 +342,169 @@ export async function uploadSiteFile(
     logGhlFailure(`Uploading a file for site ${row.site.id}`, error);
     return refuse(502, "The file couldn't be kept just now. Try again.");
   }
+}
+
+/**
+ * A member's upload, sent on to the client's Media Library. `file` is what the site's route
+ * forwarded; its type and size are checked here whatever the site already checked. Through
+ * Vercel, so at most `MAX_SITE_FILE_BYTES`; bigger files go by ticket (`issueSiteUploadTicket`).
+ */
+export async function uploadSiteFile(
+  deps: SiteFilesDeps,
+  input: {
+    siteId: string;
+    authorization: string | null;
+    file: File | null;
+    visitorIp: string | null;
+  },
+): Promise<SiteFileAnswer> {
+  const row = await siteFor(deps, input.siteId, input.authorization);
+  if (!row) return refuse(401, CANT_KEEP);
+  const file = input.file;
+  if (!file) return refuse(400, "Send the file.");
+  const contentType = mediaType(file.type);
+  const refused = fileRefusal(contentType, file.size, false);
+  if (refused) return refused;
+  const limited = await uploadLimited(deps, row.site.id, input.visitorIp);
+  if (limited) return limited;
+  return keepInMediaLibrary(deps, row, file, file.name, contentType);
+}
+
+// Bigger files skip Vercel: the site's route (which checks the member) asks Locus for a ticket
+// for one file of a given name, type and size, and the member's browser sends the file with it
+// straight to Locus's own server, which has no request limit of Vercel's. A ticket is signed
+// with a key derived for this alone, names its site, lives ten minutes and is used once.
+
+const TICKET_TTL_MS = 10 * 60_000;
+
+interface Ticket {
+  /** Site, file name, content type, size, expiry, nonce. */
+  s: string;
+  n: string;
+  t: string;
+  z: number;
+  e: number;
+  r: string;
+}
+
+const sign = (key: Uint8Array, payload: string) =>
+  createHmac("sha256", key).update(`site-file-ticket:${payload}`).digest("base64url");
+
+function readTicket(key: Uint8Array, value: string, now: number): Ticket | null {
+  const [payload, mac] = value.split(".");
+  if (!payload || !mac || payload.length > 2000 || !sameKey(mac, sign(key, payload))) return null;
+  let ticket: Ticket;
+  try {
+    ticket = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Ticket;
+  } catch {
+    return null;
+  }
+  if (
+    typeof ticket.s !== "string" ||
+    typeof ticket.n !== "string" ||
+    typeof ticket.t !== "string" ||
+    typeof ticket.z !== "number" ||
+    typeof ticket.e !== "number" ||
+    typeof ticket.r !== "string" ||
+    ticket.e <= now
+  ) {
+    return null;
+  }
+  return ticket;
+}
+
+/**
+ * A ticket for one bigger upload, for the site's route to hand its member's browser with the
+ * address to send the file to. `uploadUrl` is null when this deployment has no server that takes
+ * big files; the site then sends files of up to `MAX_SITE_FILE_BYTES` the ordinary way.
+ */
+export async function issueSiteUploadTicket(
+  deps: SiteFilesDeps & { ticketKey: Uint8Array; uploadUrl: string | null },
+  input: { siteId: string; authorization: string | null; body: unknown; visitorIp: string | null },
+): Promise<SiteFileAnswer> {
+  const row = await siteFor(deps, input.siteId, input.authorization);
+  if (!row) return refuse(401, CANT_KEEP);
+  if (!deps.uploadUrl) return { status: 200, body: { uploadUrl: null } };
+  const body = (input.body ?? {}) as { name?: unknown; contentType?: unknown; size?: unknown };
+  if (typeof body.name !== "string" || body.name.length > 300) {
+    return refuse(400, "Give the file's name.");
+  }
+  const contentType = typeof body.contentType === "string" ? mediaType(body.contentType) : "";
+  const size = typeof body.size === "number" ? body.size : 0;
+  const refused = fileRefusal(contentType, size, true);
+  if (refused) return refused;
+  const limited = await uploadLimited(deps, row.site.id, input.visitorIp);
+  if (limited) return limited;
+  const { ticket, expiresAt } = signSiteUploadTicket(
+    deps.ticketKey,
+    { siteId: row.site.id, name: body.name, contentType, size },
+    deps.now?.() ?? Date.now(),
+  );
+  return { status: 200, body: { uploadUrl: deps.uploadUrl, ticket, contentType, expiresAt } };
+}
+
+/** Signs a ticket for one file. Only for a site and file already checked. */
+export function signSiteUploadTicket(
+  ticketKey: Uint8Array,
+  file: { siteId: string; name: string; contentType: string; size: number },
+  now: number,
+): { ticket: string; expiresAt: number } {
+  const expiresAt = now + TICKET_TTL_MS;
+  const ticket: Ticket = {
+    s: file.siteId,
+    n: file.name,
+    t: file.contentType,
+    z: file.size,
+    e: expiresAt,
+    r: randomUUID(),
+  };
+  const payload = Buffer.from(JSON.stringify(ticket)).toString("base64url");
+  return { ticket: `${payload}.${sign(ticketKey, payload)}`, expiresAt };
+}
+
+/** What a ticket allows: the server that takes the file checks the bytes against it. */
+export function siteUploadTicket(
+  ticketKey: Uint8Array,
+  value: string | null,
+  now = Date.now(),
+): { siteId: string; name: string; contentType: string; size: number } | null {
+  const ticket = value ? readTicket(ticketKey, value, now) : null;
+  return ticket
+    ? { siteId: ticket.s, name: ticket.n, contentType: ticket.t, size: ticket.z }
+    : null;
+}
+
+/**
+ * A bigger upload, sent with a ticket by the member's browser. The file must be exactly what the
+ * ticket names; the ticket works once, and only while its site still keeps files.
+ */
+export async function uploadSiteFileWithTicket(
+  deps: SiteFilesDeps & { ticketKey: Uint8Array },
+  input: {
+    ticket: string | null;
+    file: Blob;
+    contentType: string;
+    /** When the file began to arrive: a big file may take longer than the ticket lives. */
+    startedAt?: number;
+  },
+): Promise<SiteFileAnswer> {
+  const now = deps.now?.() ?? Date.now();
+  const at = Math.min(input.startedAt ?? now, now);
+  const ticket = input.ticket ? readTicket(deps.ticketKey, input.ticket, at) : null;
+  if (!ticket) return refuse(401, "That upload has expired. Try again.");
+  if (mediaType(input.contentType) !== ticket.t || input.file.size !== ticket.z) {
+    return refuse(400, "That isn't the file this upload was for.");
+  }
+  const once = await consumeAttempt(
+    deps.db,
+    `site-file-ticket|${ticket.r}`,
+    { max: 1, windowMs: TICKET_TTL_MS },
+    now,
+  );
+  if (!once.allowed) return refuse(401, "That upload was already used. Try again.");
+  const row = await siteFor(deps, ticket.s, `Bearer ${siteFilesKey(deps.filesKey, ticket.s)}`);
+  if (!row) return refuse(401, CANT_KEEP);
+  return keepInMediaLibrary(deps, row, input.file, ticket.n, ticket.t);
 }
 
 /**

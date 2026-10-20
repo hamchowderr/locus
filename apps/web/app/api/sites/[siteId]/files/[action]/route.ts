@@ -1,12 +1,13 @@
 import {
   deleteSiteFiles,
   hasSiteFilesKey,
+  issueSiteUploadTicket,
   MAX_SITE_FILE_BYTES,
   type SiteFileAnswer,
   uploadSiteFile,
 } from "@locus/connect";
 import { NotConfigured } from "@/lib/locus";
-import { siteFilesDeps } from "@/lib/site-files";
+import { bigUploadUrl, siteFilesDeps, siteFileTicketKey } from "@/lib/site-files";
 
 /**
  * A published app-style site's files, server to server from the site's own routes, which check
@@ -15,6 +16,9 @@ import { siteFilesDeps } from "@/lib/site-files";
  * client's own Media Library.
  *
  * - `POST upload` multipart `file` → `{ fileId, url, name, contentType, size }`
+ * - `POST ticket` `{ name, contentType, size }` → `{ uploadUrl, ticket, contentType, expiresAt }`
+ *   for a bigger file the member's browser sends straight to the agent server (`uploadUrl` is
+ *   null when there is none)
  * - `POST delete` `{ fileIds }` → `{ deleted }`
  */
 type Params = { params: Promise<{ siteId: string; action: string }> };
@@ -88,6 +92,16 @@ export async function POST(request: Request, { params }: Params) {
           // so it is trusted only for the per-IP limit.
           visitorIp: request.headers.get("x-locus-visitor-ip"),
         }),
+      );
+    }
+    if (action === "ticket") {
+      const body = await jsonBody(request);
+      if (body instanceof Response) return body;
+      return answer(
+        await issueSiteUploadTicket(
+          { ...siteFilesDeps(), ticketKey: siteFileTicketKey(), uploadUrl: bigUploadUrl() },
+          { siteId, authorization, body, visitorIp: request.headers.get("x-locus-visitor-ip") },
+        ),
       );
     }
     if (action === "delete") {

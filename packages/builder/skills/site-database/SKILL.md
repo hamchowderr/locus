@@ -92,11 +92,16 @@ export const booking = sqliteTable(
 ```
 
 ## Files members upload
-`database add` also adds file uploads (pictures and everyday documents, up to 4 MB). A
-published site keeps them in the client's HighLevel Media Library.
+`database add` also adds file uploads: pictures and everyday documents up to 25 MB, and
+videos (MP4, WebM, MOV) up to 500 MB. A published site keeps them in the client's HighLevel
+Media Library.
 - In a "use client" component: `import { uploadFile } from "@/lib/files-client"`.
-  `const { fileId, url } = await uploadFile(file)` uploads a file the member picked; show it
-  with `<img src={url} />` or a link to `url`.
+  `const { fileId, url } = await uploadFile(file)` uploads a file the member picked, whatever
+  its size; show it with `<img src={url} />`, `<video src={url} controls />` or a link to
+  `url`. Set the file input's `accept` to what the page wants (say `image/*` or `video/*`).
+- Files over 4 MB go from the member's browser to Locus's upload server. If a published site
+  says "Files can be up to 4 MB here", that server isn't available to it yet: keep the page
+  working for smaller files and don't try another way.
 - Save `fileId` and `url` in the app's own table with the member's `user_id` (for example a
   `photo` table), in a server action that checks the member. Anyone with a file's `url` can
   open it, so only show a member the files your records say they may see.
