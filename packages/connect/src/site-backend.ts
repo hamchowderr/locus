@@ -193,10 +193,11 @@ export async function removeSiteBackend(
   });
 }
 
-/** What the dashboard shows for one site. */
+/** What the dashboard shows for one site, with one page of a table when one was asked for. */
 export interface SiteBackendOverview {
   tables: SiteTable[];
   users: SiteUser[];
+  rows?: SiteRows;
 }
 
 async function withSiteDb<T>(
@@ -212,7 +213,8 @@ async function withSiteDb<T>(
     readOnly: true,
     ttl: DASHBOARD_TTL,
   });
-  const db = openSiteDb(deps.provisioner.url(row.tursoDbHostname), token);
+  // Big integers (ids, cents, hashes) come back whole instead of failing the read.
+  const db = openSiteDb(deps.provisioner.url(row.tursoDbHostname), token, { intMode: "bigint" });
   try {
     return await read(db);
   } finally {
@@ -220,49 +222,80 @@ async function withSiteDb<T>(
   }
 }
 
-/** The site's tables and the people signed up on it. */
-export function siteBackendOverview(
-  deps: SiteBackendDeps,
-  client: AuthorizedClient,
-  siteId: string,
-): Promise<SiteBackendOverview> {
-  return withSiteDb(deps, client, siteId, async (db) => ({
-    tables: await listSiteTables(db),
-    users: await listSiteUsers(db),
-  }));
-}
-
 /**
- * Better Auth's tables that hold login secrets: password hashes, session tokens and reset
- * codes. The dashboard shows how many rows they have, never the rows.
+ * Tables that hold login secrets: Better Auth's password hashes, session tokens and reset
+ * codes, and the secrets of its plugins. The dashboard shows how many rows they have, never
+ * the rows.
  */
 export const LOGIN_SECRET_TABLES: ReadonlySet<string> = new Set([
   "account",
   "session",
   "verification",
+  "twoFactor",
+  "two_factor",
+  "passkey",
+  "apikey",
+  "api_key",
+  "jwks",
+  "oauthApplication",
+  "oauth_application",
+  "oauthAccessToken",
+  "oauth_access_token",
 ]);
 
-/** One page of one of the site's tables. */
+/** Columns whose values stay hidden in any table, whatever the agent named the table. */
+const SECRET_COLUMN = /password|secret|token|private_?key|backup_?codes|hash|api_?key/i;
+
+const HIDDEN = "(hidden)";
+
+async function readRows(
+  db: ReturnType<typeof openSiteDb>,
+  input: { table: string; limit?: number; offset?: number },
+): Promise<SiteRows> {
+  if (LOGIN_SECRET_TABLES.has(input.table)) {
+    throw new ConnectError("That table holds login secrets, so Locus doesn't show its rows.");
+  }
+  let page: SiteRows;
+  try {
+    page = await readSiteRows(db, input.table, input);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("The site has no table")) {
+      throw new ConnectError(error.message);
+    }
+    throw error;
+  }
+  const secret = page.columns.filter((column) => SECRET_COLUMN.test(column));
+  if (secret.length === 0) return page;
+  return {
+    ...page,
+    rows: page.rows.map((row) => ({
+      ...row,
+      ...Object.fromEntries(secret.map((column) => [column, row[column] == null ? null : HIDDEN])),
+    })),
+  };
+}
+
+/** The site's tables and the people signed up on it, and one page of `table` if given. */
+export function siteBackendOverview(
+  deps: SiteBackendDeps,
+  client: AuthorizedClient,
+  siteId: string,
+  page?: { table: string; limit?: number; offset?: number },
+): Promise<SiteBackendOverview> {
+  return withSiteDb(deps, client, siteId, async (db) => ({
+    tables: await listSiteTables(db),
+    users: await listSiteUsers(db),
+    ...(page ? { rows: await readRows(db, page) } : {}),
+  }));
+}
+
+/** One page of one of the site's tables. Secret tables are refused, secret columns hidden. */
 export function siteBackendRows(
   deps: SiteBackendDeps,
   client: AuthorizedClient,
   input: { siteId: string; table: string; limit?: number; offset?: number },
 ): Promise<SiteRows> {
-  if (LOGIN_SECRET_TABLES.has(input.table)) {
-    return Promise.reject(
-      new ConnectError("That table holds login secrets, so Locus doesn't show its rows."),
-    );
-  }
-  return withSiteDb(deps, client, input.siteId, async (db) => {
-    try {
-      return await readSiteRows(db, input.table, input);
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("The site has no table")) {
-        throw new ConnectError(error.message);
-      }
-      throw error;
-    }
-  });
+  return withSiteDb(deps, client, input.siteId, (db) => readRows(db, input));
 }
 
 /** What publishing an app-style site needs: its database, and the agency's Vercel team. */
