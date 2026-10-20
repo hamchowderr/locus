@@ -1,16 +1,6 @@
-import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
-import { SITE_BUILDER_MODE_ID } from "@locus/builder";
-import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
-import { EditablePreview } from "@/components/visual-edits/editable-preview";
-import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { buildRefusal, siteNames, siteOfClient } from "@/lib/site-builder";
-import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { previewSite } from "../actions";
+import { redirect } from "next/navigation";
 
-/** Starting a preview can install the site's packages first. */
-export const maxDuration = 300;
-
+/** The preview moved onto the site's Build tab; old links (and a version's preview) land there. */
 export default async function Preview({
   params,
   searchParams,
@@ -19,51 +9,7 @@ export default async function Preview({
   searchParams: Promise<{ version?: string }>;
 }) {
   const { siteId } = await params;
-  const current = await currentSession();
-  if (!current) redirect(`/sign-in?next=${encodeURIComponent(`/sites/${siteId}/preview`)}`);
-  if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const client = await resolveActiveClient(locus().db, sessionContext(current)).catch((e) => {
-    if (e instanceof ClientAccessDenied) return null;
-    throw e;
-  });
-  if (!client) redirect("/clients");
-  // Anyone with the client may look; starting the preview checks the site builder is on.
-  const found = await siteOfClient(locus().db, client, siteId).then(
-    () => true,
-    (e) => {
-      if (e instanceof ClientAccessDenied) return false;
-      throw e;
-    },
-  );
-  if (!found) notFound();
-  const { version: asked } = await searchParams;
-  const version = asked && /^\d{1,6}$/.test(asked) ? Number(asked) : null;
-  const name = (await siteNames(siteBuilderDeps(), client, [siteId])).get(siteId) ?? "Site";
-  // Clicking to edit needs the right to build the site; view-only members just look.
-  const canEdit = (await buildRefusal(locus().db, client, siteId)) === null;
-
-  return (
-    <div className="mx-auto flex h-full max-w-6xl flex-col px-6 py-6">
-      <p className="text-sm">
-        <Link href="/sites" className="underline">
-          Sites
-        </Link>
-        {" · "}
-        <Link href={`/sites/${siteId}/versions`} className="underline">
-          Versions
-        </Link>
-        {" · "}
-        Preview of <strong>{name}</strong>
-        {version ? `, version ${version}` : ""}
-      </p>
-      <EditablePreview
-        siteId={siteId}
-        chatMode={SITE_BUILDER_MODE_ID}
-        canEdit={canEdit}
-        className="mt-4 min-h-0 flex-1"
-        version={version}
-        start={previewSite.bind(null, siteId, version)}
-      />
-    </div>
-  );
+  const { version } = await searchParams;
+  const query = version && /^\d{1,6}$/.test(version) ? `?version=${version}` : "";
+  redirect(`/sites/${encodeURIComponent(siteId)}${query}`);
 }

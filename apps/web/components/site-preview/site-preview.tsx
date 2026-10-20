@@ -35,6 +35,7 @@ export function SitePreview({
   actions,
   onFrameLoad,
   onPageChange,
+  reloadSignal = 0,
 }: {
   start: () => Promise<Started | { problem: string }>;
   version: number | null;
@@ -48,6 +49,8 @@ export function SitePreview({
    * against), the page's full address and its route. Null until a preview has started.
    */
   onPageChange?: (page: { origin: string; url: string; route: string } | null) => void;
+  /** Bump to load the page in the frame again (after the site builder changed files). */
+  reloadSignal?: number;
 }) {
   const [preview, setPreview] = useState<Started | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -81,6 +84,13 @@ export function SitePreview({
     started.current = version;
     run();
   }, [run, version]);
+
+  const lastReload = useRef(reloadSignal);
+  useEffect(() => {
+    if (lastReload.current === reloadSignal) return;
+    lastReload.current = reloadSignal;
+    setReloads((n) => n + 1);
+  }, [reloadSignal]);
 
   const src = preview ? pageUrl(preview.url, route) : null;
   const pageChanged = useRef(onPageChange);
