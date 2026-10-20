@@ -21,8 +21,12 @@ export const SITE_DATABASE_ENV = {
   filesKey: "SITE_FILES_KEY",
 } as const;
 
-/** The largest file a site's member may upload. */
-export const MAX_SITE_FILE_BYTES = 25 * 1024 * 1024;
+/**
+ * The largest file a site's member may upload. A file passes through the site's own route and
+ * Locus's on its way to the client's Media Library, and a Vercel function takes at most 4.5 MB
+ * in one request.
+ */
+export const MAX_SITE_FILE_BYTES = 4 * 1024 * 1024;
 
 /** What a site's members may upload: pictures and everyday documents. Never HTML or SVG. */
 export const SITE_FILE_TYPES = [
