@@ -6,7 +6,7 @@ import {
   type SessionContext,
 } from "@locus/auth";
 import type { ControlDb } from "@locus/db";
-import { auditLog, site, siteBackend } from "@locus/db/control";
+import { auditLog, site, siteBackend, siteFolder } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
 import { and, eq, isNull } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
@@ -138,10 +138,18 @@ export async function listHostProjects(
   return { projects, complete: false };
 }
 
+/** A client's site as the Sites page lists it, with the folder it is filed under. */
+export type ListedSite = SiteRow & { folder: string | null };
+
 /** The client's sites. */
-export async function listSites(db: ControlDb, client: AuthorizedClient): Promise<SiteRow[]> {
+export async function listSites(db: ControlDb, client: AuthorizedClient): Promise<ListedSite[]> {
   assertAuthorizedClient(client);
-  return db.select().from(site).where(eq(site.locationId, client.location.id));
+  const rows = await db
+    .select({ site, folder: siteFolder.name })
+    .from(site)
+    .leftJoin(siteFolder, eq(siteFolder.siteId, site.id))
+    .where(eq(site.locationId, client.location.id));
+  return rows.map((r) => ({ ...r.site, folder: r.folder }));
 }
 
 /**
@@ -563,6 +571,41 @@ export async function unlinkHostProject(
     siteId: row.id,
     projectId: row.hostProjectId,
   });
+}
+
+/** The longest folder name the Sites page takes. */
+export const MAX_FOLDER_LENGTH = 60;
+
+/**
+ * Files one of the client's sites under a folder on the Sites page, or under none when `folder`
+ * is blank. A folder is just a name the client's sites share: it exists while a site is in it.
+ * Anyone who may work on the client may file its sites.
+ */
+export async function setSiteFolder(
+  db: ControlDb,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  input: { siteId: string; folder: string },
+): Promise<void> {
+  assertAuthorizedClient(client);
+  const folder = input.folder.trim().replace(/\s+/g, " ") || null;
+  if (folder && folder.length > MAX_FOLDER_LENGTH) {
+    throw new ConnectError(`Give the folder a name of up to ${MAX_FOLDER_LENGTH} characters.`);
+  }
+  const [row] = await db
+    .select({ id: site.id })
+    .from(site)
+    .where(and(eq(site.id, input.siteId), eq(site.locationId, client.location.id)));
+  if (!row) throw new ConnectError("That site isn't one of this client's.");
+  if (folder) {
+    await db
+      .insert(siteFolder)
+      .values({ siteId: row.id, name: folder })
+      .onConflictDoUpdate({ target: siteFolder.siteId, set: { name: folder } });
+  } else {
+    await db.delete(siteFolder).where(eq(siteFolder.siteId, row.id));
+  }
+  await audit(db, ctx, client, "site.folder", { siteId: input.siteId, folder });
 }
 
 export async function audit(
