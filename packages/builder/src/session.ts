@@ -24,7 +24,7 @@ export interface BuilderSession {
   /** The site's sandbox, opened on first use. */
   runtime: () => Promise<SiteRuntime>;
   images?: ImageGenerator | null;
-  /** Reads from the client's GHL sub-account (calendars), for this client only. */
+  /** Reads from the client's GHL sub-account (calendars, media), for this client only. */
   crm?: SiteCrm | null;
   meter?: UsageMeter | null;
   userId?: string | null;
