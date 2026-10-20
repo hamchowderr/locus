@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "949e556e-2ca0-40cc-8093-a7f9758b50fd",
+  "id": "35259a26-b52e-4196-ba73-3eefe20cfa7d",
   "prevId": "e3dfe3cf-7483-453f-9c8c-1feb1dedd05a",
   "tables": {
     "account": {
@@ -1463,8 +1463,8 @@
           "autoincrement": false,
           "default": "'draft'"
         },
-        "folder_name": {
-          "name": "folder_name",
+        "booking_calendars": {
+          "name": "booking_calendars",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

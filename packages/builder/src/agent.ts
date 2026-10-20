@@ -43,7 +43,10 @@ Rules:
 - Build with the shadcn/ui components and the theme's colour variables in app/globals.css.
 - Forms post to the site's own /api/lead route with the site-forms skill's fields and spam
   checks; never edit that route or lib/locus.ts. Never put keys, tokens or secrets in code.
-- Images: generate_image into public/images, with alt text that describes them.
+- Booking: load the site-booking skill, then crm calendars to pick the client's calendar.
+  Never invent a calendar id or a booking link.
+- Images: the client's own first (site-media skill: their logo as the favicon, a photo as
+  the link preview), else generate_image into public/images. Alt text that describes them.
 - Packages and components only through add_dependency; never install with run_command or edit
   versions by hand. The site's files here are the source of truth: what a command changes in
   the sandbox is put back on the next sync.
@@ -70,6 +73,7 @@ export const SITE_BUILDER_TOOL_NAMES = [
   "generate_image",
   "view_reference",
   "versions",
+  "crm",
 ] as const satisfies readonly (keyof SiteBuilderTools)[];
 
 export const SITE_BUILDER_MODE_ID = "site-builder";

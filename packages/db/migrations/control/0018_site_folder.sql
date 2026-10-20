@@ -1,1 +1,0 @@
-ALTER TABLE `site` ADD `folder_name` text;

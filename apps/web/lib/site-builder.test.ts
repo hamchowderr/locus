@@ -42,6 +42,7 @@ import {
   session,
   site,
   siteBackend,
+  siteFolder,
   subscription,
   usageEvent,
   usageLimit,
@@ -414,6 +415,16 @@ describe("publishing saved versions", () => {
       { action: "write", path: "app/about/page.tsx", content: "about" },
       rc,
     );
+    await call(
+      builder.tools,
+      "files",
+      {
+        action: "write",
+        path: "app/book/page.tsx",
+        content: '<Booking calendarId="cal1" form="consult" />\n<Booking calendarId={someVar} />',
+      },
+      rc,
+    );
     const saved = await call(
       builder.tools,
       "versions",
@@ -438,6 +449,8 @@ describe("publishing saved versions", () => {
     expect(latest?.commitSha).toMatch(/\w+/);
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.status).toBe("pushed");
+    // Bookings are taken on the calendars the published code names, and only those.
+    expect(row?.bookingCalendars).toEqual(["cal1"]);
   });
 
   it("publishes with its Vercel address until its domain is live, and checks its search basics", async () => {
@@ -849,10 +862,8 @@ describe("copying a site", () => {
     await call(builder.tools, "versions", { action: "save", message: "Add extra" }, rc);
     // Unsaved work isn't copied: only the latest saved version is.
     await call(builder.tools, "files", { action: "write", path: "draft.txt", content: "x" }, rc);
-    await db
-      .update(site)
-      .set({ folder: "Dental", repoFullName: "agency/smiles" })
-      .where(eq(site.id, siteId));
+    await db.update(site).set({ repoFullName: "agency/smiles" }).where(eq(site.id, siteId));
+    await db.insert(siteFolder).values({ siteId, name: "Dental" });
     return { client, siteId };
   }
 
@@ -888,8 +899,10 @@ describe("copying a site", () => {
       repoFullName: null,
       hostProjectId: null,
       customDomain: null,
-      folder: null,
     });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual(
+      [],
+    );
     const original = await contents(client, siteId);
     const copied = await contents(to, copy.siteId);
     expect(copied.files).toEqual(original.files);
@@ -918,7 +931,10 @@ describe("copying a site", () => {
       name: "Again",
     });
     const [row] = await db.select().from(site).where(eq(site.id, copy.siteId));
-    expect(row).toMatchObject({ locationId: clientA, folder: "Dental", repoFullName: null });
+    expect(row).toMatchObject({ locationId: clientA, repoFullName: null });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual([
+      { siteId: copy.siteId, name: "Dental" },
+    ]);
   });
 
   it("only copies between clients the member passed the staff check for", async () => {

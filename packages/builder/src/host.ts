@@ -19,11 +19,12 @@ import {
   ConnectError,
   commitSiteVersion,
   type PublishDeps,
+  type SiteCrm,
   type SiteDeps,
   siteDomainStatus,
 } from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
-import { auditLog, member, session, site, siteBackend } from "@locus/db/control";
+import { auditLog, member, session, site, siteBackend, siteFolder } from "@locus/db/control";
 import {
   generationRun,
   siteBlob,
@@ -42,6 +43,7 @@ import {
   sandboxFromEnv,
 } from "@locus/sandbox";
 import {
+  bookingCalendarIds,
   type PageSeo,
   pageSeo,
   readBrief,
@@ -124,6 +126,11 @@ export interface SiteBuilderDeps {
   locusUrl: string;
   /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
   billing?: boolean;
+  /**
+   * The client's GHL sub-account, for the builder's `crm` tool. Called with the client after
+   * the staff check on each tool call; null or absent leaves the tool saying it can't reach it.
+   */
+  crm?: ((client: AuthorizedClient) => SiteCrm) | null;
 }
 
 export interface SiteBuilderWiring {
@@ -310,6 +317,12 @@ export function publishHook(
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
+    // The calendars this version books on: the only ones its visitors may book once it's live.
+    // Recorded before the push, so the new deployment never refuses its own calendars.
+    await db
+      .update(site)
+      .set({ bookingCalendars: bookingCalendarIds(files) })
+      .where(eq(site.id, row.id));
     try {
       const deps = publish();
       const siteUrl = await siteAddress(deps, client, row);
@@ -701,6 +714,7 @@ export function createSiteBuilder(
           ? deps.openRuntime(client, siteId)
           : deps.runtimes().open(siteRuntimeKey(client, siteId)),
       images: deps.images ?? null,
+      crm: deps.crm ? deps.crm(client) : null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
       ...(onVersionSaved ? { onVersionSaved } : {}),
@@ -995,7 +1009,6 @@ export async function copyClientSite(
     deps.db.insert(site).values({
       id: newId,
       locationId: to.location.id,
-      folder: to.location.id === from.location.id ? source.folder : null,
     }),
     deps.db.insert(auditLog).values({
       id: auditId,
@@ -1013,6 +1026,14 @@ export async function copyClientSite(
       },
     }),
   ]);
+  // A copy for the same client stays in the original's folder.
+  if (to.location.id === from.location.id) {
+    const [folder] = await deps.db
+      .select({ name: siteFolder.name })
+      .from(siteFolder)
+      .where(eq(siteFolder.siteId, source.id));
+    if (folder) await deps.db.insert(siteFolder).values({ siteId: newId, name: folder.name });
+  }
   let tenant: TenantDb | undefined;
   let release: (() => void) | undefined;
   try {

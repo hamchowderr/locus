@@ -7,6 +7,7 @@ import {
 import {
   agencyGithubAccount,
   ConnectError,
+  type DomainState,
   type DomainStatus,
   type HostProject,
   type HostProjectList,
@@ -585,40 +586,44 @@ function DomainPanel({
     <div className="space-y-3">
       <p>
         <strong>{status.domain}</strong>
+        {status.state === "live" && (
+          <>
+            {" · "}
+            <a
+              href={`https://${status.domain}`}
+              className="text-sm underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              the site's main address
+            </a>
+          </>
+        )}
       </p>
       <Notice tone="info">{STATE[status.state]}</Notice>
-      {status.records.length > 0 && (
-        <div className="space-y-2 text-sm">
-          <p className="text-neutral-600">
-            Add at the DNS provider for <strong>{status.records[0]?.zone}</strong>:
+      <DnsRecords state={status} />
+      {status.redirect && (
+        <div className="space-y-2">
+          <p className="text-sm">
+            <strong>{status.redirect.domain}</strong> sends visitors to {status.domain}.{" "}
+            {status.redirect.state === "live"
+              ? "It works."
+              : "It needs its own record too, then check again."}
           </p>
-          <table className="w-full table-fixed border-collapse">
-            <thead>
-              <tr className="text-left text-neutral-500">
-                <th className="w-16 py-1">Type</th>
-                <th className="w-1/3 py-1">Name</th>
-                <th className="py-1">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {status.records.map((r) => (
-                <tr key={`${r.type}-${r.name}-${r.value}`} className="border-t border-neutral-200">
-                  <td className="py-1 align-top">{r.type}</td>
-                  <td className="break-all py-1 align-top font-mono">{r.name}</td>
-                  <td className="break-all py-1 align-top font-mono">{r.value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {status.state === "point" && (
-            <p className="text-neutral-600">
-              If the DNS is on Cloudflare, set the record to "DNS only" (grey cloud).
-            </p>
-          )}
+          <DnsRecords state={status.redirect} />
         </div>
       )}
+      {status.partner && manager && (
+        <form action={addSiteDomain} className="text-sm">
+          <input type="hidden" name="siteId" value={siteId} />
+          <input type="hidden" name="domain" value={status.domain} />
+          <button type="submit" className="underline">
+            Also send {status.partner} to {status.domain}
+          </button>
+        </form>
+      )}
       <div className="flex items-center gap-4 text-sm">
-        {status.state !== "live" && (
+        {(status.state !== "live" || (status.redirect && status.redirect.state !== "live")) && (
           // A full load, so Vercel is asked again.
           <a href="/sites" className="underline">
             Check again
@@ -626,6 +631,41 @@ function DomainPanel({
         )}
         {manager && <RemoveDomain siteId={siteId} />}
       </div>
+    </div>
+  );
+}
+
+/** The DNS records one domain still needs, to add at its DNS provider. */
+function DnsRecords({ state }: { state: DomainState }) {
+  if (state.records.length === 0) return null;
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="text-neutral-600">
+        Add at the DNS provider for <strong>{state.records[0]?.zone}</strong>:
+      </p>
+      <table className="w-full table-fixed border-collapse">
+        <thead>
+          <tr className="text-left text-neutral-500">
+            <th className="w-16 py-1">Type</th>
+            <th className="w-1/3 py-1">Name</th>
+            <th className="py-1">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {state.records.map((r) => (
+            <tr key={`${r.type}-${r.name}-${r.value}`} className="border-t border-neutral-200">
+              <td className="py-1 align-top">{r.type}</td>
+              <td className="break-all py-1 align-top font-mono">{r.name}</td>
+              <td className="break-all py-1 align-top font-mono">{r.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {state.state === "point" && (
+        <p className="text-neutral-600">
+          If the DNS is on Cloudflare, set the record to "DNS only" (grey cloud).
+        </p>
+      )}
     </div>
   );
 }
@@ -756,10 +796,11 @@ function DeploymentLine({
       Latest deployment: {deploymentLabel(deployment.state)}
       {deployment.url && (
         <>
-          {" · "}
+          {" · Preview address "}
           <a href={deployment.url} className="underline" target="_blank" rel="noreferrer">
             {deployment.url.replace(/^https:\/\//, "")}
           </a>
+          {" (always on, good for sharing before the domain works)"}
         </>
       )}
     </p>

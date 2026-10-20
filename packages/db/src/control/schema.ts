@@ -73,8 +73,12 @@ export const site = sqliteTable(
     status: text("status", { enum: ["draft", "pushed", "deployed", "failed"] })
       .notNull()
       .default("draft"),
-    /** The folder the agency filed the site under on the Sites page; null for none. */
-    folder: text("folder_name"),
+    /**
+     * The client's calendars the published site books on, as a JSON array of GHL calendar ids,
+     * read from the site's code each time it is published. A booking on any other calendar is
+     * refused, so a visitor can't book a calendar the site doesn't offer.
+     */
+    bookingCalendars: text("booking_calendars", { mode: "json" }).$type<string[]>(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -85,6 +89,17 @@ export const site = sqliteTable(
     unique("site_repo_full_name_unique").on(t.repoFullName),
   ],
 );
+
+/**
+ * The folder the agency filed a site under on the Sites page. No row means no folder. Its own
+ * table (not a `site` column) so its migration can be safely re-run.
+ */
+export const siteFolder = sqliteTable("site_folder", {
+  siteId: text("site_id")
+    .primaryKey()
+    .references(() => site.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+});
 
 /**
  * The database of an app-style site (member logins, bookings, its own records), on Otaku's
