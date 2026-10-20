@@ -108,6 +108,52 @@ describe("TursoProvisioner", () => {
     }
   });
 
+  it("creates a site database by name, empty or forked from another at a moment", async () => {
+    const hostname = "site-1-hamchowderr.aws-us-east-1.turso.io";
+    const { calls, provisioner } = fakeTurso(() => ({
+      json: { database: { Name: "site-1", Hostname: hostname } },
+    }));
+    expect(await provisioner.createDatabase("site-1")).toEqual({ dbName: "site-1", hostname });
+    expect(calls[0]?.body).toEqual({ name: "site-1", group: "locus" });
+
+    await provisioner.createDatabase("site-1-copy", {
+      fork: { from: "site-1", at: new Date("2026-10-20T05:00:00.123Z") },
+    });
+    expect(calls[1]?.body).toEqual({
+      name: "site-1-copy",
+      group: "locus",
+      seed: { type: "database", name: "site-1", timestamp: "2026-10-20T05:00:00Z" },
+    });
+    await provisioner.createDatabase("site-1-now", { fork: { from: "site-1" } });
+    expect(calls[2]?.body).toEqual({
+      name: "site-1-now",
+      group: "locus",
+      seed: { type: "database", name: "site-1" },
+    });
+
+    await expect(provisioner.createDatabase("Bad Name")).rejects.toThrow(/name/);
+    await expect(provisioner.createDatabase("ok", { fork: { from: "../other" } })).rejects.toThrow(
+      /name/,
+    );
+    expect(calls).toHaveLength(3);
+  });
+
+  it("finds a database by name, or reports none", async () => {
+    const hostname = "site-1-hamchowderr.aws-us-east-1.turso.io";
+    let status = 200;
+    const { calls, provisioner } = fakeTurso(() => ({
+      status,
+      json: status === 200 ? { database: { Name: "site-1", Hostname: hostname } } : {},
+    }));
+    expect(await provisioner.findDatabase("site-1")).toEqual({ dbName: "site-1", hostname });
+    expect(calls[0]?.method).toBe("GET");
+    expect(calls[0]?.url.pathname).toBe("/v1/organizations/hamchowderr/databases/site-1");
+    status = 404;
+    expect(await provisioner.findDatabase("site-1")).toBeNull();
+    status = 500;
+    await expect(provisioner.findDatabase("site-1")).rejects.toBeInstanceOf(TursoError);
+  });
+
   it("reports Turso's error without the Platform token", async () => {
     const { provisioner } = fakeTurso(() => ({
       status: 409,

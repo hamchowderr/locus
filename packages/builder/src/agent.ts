@@ -29,7 +29,8 @@ add_dependency's component); the files tool replaces reading and editing files d
 How to work:
 1. brief first. If it leaves design questions open and the person hasn't said to just go
    ahead, ask at most three of them in one short message, with the suggested options. Record
-   answers with brief's changes.
+   answers with brief's changes. If it lists references, look at each before designing:
+   view_reference for a screenshot, fetch_reference for a site.
 2. files list, then read what you change. Use files edit for small changes, write for new
    files or rewrites. Keep facts (name, phone, address, nav) in lib/site.ts.
 3. check_site after changes. Fix every error it reports and check again until it is ok.
@@ -67,6 +68,7 @@ export const SITE_BUILDER_TOOL_NAMES = [
   "preview",
   "fetch_reference",
   "generate_image",
+  "view_reference",
   "versions",
 ] as const satisfies readonly (keyof SiteBuilderTools)[];
 

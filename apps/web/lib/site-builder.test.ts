@@ -41,6 +41,7 @@ import {
   organization,
   session,
   site,
+  siteBackend,
   subscription,
   usageEvent,
   usageLimit,
@@ -947,6 +948,21 @@ describe("deleting a site", () => {
     await db.update(site).set(live).where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
       /unlink its Vercel project first/,
+    );
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
+  });
+
+  it("refuses a site with its own database, and leaves it as it was", async () => {
+    const { client, siteId } = await draft();
+    await db.insert(siteBackend).values({
+      siteId,
+      locationId: client.location.id,
+      tursoDbName: `site-${siteId}`,
+      tursoDbHostname: `site-${siteId}.local`,
+    });
+    await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
+      /own database/,
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
