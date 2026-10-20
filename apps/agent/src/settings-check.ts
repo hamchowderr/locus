@@ -38,27 +38,28 @@ export function unresolvedSettings(env: Env): string[] {
 }
 
 /**
- * What is wrong with `LOCUS_AGENT_MODEL`, if anything, judged against the model list in the
+ * What is wrong with `LOCUS_AGENT_MODEL`, if anything, judged against the providers in the
  * installed Mastra: a provider Mastra doesn't know (staging once ran `gateway/…`, where the
- * Vercel AI Gateway is `vercel/…`), a model the provider doesn't list, or a missing key.
+ * Vercel AI Gateway is `vercel/…`), or a missing key. Model names aren't checked: Mastra's list
+ * is a snapshot, and a newer model works anyway. Only names are logged, never the raw value.
  */
 export function modelProblems(env: Env): string[] {
   const id = env.LOCUS_AGENT_MODEL;
-  if (!id || id === SCRIPTED) return [];
-  const { provider, modelId } = parseModelString(id);
-  const config = provider ? getProviderConfig(provider) : undefined;
-  if (!config) {
-    return [`LOCUS_AGENT_MODEL names a provider Mastra doesn't know: ${provider ?? id}`];
+  if (!id || id === SCRIPTED || UNRESOLVED.test(id)) return [];
+  const { provider } = parseModelString(id);
+  if (!provider) return ["LOCUS_AGENT_MODEL is not a Mastra model id (provider/model)"];
+  // Mastra's own gateway routes `mastra/…` but isn't in the provider list.
+  const keys =
+    provider === "mastra"
+      ? ["MASTRA_GATEWAY_API_KEY"]
+      : [getProviderConfig(provider)?.apiKeyEnvVar ?? []].flat();
+  if (keys.length === 0) {
+    return [`LOCUS_AGENT_MODEL names a provider Mastra doesn't know: ${provider}`];
   }
-  const problems: string[] = [];
-  if (!config.models.includes(modelId)) {
-    problems.push(`LOCUS_AGENT_MODEL names a model ${config.name} doesn't list: ${modelId}`);
-  }
-  const keys = [config.apiKeyEnvVar].flat();
   if (!keys.some((key) => env[key])) {
-    problems.push(`LOCUS_AGENT_MODEL needs ${keys.join(" or ")}, which is not set`);
+    return [`LOCUS_AGENT_MODEL needs ${keys.join(" or ")}, which is not set`];
   }
-  return problems;
+  return [];
 }
 
 const MAX_CAUSE = 200;

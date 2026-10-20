@@ -98,9 +98,14 @@ describe("the agent's settings check", () => {
         AI_GATEWAY_API_KEY: "k",
       }),
     ).toEqual(["LOCUS_AGENT_MODEL names a provider Mastra doesn't know: gateway"]);
+    // A model Mastra's snapshot doesn't list yet still works, so it passes.
     expect(
-      modelProblems({ LOCUS_AGENT_MODEL: "anthropic/claude-nope", ANTHROPIC_API_KEY: "k" }),
-    ).toEqual(["LOCUS_AGENT_MODEL names a model Anthropic doesn't list: claude-nope"]);
+      modelProblems({ LOCUS_AGENT_MODEL: "anthropic/claude-next", ANTHROPIC_API_KEY: "k" }),
+    ).toEqual([]);
+    // A value that isn't an id at all (a pasted key, say) is never echoed.
+    expect(modelProblems({ LOCUS_AGENT_MODEL: "sk-pasted-secret" })).toEqual([
+      "LOCUS_AGENT_MODEL is not a Mastra model id (provider/model)",
+    ]);
   });
 
   it("reports a model whose key is missing, by the key's name only", () => {
