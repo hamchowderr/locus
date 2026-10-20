@@ -42,7 +42,7 @@ import {
   SiteInputError,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { giveSiteProject, giveSiteRepo } from "@/lib/site-publish";
+import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -391,12 +391,15 @@ async function siteAction(
     client: Awaited<ReturnType<typeof resolveActiveClient>>,
   ) => Promise<unknown>,
   notConfigured = "Vercel isn't set up here yet.",
+  /** Where to land afterwards, from what the change returned; the Sites page by default. */
+  landing: (result: unknown) => string = () => "/sites",
 ) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   const ctx = sessionContext(current);
+  let result: unknown;
   try {
-    await change(ctx, await resolveActiveClient(locus().db, ctx));
+    result = await change(ctx, await resolveActiveClient(locus().db, ctx));
   } catch (error) {
     if (error instanceof ClientAccessDenied || error instanceof ConnectError) back("/sites", error);
     if (error instanceof NotConfigured) back("/sites", new Error(notConfigured));
@@ -404,7 +407,7 @@ async function siteAction(
   }
   // The redirect lands on the page the form was on, so drop its cached render.
   revalidatePath("/sites");
-  redirect("/sites");
+  redirect(landing(result));
 }
 
 /** Makes a project on the agency's Vercel team the active client's site. */
@@ -540,12 +543,16 @@ export async function unlinkSiteProject(form: FormData) {
 export async function giveSiteRepository(form: FormData) {
   await siteAction(
     (ctx, client) =>
-      giveSiteRepo(publishDeps(), ctx, client, {
+      giveSiteRepoAndPublish(publishDeps(), siteBuilderDeps, ctx, client, {
         siteId: text(form, "siteId"),
         repo: text(form, "repo"),
         name: text(form, "name"),
       }),
     "Publishing to GitHub isn't set up here yet.",
+    (result) => {
+      const { version } = result as Awaited<ReturnType<typeof giveSiteRepoAndPublish>>;
+      return version === null ? "/sites" : `/sites?published=${version}`;
+    },
   );
 }
 
