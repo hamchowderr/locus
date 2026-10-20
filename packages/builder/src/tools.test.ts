@@ -846,3 +846,65 @@ describe("add_dependency with a component", () => {
     expect((await t.session.workspace.listFiles()).map((f) => f.path)).toEqual(["package.json"]);
   });
 });
+
+describe("crm tool", () => {
+  it("lists the client's calendars as one line each, for the model to pick from", async () => {
+    const { call } = await setup();
+    t.session.crm = {
+      calendars: async () => [
+        {
+          id: "cal1",
+          name: "Consultation",
+          type: "event",
+          embedUrl: "https://api.leadconnectorhq.com/widget/booking/cal1",
+        },
+      ],
+    };
+    expect(await call("crm", { action: "calendars" })).toEqual({
+      calendars:
+        "id: cal1 | name: Consultation | type: event | embedUrl: https://api.leadconnectorhq.com/widget/booking/cal1",
+    });
+  });
+
+  it("says when there are no calendars, or no CRM to ask", async () => {
+    const { call } = await setup();
+    expect(await call("crm", { action: "calendars" })).toEqual({
+      error: "The CRM isn't reachable from here.",
+    });
+    t.session.crm = { calendars: async () => [] };
+    expect(await call("crm", { action: "calendars" })).toMatchObject({
+      note: expect.stringContaining("no active calendars"),
+    });
+  });
+
+  it("writes Locus's booking pieces, keeping a site's own copy unless told to replace it", async () => {
+    const { call } = await setup();
+    // A site made before booking: no Locus route, and settings without siteApi.
+    await t.session.workspace.writeFile(
+      "lib/locus.ts",
+      "export const locus = { leadEndpoint: null };",
+    );
+    expect(await call("crm", { action: "add_booking" })).toMatchObject({
+      written: "components/booking.tsx",
+      note: expect.stringContaining("calendarId"),
+    });
+    expect(String(await t.session.workspace.readFile("components/booking.tsx"))).toContain(
+      'fetch("/api/locus/booking"',
+    );
+    expect(
+      String(await t.session.workspace.readFile("app/api/locus/[...path]/route.ts")),
+    ).toContain('"POST booking"');
+    expect(String(await t.session.workspace.readFile("lib/locus.ts"))).toContain("siteApi");
+    await t.session.workspace.writeFile("components/booking.tsx", "mine");
+    expect(await call("crm", { action: "add_booking" })).toMatchObject({
+      kept: "components/booking.tsx",
+    });
+    expect(await t.session.workspace.readFile("components/booking.tsx")).toBe("mine");
+    expect(await call("crm", { action: "add_booking", overwrite: true })).toMatchObject({
+      written: "components/booking.tsx",
+    });
+    expect(await call("crm", { action: "add_calendar_embed" })).toEqual({
+      written: "components/calendar-embed.tsx",
+    });
+  });
+});

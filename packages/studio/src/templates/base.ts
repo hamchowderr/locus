@@ -1,6 +1,6 @@
 import { type DesignBrief, FONTS } from "../brief.ts";
 import type { SiteFile } from "../workspace.ts";
-import { leadRouteFile, locusSettingsFile } from "./forms.ts";
+import { leadRouteFile, locusProxyFile, locusSettingsFile } from "./forms.ts";
 import { searchFiles } from "./search.ts";
 import { shadcnComponentFiles } from "./shadcn.ts";
 
@@ -539,12 +539,14 @@ UI components live in \`components/ui\` as source (shadcn/ui); the theme is in
 
 Forms post to the site's own \`/api/lead\` route, which forwards them to Locus and on to the
 business's CRM. \`lib/locus.ts\` says where; Locus writes it on every publish, and it holds no
-key or token. Other settings the site reads at run time come from the host's environment
-variables, never from files in this repository.
+key or token. Booking goes the same way, through the site's \`/api/locus\` route. Other
+settings the site reads at run time come from the host's environment variables, never from
+files in this repository.
 `,
     },
     locusSettingsFile({ site: { name: brief.name, description: "" } }),
     leadRouteFile(),
+    locusProxyFile(),
     ...searchFiles(),
   ];
 }

@@ -3,8 +3,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { briefForAgent, DesignBrief, openQuestions, readBrief } from "./brief.ts";
 import { startSite } from "./start.ts";
 import {
+  LOCUS_PROXY_PATH,
   LOCUS_SETTINGS_PATH,
   leadEndpoint,
+  locusProxyFile,
   readableOn,
   renderTemplate,
   SHADCN_COMPONENTS,
@@ -131,6 +133,12 @@ describe("templates", () => {
       }
       // The route forwards without any credential of its own.
       expect(route).not.toMatch(/authorization|bearer|process\.env/i);
+      // So does Locus's other route, and only the calls it lists.
+      const proxy = String(file(files, LOCUS_PROXY_PATH));
+      expect(file(files, "lib/locus.ts")).toContain("siteApi: null as string | null");
+      expect(proxy).toContain('new Set(["GET booking/slots","POST booking"])');
+      expect(proxy).toContain('"x-locus-visitor-ip"');
+      expect(proxy).not.toMatch(/authorization|bearer|process\.env/i);
       const layout = String(files.find((f) => f.path === "app/layout.tsx")?.content);
       expect(layout).toContain("import { Playfair_Display, Inter }");
       // The name is quoted as a string literal, never pasted into code.
@@ -156,7 +164,11 @@ describe("Locus settings at publish", () => {
     expect(published.filter((f) => f.path === LOCUS_SETTINGS_PATH)).toHaveLength(1);
     const settings = String(published.find((f) => f.path === LOCUS_SETTINGS_PATH)?.content);
     expect(settings).toContain('"https://app.locus.test/api/sites/site-1/leads"');
+    expect(settings).toContain('siteApi: "https://app.locus.test/api/sites/site-1"');
     expect(settings).not.toContain("evil");
+    // Locus's own route goes out at its current version, even into a site made before it.
+    expect(published.filter((f) => f.path === LOCUS_PROXY_PATH)).toHaveLength(1);
+    expect(file(published, LOCUS_PROXY_PATH)).toBe(locusProxyFile().content);
     expect(published.find((f) => f.path === "app/page.tsx")?.content).toBe("page");
     expect(leadEndpoint("https://app.locus.test/", "a/b")).toBe(
       "https://app.locus.test/api/sites/a%2Fb/leads",
