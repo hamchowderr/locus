@@ -75,6 +75,11 @@ export default async function Apps({
           ))}
         </ul>
       )}
+      {!("problem" in listing) && listing.manager && listing.apps.some((app) => !app.connected) && (
+        <p className="text-sm text-neutral-600">
+          If the app's sign-in page says the link is invalid or expired, reload that page once.
+        </p>
+      )}
       {!("problem" in listing) && !listing.manager && (
         <p className="text-sm text-neutral-600">Only owners and admins can connect apps.</p>
       )}
