@@ -70,6 +70,10 @@ export default async function Home() {
               Sites
             </Link>{" "}
             ·{" "}
+            <Link href="/apps" className="underline">
+              Apps
+            </Link>{" "}
+            ·{" "}
           </>
         )}
         <Link href="/team" className="underline">

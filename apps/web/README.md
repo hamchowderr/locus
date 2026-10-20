@@ -43,6 +43,7 @@ Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hos
 | `STRIPE_WEBHOOK_SECRET` | from `stripe listen` | the signing secret of the webhook endpoint `https://<host>/api/auth/stripe/webhook` |
 | `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID`, `LOCUS_SANDBOX_PROJECT_ID` | unset: the site builder uses the in-memory fake sandbox (commands succeed and run nothing) | Otaku's own Vercel team, for site sandboxes. Not needed on Vercel, where the deployment's OIDC token is used; `LOCUS_SANDBOX=off` turns sandboxes off |
 | `LOCUS_IMAGE_API_KEY` (+ optional `LOCUS_IMAGE_BASE_URL`, `LOCUS_IMAGE_MODEL`) | — | the site builder's image API. Unset means no image generation |
+| `COMPOSIO_API_KEY` | — | Otaku's Composio project, for the Apps page (connect Gmail, Google Calendar, Slack per client). Unset means the page says it isn't set up. The agent server needs the same key to use the apps in chat |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
 auth API answers 503 — it never falls back to development defaults.

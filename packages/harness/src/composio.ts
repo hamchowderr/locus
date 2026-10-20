@@ -126,3 +126,72 @@ export function createComposioConnector({
       }),
   };
 }
+
+/** One allowed app and whether the client has connected it. */
+export interface AppConnection {
+  toolkit: string;
+  name: string;
+  connected: boolean;
+}
+
+/**
+ * Connecting and disconnecting a client's apps, for the Connections page. Callers check the
+ * member may manage the client first; the client id comes from that check, never a form.
+ * Connected-account ids are looked up for the client here, so nothing a browser sends can name
+ * another client's account.
+ */
+export function createComposioConnections({
+  apiKey,
+  baseURL,
+}: Omit<ComposioConnectorConfig, "clientId">) {
+  const composio = new Composio({
+    apiKey,
+    ...(baseURL ? { baseURL } : {}),
+    allowTracking: false,
+    disableVersionCheck: true,
+  });
+  const sessionFor = (clientId: string) =>
+    composio.create(appUserId(clientId), {
+      toolkits: [...APP_TOOLKITS],
+      manageConnections: false,
+      instant: false,
+    });
+  const states = async (clientId: string) =>
+    (await (await sessionFor(clientId)).toolkits({ toolkits: [...APP_TOOLKITS] })).items;
+  const offered = (toolkit: string) => {
+    if (!allowed(toolkit)) throw new AppServiceError(`Locus doesn't offer ${toolkit}`);
+    return toolkit.toLowerCase();
+  };
+
+  return {
+    async list(clientId: string): Promise<AppConnection[]> {
+      const items = await states(clientId);
+      return APP_TOOLKITS.map((toolkit) => {
+        const item = items.find((i) => i.slug.toLowerCase() === toolkit);
+        return {
+          toolkit,
+          name: item?.name ?? toolkit,
+          connected: item?.connection?.isActive === true,
+        };
+      });
+    },
+
+    /** The app's own sign-in page; it comes back to `callbackUrl` when the person is done. */
+    async connect(clientId: string, toolkit: string, callbackUrl: string): Promise<string> {
+      const slug = offered(toolkit);
+      const request = await (await sessionFor(clientId)).authorize(slug, { callbackUrl });
+      if (!request.redirectUrl)
+        throw new AppServiceError(`Composio gave no sign-in link for ${toolkit}`);
+      return request.redirectUrl;
+    },
+
+    async disconnect(clientId: string, toolkit: string): Promise<void> {
+      const slug = offered(toolkit);
+      const item = (await states(clientId)).find((i) => i.slug.toLowerCase() === slug);
+      const account = item?.connection?.connectedAccount?.id;
+      if (account) await composio.connectedAccounts.delete(account);
+    },
+  };
+}
+
+export type AppConnections = ReturnType<typeof createComposioConnections>;
