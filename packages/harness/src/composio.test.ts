@@ -364,6 +364,16 @@ describe("Composio connector", () => {
       GMAIL_MOVE_TO_TRASH: [],
       GMAIL_EMPTY_FOLDER: ["destructiveHint"],
       GMAIL_REMOVED_LABELS_LIST: ["readOnlyHint"],
+      GOOGLESHEETS_CLEAR_VALUES: [],
+      NOTION_ARCHIVE_NOTION_PAGE: [],
+      SLACK_ARCHIVE_CONVERSATION: [],
+      GOOGLECALENDAR_CANCEL_EVENT: [],
+      GITHUB_REVOKE_TOKEN: [],
+      GOOGLEDRIVE_EMPTY_TRASH: [],
+      SUPABASE_DROP_TABLE: [],
+      SUPABASE_TRUNCATE_TABLE: [],
+      SLACK_UNINSTALL_APP: [],
+      GMAIL_DISCARD_DRAFTS: [],
     };
     for (const [slug, t] of Object.entries(tags)) {
       routes[`GET /api/v3.1/tools/${slug}`] = () => toolBody(slug, t);
@@ -378,6 +388,21 @@ describe("Composio connector", () => {
     expect(await apps.deletes("GMAIL_DELETE_MESSAGE")).toBe(true);
     expect(await apps.deletes("GMAIL_MOVE_TO_TRASH")).toBe(true);
     expect(await apps.deletes("GMAIL_EMPTY_FOLDER")).toBe(true);
+    // Untagged tools that clear, archive, cancel or revoke count as deletes too.
+    for (const slug of [
+      "GOOGLESHEETS_CLEAR_VALUES",
+      "NOTION_ARCHIVE_NOTION_PAGE",
+      "SLACK_ARCHIVE_CONVERSATION",
+      "GOOGLECALENDAR_CANCEL_EVENT",
+      "GITHUB_REVOKE_TOKEN",
+      "GOOGLEDRIVE_EMPTY_TRASH",
+      "SUPABASE_DROP_TABLE",
+      "SUPABASE_TRUNCATE_TABLE",
+      "SLACK_UNINSTALL_APP",
+      "GMAIL_DISCARD_DRAFTS",
+    ]) {
+      expect(await apps.deletes(slug), slug).toBe(true);
+    }
     // A tool from an app Locus doesn't offer is never vouched for.
     expect(await apps.deletes("GITHUB_LIST_ISSUES")).toBe(true);
   });

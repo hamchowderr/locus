@@ -98,8 +98,13 @@ export async function clientApps(
     manages(db, ctx),
   ]);
   // The client's own database is opened only when there's a connected app to show a setting for.
+  // If it can't be read the page still lists the apps, at the default; the chat itself fails
+  // closed and asks before every app call.
   const settings = apps.some((app) => app.connected)
-    ? await withClientDb(openDb, client, readAppAccess)
+    ? await withClientDb(openDb, client, readAppAccess).catch((error) => {
+        console.error("Apps page: couldn't read the app settings", error);
+        return {};
+      })
     : {};
   return {
     apps: apps.map((app) => ({ ...app, access: accessOf(settings, app.toolkit) })),
@@ -150,6 +155,7 @@ export async function disconnectClientApp(
 ): Promise<void> {
   const client = await resolveActiveClient(db, ctx);
   await requireAgencyManager(db, ctx);
-  await connections.disconnect(client.location.id, toolkit);
+  // The setting goes first: were it left behind, connecting again would bring it back.
   await withClientDb(openDb, client, (tenant) => clearAppAccess(tenant, toolkit.toLowerCase()));
+  await connections.disconnect(client.location.id, toolkit);
 }
