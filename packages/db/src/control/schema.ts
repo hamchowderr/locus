@@ -91,6 +91,17 @@ export const site = sqliteTable(
 );
 
 /**
+ * The folder the agency filed a site under on the Sites page. No row means no folder. Its own
+ * table (not a `site` column) so its migration can be safely re-run.
+ */
+export const siteFolder = sqliteTable("site_folder", {
+  siteId: text("site_id")
+    .primaryKey()
+    .references(() => site.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+});
+
+/**
  * The database of an app-style site (member logins, bookings, its own records), on Otaku's
  * Turso. Plain websites have no row here. Like `location`, a registry row only: the site's
  * data lives in that database, never in this one.

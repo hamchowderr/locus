@@ -27,6 +27,7 @@ import {
   pairedDomain,
   removeSiteDomain,
   type SiteDeps,
+  setSiteFolder,
   siteDomainStatus,
   unlinkHostProject,
 } from "./sites.ts";
@@ -153,6 +154,44 @@ describe("domain names", () => {
     expect(pairedDomain("www.example.co.uk", "example.co.uk")).toBe("example.co.uk");
     expect(pairedDomain("shop.example.co.uk", "example.co.uk")).toBeNull();
     expect(pairedDomain("www.shop.example.com", "example.com")).toBeNull();
+  });
+});
+
+describe("site folders", () => {
+  beforeEach(async () => {
+    await db.insert(site).values([
+      { id: "site-1", locationId: "client-1" },
+      { id: "site-2", locationId: "client-2" },
+    ]);
+  });
+
+  it("files a client's site under a cleaned name, and takes it out again", async () => {
+    const client = await authorizeClient(db, ctx("staff"), "client-1");
+    await setSiteFolder(db, ctx("staff"), client, {
+      siteId: "site-1",
+      folder: "  Spring   promos ",
+    });
+    const [filed] = await listSites(db, client);
+    expect(filed?.folder).toBe("Spring promos");
+    await setSiteFolder(db, ctx("staff"), client, { siteId: "site-1", folder: "   " });
+    const [unfiled] = await listSites(db, client);
+    expect(unfiled?.folder).toBeNull();
+    const audits = await db.select().from(auditLog).where(eq(auditLog.action, "site.folder"));
+    expect(audits.map((a) => a.detail)).toEqual([
+      { siteId: "site-1", folder: "Spring promos" },
+      { siteId: "site-1", folder: null },
+    ]);
+  });
+
+  it("refuses another client's site and a name that is too long", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await expect(
+      setSiteFolder(db, ctx("owner"), client, { siteId: "site-2", folder: "X" }),
+    ).rejects.toThrow(/isn't one of this client's/);
+    await expect(
+      setSiteFolder(db, ctx("owner"), client, { siteId: "site-1", folder: "x".repeat(61) }),
+    ).rejects.toThrow(ConnectError);
+    expect(await listSites(db, client)).toEqual([expect.objectContaining({ folder: null })]);
   });
 });
 

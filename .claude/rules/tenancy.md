@@ -5,7 +5,9 @@ The client (one GHL location) is the tenancy boundary. These hold everywhere, wi
 - **`locationId` is derived from the session, never accepted from a request.** No route, server
   action, tool argument or agent output may name the client it acts on. `ghlRequest` refuses a
   caller-supplied `locationId` anywhere, and `altId` / `companyId` where the operation declares
-  them.
+  them. The two places a person names a client are choosing the active client
+  (`selectClient`) and the target of a site copy (`copySite`); both go through
+  `authorizeClient` before anything else.
 - **Staff restrictions run before any token exists.** Check the member's `locationIds` before
   minting a GHL location token or a Turso database token. A restricted member gets 403 on any
   other client. GHL's tokens carry no user identity, so GHL cannot enforce this for us.
