@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "82f4441f-d7a8-4ad2-98c5-85f0d37b57c1",
+  "id": "4d61f604-1731-4563-98ee-cb18ae484836",
   "prevId": "2db99552-be5e-4973-b11f-f692fb726fa7",
   "tables": {
     "account": {
@@ -1463,14 +1463,6 @@
           "autoincrement": false,
           "default": "'draft'"
         },
-        "origin": {
-          "name": "origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'studio'"
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1659,6 +1651,21 @@
           "notNull": false,
           "autoincrement": false
         },
+        "overage_credits": {
+          "name": "overage_credits",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "overage_reported_at": {
+          "name": "overage_reported_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1684,6 +1691,14 @@
             "created_at"
           ],
           "isUnique": false
+        },
+        "usage_event_overage_unreported_idx": {
+          "name": "usage_event_overage_unreported_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false,
+          "where": "\"usage_event\".\"overage_credits\" > 0 and \"usage_event\".\"overage_reported_at\" is null"
         }
       },
       "foreignKeys": {
@@ -1796,6 +1811,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "overage_credits": {
+          "name": "overage_credits",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         }
       },
       "indexes": {
@@ -1832,6 +1855,59 @@
           "name": "usage_month_location_id_month_pk"
         }
       },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "usage_overage": {
+      "name": "usage_overage",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "monthly_credit_limit": {
+          "name": "monthly_credit_limit",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "usage_overage_organization_id_organization_id_fk": {
+          "name": "usage_overage_organization_id_organization_id_fk",
+          "tableFrom": "usage_overage",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     }

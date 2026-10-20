@@ -1,0 +1,1 @@
+ALTER TABLE `site` ADD `booking_calendars` text;

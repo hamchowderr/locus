@@ -6,7 +6,7 @@ import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
-import { consumeAttempt } from "./rate-limit.ts";
+import { consumeAttempt, LONGEST_WINDOW_MS } from "./rate-limit.ts";
 
 let dir: string;
 let db: ControlDb;
@@ -395,6 +395,21 @@ describe("consumeAttempt", () => {
   it("keeps separate counts per key", async () => {
     for (const t of [0, 1, 2]) await consumeAttempt(db, "a", rule, t);
     expect(await consumeAttempt(db, "b", rule, 3)).toEqual({ allowed: true });
+  });
+
+  it("keeps a day-long count when another key's fresh window sweeps old keys", async () => {
+    const day = { max: 1, windowMs: 24 * 3_600_000 };
+    expect(await consumeAttempt(db, "daily", day, 0)).toEqual({ allowed: true });
+    // Hours later, a fresh window on another key drops keys unused for a while.
+    await consumeAttempt(db, "other", rule, 5 * 3_600_000);
+    expect((await consumeAttempt(db, "daily", day, 6 * 3_600_000)).allowed).toBe(false);
+    expect(await consumeAttempt(db, "daily", day, 24 * 3_600_000)).toEqual({ allowed: true });
+  });
+
+  it("refuses a window longer than its keys are kept", async () => {
+    await expect(
+      consumeAttempt(db, "k", { max: 1, windowMs: LONGEST_WINDOW_MS + 1 }, 0),
+    ).rejects.toThrow(RangeError);
   });
 });
 

@@ -5,10 +5,12 @@ import {
   requireAgencyManager,
   type SessionContext,
 } from "@locus/auth";
+import type { TenantProvisioner } from "@locus/db";
 import { auditLog, githubInstallation, site } from "@locus/db/control";
 import { and, eq, isNull, ne } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { GITHUB_API_VERSION, type GithubHttp } from "./github.ts";
+import { ensureSiteBackendEnv } from "./site-backend.ts";
 import { audit, type SiteDeps, type SiteRow } from "./sites.ts";
 import { hostGrant, refused, type VercelResult, vercel } from "./vercel-api.ts";
 
@@ -68,6 +70,8 @@ const defaultTokenCache = new InstallationTokenCache();
 
 export interface PublishDeps extends SiteDeps {
   githubApp: GithubAppCredentials;
+  /** Reaches app-style sites' own databases (`site-backend.ts`). Plain websites don't need it. */
+  provisioner?: TenantProvisioner;
   /** GitHub's API (`fetch`, `apiBaseUrl`). `http` is Vercel's, as for sites. */
   github?: GithubHttp;
   /** Defaults to one cache per process. */
@@ -251,6 +255,47 @@ export async function listInstallationRepos(
   }));
 }
 
+/** The GitHub account an installation is on. */
+export interface InstallationAccount {
+  login: string;
+  /**
+   * A personal account rather than an organization. GitHub Apps can't create repositories
+   * there, so each site's empty repository is made by hand and linked.
+   */
+  personal: boolean;
+  installationId: string;
+}
+
+async function installationAccount(
+  deps: PublishDeps,
+  installationId: string,
+): Promise<InstallationAccount> {
+  const jwt = await createAppJwt(deps.githubApp, nowOf(deps));
+  const about = await github<{ account?: { login?: string; type?: string } | null }>(
+    deps,
+    jwt,
+    "GET",
+    `/app/installations/${encodeURIComponent(installationId)}`,
+  );
+  if (about.status === 404) {
+    throw new ConnectError("The Locus GitHub app is no longer installed. Connect GitHub again.");
+  }
+  if (!about.ok) throw githubRefused(about, "GitHub didn't show the installation. Try again.");
+  const account = about.body.account;
+  if (!account?.login) throw new ConnectError("GitHub didn't say which account Locus is on.");
+  return { login: account.login, personal: account.type !== "Organization", installationId };
+}
+
+/** The account the agency's GitHub installation is on, for the Sites page. Owners and admins. */
+export async function agencyGithubAccount(
+  deps: PublishDeps,
+  ctx: SessionContext,
+): Promise<InstallationAccount> {
+  const { organizationId } = await requireAgencyManager(deps.db, ctx);
+  const installation = await agencyInstallation(deps, organizationId);
+  return installationAccount(deps, installation.installationId);
+}
+
 const REPO_NAME = /^[A-Za-z0-9._-]{1,100}$/;
 
 /**
@@ -370,20 +415,8 @@ async function createOrgRepo(
       "Repository names use letters, numbers, dots, dashes and underscores, up to 100 characters.",
     );
   }
-  const jwt = await createAppJwt(deps.githubApp, nowOf(deps));
-  const about = await github<{ account?: { login?: string; type?: string } | null }>(
-    deps,
-    jwt,
-    "GET",
-    `/app/installations/${encodeURIComponent(installationId)}`,
-  );
-  if (about.status === 404) {
-    throw new ConnectError("The Locus GitHub app is no longer installed. Connect GitHub again.");
-  }
-  if (!about.ok) throw githubRefused(about, "GitHub didn't show the installation. Try again.");
-  const account = about.body.account;
-  if (!account?.login) throw new ConnectError("GitHub didn't say which account Locus is on.");
-  if (account.type !== "Organization") {
+  const account = await installationAccount(deps, installationId);
+  if (account.personal) {
     throw new ConnectError(
       `Locus can't create repositories in the personal account ${account.login}. Create an empty private repository there, give the Locus app access to it, and pick it here.`,
     );
@@ -693,6 +726,9 @@ export async function ensureSiteDeployment(
     projectId,
     repoFullName: row.repoFullName,
   });
+
+  // An app-style site's project needs its database settings before its first build.
+  await ensureSiteBackendEnv(deps, client, { siteId: row.id });
 
   if (row.status === "pushed") {
     // A project made after the first commit has nothing to build until the next push. A refusal

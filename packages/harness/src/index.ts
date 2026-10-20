@@ -1,5 +1,29 @@
 export { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
-export { createLocusAgent, INSTRUCTIONS, type LocusAgentConfig } from "./agent.ts";
+export {
+  APP_INSTRUCTIONS,
+  createLocusAgent,
+  INSTRUCTIONS,
+  type LocusAgentConfig,
+} from "./agent.ts";
+export {
+  APP_TOOL_NAMES,
+  APP_TOOLKITS,
+  type AppConnector,
+  AppError,
+  type AppResult,
+  type AppSearch,
+  AppServiceError,
+  type AppTool,
+  createAppTools,
+} from "./apps.ts";
+export {
+  type AppConnection,
+  type AppConnections,
+  appUserId,
+  type ComposioConnectorConfig,
+  createComposioConnections,
+  createComposioConnector,
+} from "./composio.ts";
 export {
   ASK_TOOLS,
   CONTROLLER_ID,
