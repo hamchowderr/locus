@@ -44,6 +44,11 @@ END;
   creates a new table with an integer key, or search it with `like`.
 - Each trigger is one statement, so the semicolons inside `BEGIN ... END` stay together. Keep
   the breakpoint line between statements.
+- The search table and its triggers depend on the source table as it is. Never drop, rename
+  or rebuild the source table (or rename a column it mirrors) without also dropping the
+  search table and its three triggers first in that same migration, then creating them again
+  to match. A rebuild drops the triggers without a word, and a search table whose source is
+  gone breaks every query on it.
 - Don't add the search table to `db/schema.ts`: Drizzle can't describe it. Query it with
   Drizzle's `sql`, server side only:
 
