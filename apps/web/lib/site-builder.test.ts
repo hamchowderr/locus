@@ -48,7 +48,7 @@ import {
 } from "@locus/db/control";
 import { FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
-import { readBrief, SiteWorkspace } from "@locus/studio";
+import { annotateSource, readBrief, SiteWorkspace, SOURCE_ATTR } from "@locus/studio";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -81,6 +81,7 @@ import {
   SITE_ID_KEY,
   type SiteBuilderDeps,
   SiteInputError,
+  saveVisualEdits,
   siteLeadTotals,
   siteRuntimeKey,
   toMeasurement,
@@ -1165,5 +1166,82 @@ describe("storing the GitHub App key", () => {
         { localFile },
       ),
     ).rejects.toThrow(/only stored sealed/);
+  });
+});
+
+describe("visual edits", () => {
+  /** A new site and the preview location of its About page's heading. */
+  async function siteWithHeading() {
+    const client = await authorized("staff", clientA);
+    const { siteId } = await createClientSite(deps(), ctx("staff"), client, {
+      name: "Bright Smiles",
+      kind: "website",
+      templateId: "local-business",
+    });
+    const tenant = await openClientDb(provisioner, client);
+    const ws = new SiteWorkspace(tenant, siteId);
+    const page = (await ws.readFile("app/services/page.tsx")) as string;
+    const annotated = annotateSource("app/services/page.tsx", page);
+    const target = new RegExp(`<h1 ${SOURCE_ATTR}="([^"]+)"`).exec(annotated)?.[1] ?? "";
+    return { client, siteId, ws, target };
+  }
+
+  it("saves the changes as an edit version and updates the preview", async () => {
+    const { client, siteId, ws, target } = await siteWithHeading();
+    const saved = await saveVisualEdits(deps(), client, siteId, [
+      { kind: "text", target, from: "Services", to: "What we do" },
+      { kind: "text", target: "app/page.tsx:1", from: "x", to: "y" },
+    ]);
+    expect(saved).toMatchObject({ version: 2, applied: 1 });
+    expect(saved.failed).toHaveLength(1);
+    expect(await ws.latestVersion()).toMatchObject({
+      number: 2,
+      source: "edit",
+      message: "Visual edits: 1 change",
+      createdByUserId: "staff",
+    });
+    expect(await ws.readFile("app/services/page.tsx")).toContain(">What we do</h1>");
+    // The sandbox has the preview's copy: annotated, with the editor script.
+    const runtime = await runtimes.open(siteRuntimeKey(client, siteId));
+    const preview = runtime.files.get("app/services/page.tsx") as string;
+    expect(preview).toContain(SOURCE_ATTR);
+    expect(preview).toContain("What we do");
+    expect(runtime.files.has("public/__locus/visual-edits.js")).toBe(true);
+    // The draft never carries the preview's annotations.
+    expect(await ws.readFile("app/services/page.tsx")).not.toContain(SOURCE_ATTR);
+  });
+
+  it("saves nothing when no change applies", async () => {
+    const { client, siteId, ws, target } = await siteWithHeading();
+    const saved = await saveVisualEdits(deps(), client, siteId, [
+      { kind: "text", target, from: "Not what it says", to: "x" },
+    ]);
+    expect(saved).toMatchObject({ version: null, applied: 0 });
+    expect((await ws.latestVersion())?.number).toBe(1);
+  });
+
+  it("refuses another client's site and staff without access", async () => {
+    const { siteId, target } = await siteWithHeading();
+    const owner = await authorized("owner", clientB);
+    await expect(
+      saveVisualEdits(deps(), owner, siteId, [{ kind: "text", target, from: "Services", to: "x" }]),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    await db.delete(memberLocation);
+    const staff = { ...(await authorized("owner", clientA)), memberId: "staff@agency-a" };
+    await expect(
+      saveVisualEdits(deps(), staff, siteId, [{ kind: "text", target, from: "Services", to: "x" }]),
+    ).rejects.toThrow();
+  });
+
+  it("commits the edit version to the site's repository", async () => {
+    const { client, siteId, ws, target } = await siteWithHeading();
+    await db.update(site).set({ repoFullName: "agency/bright" }).where(eq(site.id, siteId));
+    const saved = await saveVisualEdits(deps(), client, siteId, [
+      { kind: "text", target, from: "Services", to: "What we do" },
+    ]);
+    expect(saved.version).toBe(2);
+    // Without a GitHub installation the save stands and says why it wasn't sent.
+    expect(saved.publishError ?? "").not.toBe("");
+    expect((await ws.latestVersion())?.number).toBe(2);
   });
 });

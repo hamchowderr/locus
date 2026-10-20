@@ -445,7 +445,9 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "latest files (e.g. npx tsc --noEmit, ls public). The site's files in Locus are the " +
       "source of truth: files a command creates or changes stay in the sandbox only and are " +
       "put back to match on the next sync, so change source with the files tool. Never " +
-      "install or remove packages or components here: use add_dependency.",
+      "install or remove packages or components here: use add_dependency. The sandbox's copy " +
+      "of pages carries data-locus-src attributes for the preview's visual editing; they are " +
+      "not in the site's files, so never write them into source.",
     requireApproval: noApproval,
     inputSchema: z.object({
       command: z.string().min(1).describe("The program, e.g. npm"),
