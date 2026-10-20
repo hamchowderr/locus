@@ -6,6 +6,7 @@ import {
   openQuestions,
   readBrief,
   SCREENSHOT_TYPES,
+  seoIssues,
   WorkspaceError,
   writeBrief,
 } from "@locus/studio";
@@ -547,7 +548,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     id: "check_site",
     description:
       "Install dependencies and run a production build (next build) of the current files. " +
-      "Returns ok, or the errors to fix. Run it after changes and before saving a version.",
+      "Returns ok, or the errors to fix. Run it after changes and before saving a version. " +
+      "With ok, `seo` lists page titles and descriptions search results would show badly.",
     requireApproval: noApproval,
     inputSchema: z.object({}),
     execute: withSession(async (session) =>
@@ -560,7 +562,11 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         const built = await runtime.run("npx", ["next", "build"], {
           timeoutMs: BUILD_SECONDS * 1000,
         });
-        if (built.exitCode === 0) return { ok: true };
+        if (built.exitCode === 0) {
+          // Built: what search results would show badly, for the agent to fix too.
+          const seo = seoIssues(await session.workspace.snapshot());
+          return seo.length ? { ok: true, seo } : { ok: true };
+        }
         return {
           ok: false,
           step: built.timedOut ? "build (timed out)" : "build",
