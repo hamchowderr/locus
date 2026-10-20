@@ -25,7 +25,6 @@ import {
 import { auditLog, site, siteBackend } from "@locus/db/control";
 import { and, eq, sql } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
-import { deleteAllSiteFiles, type SiteFileStore } from "./site-files.ts";
 import { audit } from "./sites.ts";
 import { hostGrant, refused, type VercelCallDeps, vercel } from "./vercel-api.ts";
 
@@ -158,14 +157,11 @@ async function provisionSiteBackend(
  * Deletes the site's database and everything in it, then its registry row. Owners and admins
  * only. It cannot be undone, so callers confirm with the person first. The site's project
  * loses its database settings first: a database made again later under the same name gets
- * new ones on the next publish instead of the dead token.
+ * new ones on the next publish instead of the dead token. Files members uploaded stay in the
+ * client's Media Library (the agency's own), in the site's "Site uploads" folder.
  */
 export async function removeSiteBackend(
-  deps: SiteBackendDeps &
-    Partial<Pick<VercelCallDeps, "secrets" | "http">> & {
-      /** The site's uploaded files go too, when Locus has file storage set up. */
-      files?: SiteFileStore;
-    },
+  deps: SiteBackendDeps & Partial<Pick<VercelCallDeps, "secrets" | "http">>,
   ctx: SessionContext,
   client: AuthorizedClient,
   input: { siteId: string },
@@ -190,7 +186,6 @@ export async function removeSiteBackend(
       }
     }
   }
-  if (deps.files) await deleteAllSiteFiles(deps.files, row.siteId);
   await deps.provisioner.destroy(row.tursoDbName);
   await deps.db.delete(siteBackend).where(eq(siteBackend.siteId, row.siteId));
   await audit(deps.db, ctx, client, "site.backend.remove", {
