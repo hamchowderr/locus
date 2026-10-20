@@ -47,6 +47,7 @@ import {
   withLocusSettings,
 } from "@locus/studio";
 import { and, count, eq, gte, inArray, isNull, notExists, notInArray, sum } from "drizzle-orm";
+import { ZodError } from "zod";
 import {
   BuilderError,
   type BuilderSession,
@@ -372,9 +373,17 @@ interface PooledDb {
   until: number;
   users: number;
   retired: boolean;
+  /** Closes the connection once it has gone unused for `POOL_IDLE_MS`. */
+  idle?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * A pooled connection is replaced after this long. Its token lives an hour (`openClientDb`), so a
+ * call that leased it just before then still has a quarter of an hour.
+ */
 const POOL_LIFETIME_MS = 45 * 60_000;
+/** A connection nobody has used for this long is closed, so idle clients hold nothing open. */
+export const POOL_IDLE_MS = 5 * 60_000;
 const pool = new Map<string, PooledDb>();
 
 function closeIfIdle(entry: PooledDb) {
@@ -385,6 +394,7 @@ function closeIfIdle(entry: PooledDb) {
 function retire(locationId: string) {
   const entry = pool.get(locationId);
   if (!entry) return;
+  clearTimeout(entry.idle);
   pool.delete(locationId);
   entry.retired = true;
   closeIfIdle(entry);
@@ -417,6 +427,7 @@ export async function leaseClientDb(
     pool.set(id, entry);
   }
   const leased = entry;
+  clearTimeout(leased.idle);
   leased.users++;
   let db: TenantDb;
   try {
@@ -434,6 +445,14 @@ export async function leaseClientDb(
       released = true;
       leased.users--;
       closeIfIdle(leased);
+      if (leased.users === 0 && !leased.retired) {
+        clearTimeout(leased.idle);
+        leased.idle = setTimeout(() => {
+          if (pool.get(id) === leased && leased.users === 0) retire(id);
+        }, POOL_IDLE_MS);
+        // Never keeps the process alive.
+        leased.idle.unref?.();
+      }
     },
   };
 }
@@ -1072,7 +1091,12 @@ export async function siteNames(
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
-      const brief = await readBrief(tenant, id);
+      // One brief that no longer reads (an older format) mustn't hide every other site.
+      const brief = await readBrief(tenant, id).catch((error) => {
+        if (!(error instanceof ZodError)) throw error;
+        console.error("A site's brief couldn't be read", { siteId: id, error });
+        return null;
+      });
       if (brief) names.set(id, brief.name);
     }
   } finally {
