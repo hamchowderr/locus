@@ -1101,9 +1101,11 @@ describe("pooled client connections", () => {
       opens++;
       return openClientDb(provisioner, c);
     };
+    let idleDb!: Awaited<ReturnType<typeof openClientDb>>;
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
       const first = await leaseClientDb(open, client);
+      idleDb = first.db;
       first.release();
       vi.advanceTimersByTime(POOL_IDLE_MS - 1);
       // Still pooled: used again before the idle time ran out, which restarts it.
@@ -1121,6 +1123,9 @@ describe("pooled client connections", () => {
     } finally {
       vi.useRealTimers();
     }
+    // The connection itself is closed, not just dropped from the pool.
+    await new Promise((r) => setTimeout(r, 10));
+    await expect(idleDb.$client.execute("select 1")).rejects.toThrow();
     (await leaseClientDb(open, client)).release();
     expect(opens).toBe(2);
   });
