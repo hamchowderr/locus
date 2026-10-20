@@ -6,7 +6,7 @@
  */
 
 import { createClient } from "@libsql/client";
-import { createAgentApi, KIT_STREAM_BODY_LIMIT } from "@locus/agent-api";
+import { clientWorkThreads, createAgentApi, KIT_STREAM_BODY_LIMIT } from "@locus/agent-api";
 import {
   type AuthorizedClient,
   authorizeClient,
@@ -349,7 +349,10 @@ export function createHost({
         : null;
       // One connector per client, so its Composio session is reused across runs.
       const clientApps = apps ? apps(clientId) : null;
-      return createLocusController({
+      // The main chat hands longer work to threads of their own (`start_thread`), which run in
+      // the background and report back. Its result is the new thread's id and title only.
+      const workThreads = clientWorkThreads(storage);
+      const controller = await createLocusController({
         model,
         locationId,
         session: async (requestContext) =>
@@ -365,15 +368,12 @@ export function createHost({
               },
             }
           : {}),
-        ...(builder
-          ? {
-              modes: builder.modes,
-              tools: builder.tools,
-              processors: builder.processors,
-              ownTextTools: builder.ownTextTools,
-            }
-          : {}),
+        tools: { ...builder?.tools, [workThreads.tool.id]: workThreads.tool },
+        ownTextTools: [...(builder?.ownTextTools ?? []), workThreads.tool.id],
+        ...(builder ? { modes: builder.modes, processors: builder.processors } : {}),
       });
+      workThreads.attach(controller);
+      return controller;
     },
   });
 
