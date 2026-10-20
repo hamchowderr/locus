@@ -84,6 +84,31 @@ export const site = sqliteTable(
   ],
 );
 
+/**
+ * The database of an app-style site (member logins, bookings, its own records), on Otaku's
+ * Turso. Plain websites have no row here. Like `location`, a registry row only: the site's
+ * data lives in that database, never in this one.
+ */
+export const siteBackend = sqliteTable(
+  "site_backend",
+  {
+    // Restrict, not cascade: deleting the site or client row must never leave its Turso
+    // database behind unreachable. Whatever removes them destroys the database first.
+    siteId: text("site_id")
+      .primaryKey()
+      .references(() => site.id, { onDelete: "restrict" }),
+    /** The site's client, so every lookup is scoped by the session's client as well. */
+    locationId: text("location_id")
+      .notNull()
+      .references(() => location.id, { onDelete: "restrict" }),
+    tursoDbName: text("turso_db_name").notNull().unique(),
+    /** Read from the provisioner's response, never constructed. */
+    tursoDbHostname: text("turso_db_hostname").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("site_backend_location_idx").on(t.locationId)],
+);
+
 // The three connections. Each names its credential by path (`secretRef`); the value lives in
 // `secret` below, sealed, never in these rows.
 

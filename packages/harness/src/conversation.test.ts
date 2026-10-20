@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { GhlSession } from "@locus/ghl";
 import { createFakeGhl, type FakeGhl, type FakeRoutes, useAimock } from "@locus/testing";
+import { MessageList } from "@mastra/core/agent/message-list";
 import { LibSQLStore } from "@mastra/libsql";
 import { beforeEach, describe, expect, test } from "vitest";
 import { createLocusAgent } from "./agent.ts";
@@ -10,6 +11,7 @@ import {
   ApprovalError,
   clientResource,
   decideApproval,
+  forgetAll,
   forgetResult,
   NOT_KEPT,
   pendingApprovals,
@@ -392,5 +394,46 @@ describe("forgetResult", () => {
     expect(NOT_KEPT).toMatch(/really ran and returned a result/);
     // Not a licence to reuse an old copy on a later turn.
     expect(NOT_KEPT).toMatch(/may have changed since: read it again before you rely on/);
+  });
+});
+
+describe("forgetAll", () => {
+  test("drops a stored model output (such as a picture) with the result it stubs", () => {
+    const list = new MessageList({ threadId: "t", resourceId: "r" });
+    list.add(
+      {
+        id: "m1",
+        role: "assistant",
+        createdAt: new Date(),
+        content: {
+          format: 2,
+          parts: [
+            {
+              type: "tool-invocation",
+              toolInvocation: {
+                state: "result",
+                toolCallId: "c1",
+                toolName: "view_reference",
+                args: { path: "a.png" },
+                result: { path: "a.png", data: "QUJD" },
+              },
+              providerMetadata: {
+                mastra: {
+                  modelOutput: { type: "content", value: [{ type: "media", data: "QUJD" }] },
+                },
+              },
+            },
+          ],
+        },
+      },
+      "response",
+    );
+    forgetAll(list.get.all.db(), list, false, []);
+    const [part] = list.get.all.db()[0]?.content.parts ?? [];
+    expect(part).toMatchObject({
+      toolInvocation: { result: { notKept: NOT_KEPT } },
+      providerMetadata: { mastra: { modelOutput: null } },
+    });
+    expect(JSON.stringify(list.get.all.db())).not.toContain("QUJD");
   });
 });

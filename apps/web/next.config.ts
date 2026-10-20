@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const config: NextConfig = {
   reactStrictMode: true,
+  // The New site form can carry a reference screenshot (up to 3 MB, MAX_SCREENSHOT_BYTES),
+  // under the 4.5 MB a Vercel function accepts.
+  experimental: { serverActions: { bodySizeLimit: "4mb" } },
   // `next dev` otherwise writes its own AGENTS.md; agent guidance lives in CLAUDE.md and
   // .claude/rules (Turbo's equivalent is off too).
   agentRules: false,

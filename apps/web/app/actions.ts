@@ -40,11 +40,18 @@ import {
   deleteClientSite,
   publishLatestVersion,
   SiteInputError,
+  siteNames,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
+
+/** An uploaded file's bytes and type, or null when the field was left empty. */
+async function uploaded(value: FormDataEntryValue | null) {
+  if (!(value instanceof File) || value.size === 0) return null;
+  return { bytes: new Uint8Array(await value.arrayBuffer()), mediaType: value.type };
+}
 
 /** Better Auth's API errors carry a readable message in `body.message`. */
 function messageOf(error: unknown): string {
@@ -448,6 +455,15 @@ export async function createSite(form: FormData) {
       name: text(form, "name"),
       kind: text(form, "kind"),
       templateId: text(form, "templateId"),
+      description: text(form, "description"),
+      goal: text(form, "goal"),
+      audience: text(form, "audience"),
+      palette: text(form, "palette"),
+      fonts: text(form, "fonts"),
+      layout: text(form, "layout"),
+      pages: form.getAll("pages").map(String),
+      referenceUrl: text(form, "referenceUrl"),
+      screenshot: await uploaded(form.get("screenshot")),
     });
     // The site just made is the one the person means to build next, in the chat too. The site
     // exists either way, so failing to choose it doesn't fail the creation.
@@ -506,13 +522,31 @@ export async function chooseSite(form: FormData) {
   if (!current) redirect("/sign-in?next=%2Fsites");
   const ctx = sessionContext(current);
   let siteId = "";
+  let hasBrief = false;
   try {
     const client = await resolveActiveClient(locus().db, ctx);
-    siteId = await chooseActiveSite(locus().db, ctx, client, text(form, "siteId"));
+    const wanted = text(form, "siteId");
+    // Only a site started in Locus has a brief (in this client's own database) and versions
+    // for the builder to work on.
+    const briefs = await siteNames(siteBuilderDeps(), client, [wanted]).catch((error) => {
+      if (error instanceof NotConfigured) throw error;
+      console.error("Choosing a site: the client's database didn't answer", error);
+      return null;
+    });
+    if (!briefs)
+      return back("/sites", new Error("Locus couldn't reach this client's sites. Try again."));
+    hasBrief = briefs.has(wanted);
+    if (hasBrief) siteId = await chooseActiveSite(locus().db, ctx, client, wanted);
   } catch (error) {
     if (error instanceof ClientAccessDenied) back("/sites", error);
     if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
     throw error;
+  }
+  if (!hasBrief) {
+    back(
+      "/sites",
+      new Error("That site wasn't made in Locus, so the site builder can't work on it."),
+    );
   }
   await rememberActiveSite(siteId);
   redirect("/sites?chosen=1");

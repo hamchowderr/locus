@@ -135,7 +135,8 @@ export class ForgetGhlData implements Processor<"locus-forget-ghl-data"> {
   }
 }
 
-function forgetAll(
+/** Stubs every result `forgetResult` doesn't keep, with any model output stored for it. */
+export function forgetAll(
   messages: ProcessOutputResultArgs["messages"],
   messageList: ProcessOutputResultArgs["messageList"],
   keepTaint: boolean,
@@ -150,6 +151,9 @@ function forgetAll(
       messageList.updateToolInvocation({
         type: "tool-invocation",
         toolInvocation: { ...part.toolInvocation, result: kept },
+        // A tool's `toModelOutput` (e.g. a picture for the model) is stored beside the result
+        // and sent in its place on later turns; the stub replaces that too.
+        providerMetadata: { mastra: { modelOutput: null } },
       });
     }
   }
