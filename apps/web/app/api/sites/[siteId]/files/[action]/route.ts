@@ -1,98 +1,115 @@
 import {
   deleteSiteFiles,
-  readSiteFile,
+  hasSiteFilesKey,
+  issueSiteUploadTicket,
+  MAX_SITE_FILE_BYTES,
   type SiteFileAnswer,
-  siteFileHeaders,
-  startSiteFileUpload,
+  uploadSiteFile,
 } from "@locus/connect";
 import { NotConfigured } from "@/lib/locus";
-import { siteFilesDeps } from "@/lib/site-files";
+import { bigUploadUrl, siteFilesDeps, siteFileTicketKey } from "@/lib/site-files";
 
 /**
  * A published app-style site's files, server to server from the site's own routes, which check
  * the site's member first. The site proves itself with its files key (`Authorization: Bearer`);
- * the client is read from the site's registry row, never from the request.
+ * the client is read from the site's registry row, never from the request. Files go into the
+ * client's own Media Library.
  *
- * - `POST upload` `{ name, contentType, size }` → `{ pathname, token, validUntil, contentType }`
- * - `GET read?pathname=…` → the file's bytes
- * - `POST delete` `{ pathnames }` → `{ deleted }`
+ * - `POST upload` multipart `file` → `{ fileId, url, name, contentType, size }`
+ * - `POST ticket` `{ name, contentType, size }` → `{ uploadUrl, ticket, contentType, expiresAt }`
+ *   for a bigger file the member's browser sends straight to the agent server (`uploadUrl` is
+ *   null when there is none)
+ * - `POST delete` `{ fileIds }` → `{ deleted }`
  */
 type Params = { params: Promise<{ siteId: string; action: string }> };
 
-const MAX_BODY = 16 * 1024;
+const MAX_JSON = 16 * 1024;
+/** Room for the multipart envelope around the file. */
+const MAX_UPLOAD = MAX_SITE_FILE_BYTES + 64 * 1024;
 const noStore = { "cache-control": "no-store" };
 
+const refused = (error: string, status: number) =>
+  Response.json({ error }, { status, headers: noStore });
+
 const answer = (result: SiteFileAnswer) =>
-  Response.json(result.body, { status: result.status, headers: noStore });
+  Response.json(result.body, {
+    status: result.status,
+    headers: {
+      ...noStore,
+      ...("retryAfterSeconds" in result ? { "retry-after": String(result.retryAfterSeconds) } : {}),
+    },
+  });
 
 async function jsonBody(request: Request): Promise<unknown | Response> {
   if (!/^application\/json\b/i.test(request.headers.get("content-type") ?? "")) {
-    return Response.json({ error: "Send JSON." }, { status: 415, headers: noStore });
+    return refused("Send JSON.", 415);
   }
   const text = await request.text();
-  if (text.length > MAX_BODY) {
-    return Response.json({ error: "That's too much to send." }, { status: 413, headers: noStore });
-  }
+  if (text.length > MAX_JSON) return refused("That's too much to send.", 413);
   try {
     return JSON.parse(text);
   } catch {
-    return Response.json({ error: "Send JSON." }, { status: 400, headers: noStore });
+    return refused("Send JSON.", 400);
   }
 }
 
-function failed(error: unknown): Response {
-  if (error instanceof NotConfigured) {
-    return Response.json(
-      { error: "File storage isn't set up yet." },
-      { status: 503, headers: noStore },
-    );
+async function uploadedFile(request: Request): Promise<File | null | Response> {
+  if (!/^multipart\/form-data\b/i.test(request.headers.get("content-type") ?? "")) {
+    return refused("Send the file as a form.", 415);
   }
+  const length = Number(request.headers.get("content-length") ?? Number.NaN);
+  if (!Number.isFinite(length) || length > MAX_UPLOAD) {
+    return refused(`Files can be up to ${MAX_SITE_FILE_BYTES / 1024 / 1024} MB.`, 413);
+  }
+  const form = await request.formData().catch(() => null);
+  const file = form?.get("file");
+  return file instanceof File ? file : null;
+}
+
+function failed(error: unknown): Response {
+  if (error instanceof NotConfigured) return refused("This site can't keep files yet.", 503);
   console.error(`Site files route failed: ${(error as Error)?.name ?? "Error"}`);
-  return Response.json(
-    { error: "The file couldn't be handled just now." },
-    { status: 500, headers: noStore },
-  );
+  return refused("The file couldn't be handled just now.", 500);
 }
 
 export async function POST(request: Request, { params }: Params) {
   const { siteId, action } = await params;
-  if (action !== "upload" && action !== "delete") {
-    return Response.json({ error: "Not found." }, { status: 404, headers: noStore });
-  }
-  const body = await jsonBody(request);
-  if (body instanceof Response) return body;
   const authorization = request.headers.get("authorization");
   try {
-    const deps = siteFilesDeps();
-    return answer(
-      action === "upload"
-        ? await startSiteFileUpload(deps, { siteId, authorization, body })
-        : await deleteSiteFiles(deps, { siteId, authorization, body }),
-    );
-  } catch (error) {
-    return failed(error);
-  }
-}
-
-export async function GET(request: Request, { params }: Params) {
-  const { siteId, action } = await params;
-  if (action !== "read") {
-    return Response.json({ error: "Not found." }, { status: 404, headers: noStore });
-  }
-  try {
-    const result = await readSiteFile(siteFilesDeps(), {
-      siteId,
-      authorization: request.headers.get("authorization"),
-      pathname: new URL(request.url).searchParams.get("pathname"),
-    });
-    if (result.status !== 200) return answer(result);
-    return new Response(result.body, {
-      headers: {
-        ...noStore,
-        ...siteFileHeaders(result.contentType),
-        ...(result.size === null ? {} : { "content-length": String(result.size) }),
-      },
-    });
+    if (action === "upload") {
+      // The key first: nobody else gets Locus to read a file's worth of body.
+      if (!hasSiteFilesKey(siteFilesDeps().filesKey, siteId, authorization)) {
+        return refused("This site can't keep files.", 401);
+      }
+      const file = await uploadedFile(request);
+      if (file instanceof Response) return file;
+      return answer(
+        await uploadSiteFile(siteFilesDeps(), {
+          siteId,
+          authorization,
+          file,
+          // Set by the site's route from its host's forwarding header; any caller can send it,
+          // so it is trusted only for the per-IP limit.
+          visitorIp: request.headers.get("x-locus-visitor-ip"),
+        }),
+      );
+    }
+    if (action === "ticket") {
+      const body = await jsonBody(request);
+      if (body instanceof Response) return body;
+      return answer(
+        await issueSiteUploadTicket(
+          { ...siteFilesDeps(), ticketKey: siteFileTicketKey(), uploadUrl: bigUploadUrl() },
+          { siteId, authorization, body, visitorIp: request.headers.get("x-locus-visitor-ip") },
+        ),
+      );
+    }
+    if (action === "delete") {
+      const body = await jsonBody(request);
+      if (body instanceof Response) return body;
+      return answer(await deleteSiteFiles(siteFilesDeps(), { siteId, authorization, body }));
+    }
+    return refused("Not found.", 404);
   } catch (error) {
     return failed(error);
   }

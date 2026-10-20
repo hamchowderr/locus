@@ -3,20 +3,19 @@ import {
   ConnectError,
   LOGIN_SECRET_TABLES,
   type SiteBackendOverview,
-  type StoredSiteFile,
+  type SiteMediaFile,
   siteBackendOf,
   siteBackendOverview,
-  siteFilesFolder,
+  siteFilesFolderName,
   siteFilesOverview,
 } from "@locus/connect";
 import { provisionerFromEnv } from "@locus/db";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { configured } from "@/lib/connect";
+import { configured, connectDeps } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { siteFileStore } from "@/lib/site-files";
 import { Notice, Page } from "../../../ui";
 
 const PAGE_SIZE = 50;
@@ -35,12 +34,6 @@ function cell(value: unknown): string {
   }
   const text = typeof value === "object" ? JSON.stringify(value) : String(value);
   return text.length > 120 ? `${text.slice(0, 120)}…` : text;
-}
-
-function size(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export default async function SiteDatabase({
@@ -97,20 +90,20 @@ export default async function SiteDatabase({
       }
     }
   }
-  // The site's uploaded files, separately: storage can be missing while the database works.
-  let files: { files: StoredSiteFile[]; more: boolean } | null = null;
+  // The site's uploaded files, from the client's Media Library: GHL can be unreachable while
+  // the database works.
+  let files: { files: SiteMediaFile[]; more: boolean } | null = null;
   let filesProblem: string | null = null;
   if (backend) {
     try {
-      const listed = await siteFilesOverview({ db: locus().db, store: siteFileStore() }, client, {
-        siteId,
-      });
-      files = { files: listed.files, more: listed.cursor !== null };
+      files = await siteFilesOverview(connectDeps(), client, { siteId });
     } catch (error) {
       if (error instanceof NotConfigured) {
-        filesProblem = "File storage isn't set up on this deployment yet.";
+        filesProblem = "HighLevel isn't connected on this deployment yet.";
+      } else if (error instanceof ConnectError) {
+        filesProblem = error.message;
       } else {
-        console.error("Listing a site's files failed", error);
+        console.error(`Listing a site's files failed: ${(error as Error)?.name ?? "Error"}`);
         filesProblem = "Locus couldn't list the site's files just now. Try again in a moment.";
       }
     }
@@ -206,6 +199,10 @@ export default async function SiteDatabase({
 
           <section className="space-y-2">
             <h2 className="font-semibold">Files</h2>
+            <p className="text-xs text-neutral-500">
+              What members upload is kept in this client's Media Library, in the folder
+              {` "${siteFilesFolderName(siteId)}"`}.
+            </p>
             {filesProblem && <p className="text-sm text-neutral-600">{filesProblem}</p>}
             {files && files.files.length === 0 && (
               <p className="text-sm text-neutral-600">No one has uploaded a file yet.</p>
@@ -213,18 +210,20 @@ export default async function SiteDatabase({
             {files && files.files.length > 0 && (
               <ul className="space-y-1 text-sm">
                 {files.files.map((f) => (
-                  <li key={f.pathname} className="flex justify-between gap-4">
-                    <span className="truncate">
-                      {f.pathname.slice(siteFilesFolder(siteId).length).replace(/^[^/]+\//, "")}
-                    </span>
-                    <span className="shrink-0 text-xs text-neutral-500">
-                      {size(f.size)} · {when.format(f.uploadedAt)} UTC
-                    </span>
+                  <li key={f.id} className="flex justify-between gap-4">
+                    <a href={f.url} className="truncate underline" rel="noreferrer" target="_blank">
+                      {f.name}
+                    </a>
+                    {f.createdAt && (
+                      <span className="shrink-0 text-xs text-neutral-500">
+                        {when.format(f.createdAt)} UTC
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>
             )}
-            {files?.more && <p className="text-xs text-neutral-500">Showing the first 100.</p>}
+            {files?.more && <p className="text-xs text-neutral-500">Showing the newest 100.</p>}
           </section>
 
           {shown && rows && (

@@ -38,7 +38,7 @@ export interface GhlOperation {
   readonly tokens: readonly TokenKind[];
   readonly scopes: readonly string[];
   readonly sessionParams?: readonly SessionParam[];
-  /** How the request body is encoded, when there is one. JSON and form are sent; multipart isn't yet. */
+  /** How the request body is encoded, when there is one. JSON, form and multipart are sent. */
   readonly body?: "json" | "multipart" | "form";
 }
 
