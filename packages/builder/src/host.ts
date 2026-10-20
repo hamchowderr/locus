@@ -60,6 +60,10 @@ import {
   UntrustedOutputProcessor,
   type UsageMeter,
 } from "./index.ts";
+import { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
+
+export * from "./site-history.ts";
+export { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
 
 // Host wiring for the site-builder agent. Everything here starts from an `AuthorizedClient`
 // (the session's client, after the staff check) and never takes a client or agency id from a
@@ -751,7 +755,7 @@ export async function openClientDb(
 
 export type SiteKind = (typeof SITE_KINDS)[number];
 
-export interface NewSite {
+export interface NewSite extends NewSiteDesign {
   name: string;
   kind: string;
   /** Empty means the template that fits the kind. */
@@ -838,6 +842,13 @@ export async function createClientSite(
   if (templateId && !templateById(templateId)) {
     throw new SiteInputError("Pick one of the templates.");
   }
+  let design: ReturnType<typeof designFromForm>;
+  try {
+    design = designFromForm(input);
+  } catch (error) {
+    if (error instanceof DesignInputError) throw new SiteInputError(error.message);
+    throw error;
+  }
   if (deps.billing) {
     const refusal = await newSiteRefusal(deps.db, client.location.organizationId);
     if (refusal) throw new SiteInputError(refusal);
@@ -861,7 +872,8 @@ export async function createClientSite(
   try {
     ({ db: tenant, release } = await leaseClientDb(deps.openClientDb, client));
     const { version } = await startSite(new SiteWorkspace(tenant, siteId), {
-      brief: { name, kind: input.kind as SiteKind },
+      brief: { ...design.brief, name, kind: input.kind as SiteKind },
+      files: design.files,
       ...(templateId ? { templateId } : {}),
       userId: ctx.userId,
     });

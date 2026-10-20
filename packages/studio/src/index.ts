@@ -3,13 +3,20 @@ export {
   DESIGN_QUESTIONS,
   DesignBrief,
   type DesignQuestion,
+  FONT_PRESETS,
   FONTS,
   type FontName,
+  MAX_SCREENSHOT_BYTES,
   openQuestions,
+  PALETTE_PRESETS,
+  REFERENCE_FOLDER,
   readBrief,
+  SCREENSHOT_TYPES,
+  type ScreenshotType,
   SITE_KINDS,
   writeBrief,
 } from "./brief.ts";
+export { type SitePage, sitePages } from "./pages.ts";
 export {
   isTextPath,
   MAX_FILE_BYTES,
