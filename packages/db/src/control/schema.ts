@@ -76,7 +76,7 @@ export const site = sqliteTable(
       .notNull()
       .default("draft"),
     /** The folder the agency filed the site under on the Sites page; null for none. */
-    folder: text("folder"),
+    folder: text("folder_name"),
     createdAt: createdAt(),
   },
   (t) => [
