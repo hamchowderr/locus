@@ -171,6 +171,14 @@ describe("a member who signs up on a site", () => {
     expect(fake.requests).toEqual([]);
   });
 
+  it("keeps the contact when the member's name is too long, with the name cut short", async () => {
+    const d = deps();
+    const long = `Sam ${"Q".repeat(200)}`;
+    expect((await signUp(d, { email: "sam@example.test", name: long })).status).toBe(200);
+    const update = fake.requests.find((r) => r.method === "PUT");
+    expect(update?.body).toMatchObject({ name: long.slice(0, 120) });
+  });
+
   it("needs the member's email", async () => {
     const d = deps();
     expect((await signUp(d, { name: "No Email" })).status).toBe(400);
@@ -201,9 +209,9 @@ describe("a member who signs up on a site", () => {
   it("holds back a flood of sign-ups from one visitor", async () => {
     const d = deps();
     const answers = [];
-    for (let i = 0; i < 6; i++) answers.push(await signUp(d, { email: `m${i}@example.test` }));
-    expect(answers.slice(0, 5).every((a) => a.status === 200)).toBe(true);
-    expect(answers[5]).toMatchObject({ status: 429, retryAfterSeconds: expect.any(Number) });
+    for (let i = 0; i < 31; i++) answers.push(await signUp(d, { email: `m${i}@example.test` }));
+    expect(answers.slice(0, 30).every((a) => a.status === 200)).toBe(true);
+    expect(answers[30]).toMatchObject({ status: 429, retryAfterSeconds: expect.any(Number) });
   });
 
   it("answers 502, and logs only what failed, when HighLevel refuses", async () => {

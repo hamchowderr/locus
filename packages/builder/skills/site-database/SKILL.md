@@ -127,7 +127,9 @@ Media Library.
 - On the published site, every new member also becomes a contact in the client's HighLevel
   (tagged `website form: sign-up`), through the `databaseHooks` line in `lib/auth.ts`. Keep it
   when you change `lib/auth.ts`, and keep `import { memberSignedUp } from "@/lib/members"`. If
-  a `lib/auth.ts` has no `databaseHooks`, add
-  `databaseHooks: { user: { create: { after: memberSignedUp } } },` to its `betterAuth({...})`.
+  a site has no `lib/members.ts` yet, run `database add` first. If `lib/auth.ts` has no
+  `memberSignedUp` after that, add the import and, inside its `betterAuth({...})`, add
+  `user: { create: { after: memberSignedUp } }` to its `databaseHooks` (or add
+  `databaseHooks: { user: { create: { after: memberSignedUp } } },` when it has none).
   The preview sends nothing to HighLevel.
 - Never import `lib/db.ts` or `lib/auth.ts` from a "use client" file.

@@ -1,4 +1,9 @@
-import { type SiteFileAnswer, siteMemberSignedUp } from "@locus/connect";
+import {
+  hasSiteFilesKey,
+  readLeadBody,
+  type SiteFileAnswer,
+  siteMemberSignedUp,
+} from "@locus/connect";
 import { NotConfigured } from "@/lib/locus";
 import { siteFilesDeps } from "@/lib/site-files";
 
@@ -30,25 +35,27 @@ const answer = (result: SiteFileAnswer) =>
 export async function POST(request: Request, { params }: Params) {
   const { siteId, action } = await params;
   if (action !== "signup") return refused("Not found.", 404);
-  if (!/^application\/json\b/i.test(request.headers.get("content-type") ?? "")) {
-    return refused("Send JSON.", 415);
-  }
-  if (Number(request.headers.get("content-length") ?? 0) > MAX_JSON) {
-    return refused("That's too much to send.", 413);
-  }
-  const text = await request.text();
-  if (text.length > MAX_JSON) return refused("That's too much to send.", 413);
-  let body: unknown;
+  const authorization = request.headers.get("authorization");
   try {
-    body = JSON.parse(text);
-  } catch {
-    return refused("Send JSON.", 400);
-  }
-  try {
+    // The key first: nobody else gets Locus to read a body at all.
+    if (!hasSiteFilesKey(siteFilesDeps().filesKey, siteId, authorization)) {
+      return refused("This site can't send sign-ups.", 401);
+    }
+    if (!/^application\/json\b/i.test(request.headers.get("content-type") ?? "")) {
+      return refused("Send JSON.", 415);
+    }
+    const text = await readLeadBody(request.body, MAX_JSON);
+    if (text === null) return refused("That's too much to send.", 413);
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return refused("Send JSON.", 400);
+    }
     return answer(
       await siteMemberSignedUp(siteFilesDeps(), {
         siteId,
-        authorization: request.headers.get("authorization"),
+        authorization,
         body,
         // Set by the site's server from its host's forwarding header: trusted only for limits.
         visitorIp: request.headers.get("x-locus-visitor-ip"),

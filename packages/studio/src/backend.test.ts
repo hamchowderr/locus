@@ -94,13 +94,27 @@ describe("an app-style site's files", () => {
     );
     const withAuth = (content: string) =>
       app.map((f) => (f.path === "lib/auth.ts" ? { ...f, content } : f));
-    const before = text(app, "lib/auth.ts")
-      .replace('import { memberSignedUp } from "@/lib/members";\n', "")
-      .replace(
-        "\n// Keep the databaseHooks: each new member becomes a contact in the client's HighLevel.",
-        "",
-      )
-      .replace("\n  databaseHooks: { user: { create: { after: memberSignedUp } } },", "");
+    // lib/auth.ts exactly as sites got it before (#110), frozen so a template edit can't hide it.
+    const before = [
+      'import { betterAuth } from "better-auth";',
+      'import { drizzleAdapter } from "better-auth/adapters/drizzle";',
+      'import * as schema from "@/db/schema";',
+      'import { db, isPreviewDatabase } from "@/lib/db";',
+      "",
+      "// The site's own logins: email and password, stored in the site's own database. Server code",
+      "// only. The published site's secret is set by Locus on its host; the preview uses a fixed one,",
+      "// which is fine because the preview's database is a throwaway file.",
+      "export const auth = betterAuth({",
+      "  secret:",
+      "    process.env.SITE_AUTH_SECRET ??",
+      '    (isPreviewDatabase ? "locus-preview-only-not-a-secret-at-all" : undefined),',
+      '  database: drizzleAdapter(db, { provider: "sqlite", schema }),',
+      "  emailAndPassword: { enabled: true },",
+      "  telemetry: { enabled: false },",
+      "});",
+    ]
+      .join("\n")
+      .concat("\n");
     expect(before).not.toContain("memberSignedUp");
     expect(text(withBackend(withAuth(before)), "lib/auth.ts")).toBe(text(app, "lib/auth.ts"));
     const custom = `${before}// magic links\n`;
