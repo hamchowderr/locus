@@ -16,6 +16,7 @@
     "@locus/ghl": "workspace:*",
     "@locus/secrets": "workspace:*",
     "@locus/skills": "workspace:*",
+    "@vercel/blob": "2.8.1",
     "drizzle-orm": "0.45.4"
   },
   "devDependencies": {

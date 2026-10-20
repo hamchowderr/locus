@@ -3,8 +3,11 @@ import {
   ConnectError,
   LOGIN_SECRET_TABLES,
   type SiteBackendOverview,
+  type StoredSiteFile,
   siteBackendOf,
   siteBackendOverview,
+  siteFilesFolder,
+  siteFilesOverview,
 } from "@locus/connect";
 import { provisionerFromEnv } from "@locus/db";
 import Link from "next/link";
@@ -13,6 +16,7 @@ import { configured } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
+import { siteFileStore } from "@/lib/site-files";
 import { Notice, Page } from "../../../ui";
 
 const PAGE_SIZE = 50;
@@ -31,6 +35,12 @@ function cell(value: unknown): string {
   }
   const text = typeof value === "object" ? JSON.stringify(value) : String(value);
   return text.length > 120 ? `${text.slice(0, 120)}…` : text;
+}
+
+function size(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export default async function SiteDatabase({
@@ -84,6 +94,24 @@ export default async function SiteDatabase({
       } else {
         console.error("Reading a site's database failed", error);
         problem = "Locus couldn't read the site's database just now. Try again in a moment.";
+      }
+    }
+  }
+  // The site's uploaded files, separately: storage can be missing while the database works.
+  let files: { files: StoredSiteFile[]; more: boolean } | null = null;
+  let filesProblem: string | null = null;
+  if (backend) {
+    try {
+      const listed = await siteFilesOverview({ db: locus().db, store: siteFileStore() }, client, {
+        siteId,
+      });
+      files = { files: listed.files, more: listed.cursor !== null };
+    } catch (error) {
+      if (error instanceof NotConfigured) {
+        filesProblem = "File storage isn't set up on this deployment yet.";
+      } else {
+        console.error("Listing a site's files failed", error);
+        filesProblem = "Locus couldn't list the site's files just now. Try again in a moment.";
       }
     }
   }
@@ -174,6 +202,29 @@ export default async function SiteDatabase({
                 ))}
               </ul>
             )}
+          </section>
+
+          <section className="space-y-2">
+            <h2 className="font-semibold">Files</h2>
+            {filesProblem && <p className="text-sm text-neutral-600">{filesProblem}</p>}
+            {files && files.files.length === 0 && (
+              <p className="text-sm text-neutral-600">No one has uploaded a file yet.</p>
+            )}
+            {files && files.files.length > 0 && (
+              <ul className="space-y-1 text-sm">
+                {files.files.map((f) => (
+                  <li key={f.pathname} className="flex justify-between gap-4">
+                    <span className="truncate">
+                      {f.pathname.slice(siteFilesFolder(siteId).length).replace(/^[^/]+\//, "")}
+                    </span>
+                    <span className="shrink-0 text-xs text-neutral-500">
+                      {size(f.size)} · {when.format(f.uploadedAt)} UTC
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {files?.more && <p className="text-xs text-neutral-500">Showing the first 100.</p>}
           </section>
 
           {shown && rows && (
