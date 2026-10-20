@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { resetPassword } from "../actions";
-import { Button, Field, Notice, Page } from "../ui";
+import { AuthPage, Button, Field, Notice } from "../ui";
 
 /** Better Auth sends the emailed link here with `?token=`, or `?error=INVALID_TOKEN`. */
 export default async function ResetPassword({
@@ -11,7 +11,7 @@ export default async function ResetPassword({
   const { token, error } = await searchParams;
   if (!token || error === "INVALID_TOKEN") {
     return (
-      <Page title="This link doesn't work">
+      <AuthPage title="This link doesn't work">
         <Notice tone="error">
           The reset link has expired or was already used. Ask for a new one.
         </Notice>
@@ -20,11 +20,11 @@ export default async function ResetPassword({
             Send a new reset link
           </Link>
         </p>
-      </Page>
+      </AuthPage>
     );
   }
   return (
-    <Page title="Choose a new password">
+    <AuthPage title="Choose a new password">
       {error && <Notice tone="error">{error}</Notice>}
       <form action={resetPassword} className="space-y-4">
         <input type="hidden" name="token" value={token} />
@@ -46,6 +46,6 @@ export default async function ResetPassword({
         />
         <Button>Set new password</Button>
       </form>
-    </Page>
+    </AuthPage>
   );
 }

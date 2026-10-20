@@ -66,6 +66,19 @@ export async function siteBackendOf(
   return row ?? null;
 }
 
+/** Which of the client's sites have their own database. */
+export async function sitesWithBackend(
+  db: ControlDb,
+  client: AuthorizedClient,
+): Promise<Set<string>> {
+  assertAuthorizedClient(client);
+  const rows = await db
+    .select({ siteId: siteBackend.siteId })
+    .from(siteBackend)
+    .where(eq(siteBackend.locationId, client.location.id));
+  return new Set(rows.map((row) => row.siteId));
+}
+
 /**
  * Gives the client's site its own database, once. Owners and admins only. Safe to repeat: a
  * site that already has one gets it back unchanged.
@@ -144,7 +157,8 @@ async function provisionSiteBackend(
  * Deletes the site's database and everything in it, then its registry row. Owners and admins
  * only. It cannot be undone, so callers confirm with the person first. The site's project
  * loses its database settings first: a database made again later under the same name gets
- * new ones on the next publish instead of the dead token.
+ * new ones on the next publish instead of the dead token. Files members uploaded stay in the
+ * client's Media Library (the agency's own), in the site's "Site uploads" folder.
  */
 export async function removeSiteBackend(
   deps: SiteBackendDeps & Partial<Pick<VercelCallDeps, "secrets" | "http">>,
@@ -180,10 +194,11 @@ export async function removeSiteBackend(
   });
 }
 
-/** What the dashboard shows for one site. */
+/** What the dashboard shows for one site, with one page of a table when one was asked for. */
 export interface SiteBackendOverview {
   tables: SiteTable[];
   users: SiteUser[];
+  rows?: SiteRows;
 }
 
 async function withSiteDb<T>(
@@ -199,7 +214,8 @@ async function withSiteDb<T>(
     readOnly: true,
     ttl: DASHBOARD_TTL,
   });
-  const db = openSiteDb(deps.provisioner.url(row.tursoDbHostname), token);
+  // Big integers (ids, cents, hashes) come back whole instead of failing the read.
+  const db = openSiteDb(deps.provisioner.url(row.tursoDbHostname), token, { intMode: "bigint" });
   try {
     return await read(db);
   } finally {
@@ -207,40 +223,92 @@ async function withSiteDb<T>(
   }
 }
 
-/** The site's tables and the people signed up on it. */
+/**
+ * Tables that hold login secrets: Better Auth's password hashes, session tokens and reset
+ * codes, and the secrets of its plugins. The dashboard shows how many rows they have, never
+ * the rows.
+ */
+export const LOGIN_SECRET_TABLES: ReadonlySet<string> = new Set([
+  "account",
+  "session",
+  "verification",
+  "twoFactor",
+  "two_factor",
+  "passkey",
+  "apikey",
+  "api_key",
+  "jwks",
+  "oauthApplication",
+  "oauth_application",
+  "oauthAccessToken",
+  "oauth_access_token",
+]);
+
+/** Columns whose values stay hidden in any table, whatever the agent named the table. */
+const SECRET_COLUMN = /password|secret|token|private_?key|backup_?codes|hash|api_?key/i;
+
+const HIDDEN = "(hidden)";
+
+async function readRows(
+  db: ReturnType<typeof openSiteDb>,
+  input: { table: string; limit?: number; offset?: number },
+): Promise<SiteRows> {
+  if (LOGIN_SECRET_TABLES.has(input.table)) {
+    throw new ConnectError("That table holds login secrets, so Locus doesn't show its rows.");
+  }
+  let page: SiteRows;
+  try {
+    page = await readSiteRows(db, input.table, input);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("The site has no table")) {
+      throw new ConnectError(error.message);
+    }
+    throw error;
+  }
+  const secret = page.columns.filter((column) => SECRET_COLUMN.test(column));
+  if (secret.length === 0) return page;
+  return {
+    ...page,
+    rows: page.rows.map((row) => ({
+      ...row,
+      ...Object.fromEntries(secret.map((column) => [column, row[column] == null ? null : HIDDEN])),
+    })),
+  };
+}
+
+/** The site's tables and the people signed up on it, and one page of `table` if given. */
 export function siteBackendOverview(
   deps: SiteBackendDeps,
   client: AuthorizedClient,
   siteId: string,
+  page?: { table: string; limit?: number; offset?: number },
 ): Promise<SiteBackendOverview> {
   return withSiteDb(deps, client, siteId, async (db) => ({
     tables: await listSiteTables(db),
     users: await listSiteUsers(db),
+    ...(page ? { rows: await readRows(db, page) } : {}),
   }));
 }
 
-/** One page of one of the site's tables. */
+/** One page of one of the site's tables. Secret tables are refused, secret columns hidden. */
 export function siteBackendRows(
   deps: SiteBackendDeps,
   client: AuthorizedClient,
   input: { siteId: string; table: string; limit?: number; offset?: number },
 ): Promise<SiteRows> {
-  return withSiteDb(deps, client, input.siteId, async (db) => {
-    try {
-      return await readSiteRows(db, input.table, input);
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("The site has no table")) {
-        throw new ConnectError(error.message);
-      }
-      throw error;
-    }
-  });
+  return withSiteDb(deps, client, input.siteId, (db) => readRows(db, input));
 }
 
 /** What publishing an app-style site needs: its database, and the agency's Vercel team. */
 export interface SiteReleaseDeps extends VercelCallDeps {
   /** Absent where Locus has no database host set up; a site with a database is then refused. */
   provisioner?: TenantProvisioner;
+  /**
+   * The site's files key (`siteFilesKey`), set on its host so its routes can reach its files.
+   * Absent where Locus has no file storage set up: the site then gets no key and can't keep
+   * files until a later publish.
+   */
+  siteFilesKey?: (siteId: string) => string;
 }
 
 /** How long the token that applies a publish's database changes lives. */
@@ -408,6 +476,8 @@ export async function ensureSiteBackendEnv(
     [SITE_DATABASE_ENV.token]: () => provisioner.mintToken(row.tursoDbName, { ttl: "never" }),
     [SITE_DATABASE_ENV.authSecret]: async () => randomBytes(32).toString("base64url"),
   };
+  const filesKey = deps.siteFilesKey;
+  if (filesKey) values[SITE_DATABASE_ENV.filesKey] = async () => filesKey(row.siteId);
   const missing = Object.keys(values).filter((key) => !present.has(key));
   if (missing.length === 0) return [];
   const body = [];

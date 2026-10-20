@@ -152,8 +152,15 @@
     {
       "idx": 21,
       "version": "6",
-      "when": 1792507399107,
-      "tag": "0021_site_origin",
+      "when": 1792518644227,
+      "tag": "0021_site_checkout_items",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1792529017404,
+      "tag": "0022_site_origin",
       "breakpoints": true
     }
   ]

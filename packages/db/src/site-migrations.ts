@@ -17,7 +17,43 @@ export const SITE_DATABASE_ENV = {
   token: "SITE_DATABASE_TOKEN",
   /** The site's own login secret: one per site, never Locus's own `BETTER_AUTH_SECRET`. */
   authSecret: "SITE_AUTH_SECRET",
+  /** Proves the site's routes are the site when they ask Locus for its files. */
+  filesKey: "SITE_FILES_KEY",
 } as const;
+
+/**
+ * The largest file a site's member may upload. A file passes through the site's own route and
+ * Locus's on its way to the client's Media Library, and a Vercel function takes at most 4.5 MB
+ * in one request.
+ */
+export const MAX_SITE_FILE_BYTES = 4 * 1024 * 1024;
+
+/** What a site's members may upload: pictures and everyday documents. Never HTML or SVG. */
+export const SITE_FILE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "application/pdf",
+  "text/plain",
+  "text/csv",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+] as const;
+
+/** Videos a site's member may upload: only the way that bypasses Vercel (`MAX_SITE_VIDEO_BYTES`). */
+export const SITE_VIDEO_TYPES = ["video/mp4", "video/webm", "video/quicktime"] as const;
+
+/**
+ * The largest picture or document a member may send straight to Locus's own server (the agent
+ * server, which no Vercel request limit applies to): HighLevel's own limit for a file.
+ */
+export const MAX_LARGE_SITE_FILE_BYTES = 25 * 1024 * 1024;
+/** HighLevel's limit for a video. */
+export const MAX_SITE_VIDEO_BYTES = 500 * 1024 * 1024;
 
 const FILE = /^db\/migrations\/(\d{4}_[a-z0-9_]+)\.sql$/;
 

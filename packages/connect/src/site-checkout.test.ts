@@ -8,10 +8,12 @@ import {
   location,
   organization,
   site,
+  siteCheckoutItems,
 } from "@locus/db/control";
 import { createRateLimiter } from "@locus/ghl";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, type FakeGhl, type FakeRoutes } from "@locus/testing";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
 import type { GhlAppConfig } from "./ghl-oauth.ts";
@@ -39,6 +41,8 @@ const DAY = 24 * 3_600_000;
 const IP_KEY = Buffer.alloc(32, 7);
 const GHL_LOCATION = "ghl-loc-sunrise";
 const PAY_URL = "https://link.msgsndr.com/invoice/inv1";
+/** An invoice id as GHL makes them: 24 hex digits. */
+const INVOICE_ID = "6ad79320c2411466f2dbd8a1";
 /** What the agency's connection was granted, as GHL's token response said. */
 const GRANTED = "products.readonly users.readonly contacts.write invoices.write oauth.write";
 
@@ -154,6 +158,14 @@ beforeEach(async () => {
     { id: "site-live", locationId: "sunrise", status: "deployed", repoFullName: "a/live" },
     { id: "site-draft", locationId: "sunrise", status: "draft" },
   ]);
+  // What the live site's published code sells, as publish records it from its `<BuyButton>`s.
+  await db.insert(siteCheckoutItems).values({
+    siteId: "site-live",
+    items: [
+      { productId: "prod1", priceId: "price1" },
+      { productId: "prod2", priceId: "price2" },
+    ],
+  });
   await secrets.set(
     ghlSecretRef("agency-a"),
     JSON.stringify({
@@ -173,6 +185,21 @@ beforeEach(async () => {
     connectedAt: new Date(CLOCK),
   });
 });
+
+/** Gives the agency's connection these scopes, as if it had been re-approved with them. */
+async function grant(scopes: string) {
+  await secrets.set(
+    ghlSecretRef("agency-a"),
+    JSON.stringify({
+      accessToken: "agency-token",
+      refreshToken: "refresh-token",
+      expiresAt: CLOCK + 2 * DAY,
+      scopes,
+      companyId: "company-1",
+      installedBy: "user-1",
+    }),
+  );
+}
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -294,6 +321,60 @@ describe("checkout on a published site", () => {
       expect(paths()).not.toContain("POST /contacts/upsert");
       expect(paths()).not.toContain("POST /invoices/text2pay");
     }
+  });
+
+  it("sells only the product and price pairs the site's published code sells", async () => {
+    const before = await checkout(deps(), another(), "site-live", nextIp());
+    expect(before.status).toBe(200);
+    // Another of the client's products, a price of a sold product it isn't sold at, and a price
+    // swapped between two products the site sells: refused before GHL is asked anything.
+    for (const pair of [
+      { productId: "prod3", priceId: "price3" },
+      { productId: "prod1", priceId: "price9" },
+      { productId: "prod1", priceId: "price2" },
+      { productId: "prod2", priceId: "price1" },
+    ]) {
+      const routes: FakeRoutes = {
+        ...okRoutes,
+        [`GET /products/${pair.productId}`]: {
+          body: { _id: pair.productId, locationId: GHL_LOCATION, name: "Other" },
+        },
+        [`GET /products/${pair.productId}/price/${pair.priceId}`]: price({
+          _id: pair.priceId,
+          product: pair.productId,
+        }),
+      };
+      const result = await checkout(deps(routes), { ...another(), ...pair }, "site-live", nextIp());
+      expect(result).toEqual({ status: 422, body: { error: "That isn't for sale here." } });
+      expect(fake.requests).toEqual([]);
+    }
+    // The site's other pair goes through, at that product's own price.
+    const second = await checkout(
+      deps({
+        ...okRoutes,
+        "GET /products/prod2": { body: { _id: "prod2", locationId: GHL_LOCATION, name: "Two" } },
+        "GET /products/prod2/price/price2": price({ _id: "price2", product: "prod2" }),
+      }),
+      { ...another(), productId: "prod2", priceId: "price2" },
+      "site-live",
+      nextIp(),
+    );
+    expect(second.status).toBe(200);
+    expect(invoiceRequest()?.body).toMatchObject({
+      items: [expect.objectContaining({ productId: "prod2", priceId: "price2" })],
+    });
+  });
+
+  it("sells nothing on a site published before its products were recorded, as booking does", async () => {
+    await db.delete(siteCheckoutItems).where(eq(siteCheckoutItems.siteId, "site-live"));
+    const result = await checkout(deps(), order);
+    expect(result).toEqual({ status: 422, body: { error: "That isn't for sale here." } });
+    expect(fake.requests).toEqual([]);
+    // Nor does one whose code sells nothing.
+    await db.insert(siteCheckoutItems).values({ siteId: "site-live", items: [] });
+    const empty = await checkout(deps(), another(), "site-live", nextIp());
+    expect(empty).toEqual({ status: 422, body: { error: "That isn't for sale here." } });
+    expect(fake.requests).toEqual([]);
   });
 
   it("refuses a subscription price, a free one, and more than is in stock", async () => {
@@ -428,8 +509,13 @@ describe("checkout on a published site", () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     for (const invoiceUrl of [
       "http://link.msgsndr.com/invoice/inv1",
-      "https://evil.test/invoice/inv1",
+      // Not GHL's, and not a link to this invoice.
+      "https://evil.test/invoice/other",
+      "https://evil.test/inv1x",
       "https://link.msgsndr.com.evil.test/x",
+      "https://user:pw@link.example.test/invoice/inv1",
+      "https://link.example.test:8443/invoice/inv1",
+      "https://localhost/invoice/inv1",
       "https://user:pw@link.msgsndr.com/x",
       "javascript:alert(1)",
       undefined,
@@ -452,6 +538,65 @@ describe("checkout on a published site", () => {
       );
       expect(noteBody()).not.toContain("Nothing was charged");
     }
+  });
+
+  it("opens the payment page on an agency's white-label domain when it links to this invoice", async () => {
+    const whiteLabel = `https://link.agency.test/invoice/${INVOICE_ID}?locale=en`;
+    const result = await checkout(
+      deps({
+        ...okRoutes,
+        "POST /invoices/text2pay": {
+          body: { invoice: { _id: INVOICE_ID, invoiceNumber: 7 }, invoiceUrl: whiteLabel },
+        },
+      }),
+      order,
+    );
+    expect(result).toEqual({ status: 200, body: { ok: true, payUrl: whiteLabel } });
+    expect(noteBody()).toContain("invoice 7");
+    expect(noteBody()).not.toContain("couldn't open its payment page");
+  });
+
+  it("names the invoice with the sub-account's prefix when it may read invoice settings", async () => {
+    await grant(`${GRANTED} invoices.readonly`);
+    const result = await checkout(
+      deps({ ...okRoutes, "GET /invoices/settings": { body: { invoiceNumberPrefix: "INV-" } } }),
+      order,
+    );
+    expect(result.status).toBe(200);
+    // Read before anything is written, so it can't hold up an invoice that was already made.
+    expect(paths().indexOf("GET /invoices/settings")).toBeLessThan(
+      paths().indexOf("POST /contacts/upsert"),
+    );
+    const settings = fake.requests.find((r) => r.url.pathname === "/invoices/settings");
+    expect(settings?.url.searchParams.get("altId")).toBe(GHL_LOCATION);
+    expect(settings?.url.searchParams.get("altType")).toBe("location");
+    expect(noteBody()).toContain("(149.50 USD each) (test mode), invoice INV-1001");
+  });
+
+  it("keeps the bare invoice number when the settings can't be read", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await grant(`${GRANTED} invoices.readonly`);
+    for (const settings of [
+      { status: 500, body: { message: "no" } },
+      { body: { invoiceNumberPrefix: 42 } },
+      { body: {} },
+    ]) {
+      const result = await checkout(
+        deps({ ...okRoutes, "GET /invoices/settings": settings }),
+        another(),
+        "site-live",
+        nextIp(),
+      );
+      // The invoice is made and answered all the same.
+      expect(result).toEqual({ status: 200, body: { ok: true, payUrl: PAY_URL } });
+      expect(noteBody()).toContain("(test mode), invoice 1001");
+    }
+  });
+
+  it("doesn't read invoice settings without the scope for it", async () => {
+    await checkout(deps(), order);
+    expect(paths()).not.toContain("GET /invoices/settings");
+    expect(noteBody()).toContain("invoice 1001");
   });
 
   it("says the invoice may not have been made when GHL doesn't answer clearly", async () => {
@@ -624,5 +769,24 @@ describe("a payment page's address", () => {
     expect(isGhlPayUrl("https://link.msgsndr.com:8443/invoice/1")).toBe(false);
     expect(isGhlPayUrl("https://notmsgsndr.com/invoice/1")).toBe(false);
     expect(isGhlPayUrl(42)).toBe(false);
+  });
+
+  it("is on an agency's own domain only when it links to this very invoice", () => {
+    const id = INVOICE_ID;
+    expect(isGhlPayUrl(`https://link.agency.test/invoice/${id}`, id)).toBe(true);
+    expect(isGhlPayUrl(`https://link.flowsper.io/invoice/${id}`, id)).toBe(true);
+    expect(isGhlPayUrl(`https://link.agency.test/invoice/${id}`)).toBe(false);
+    expect(isGhlPayUrl(`https://link.agency.test/invoice/${id}0`, id)).toBe(false);
+    expect(isGhlPayUrl(`https://link.agency.test/?invoice=${id}`, id)).toBe(false);
+    expect(isGhlPayUrl(`http://link.agency.test/invoice/${id}`, id)).toBe(false);
+    // Only a real invoice id counts, not a word that could be any link's path.
+    expect(isGhlPayUrl("https://link.agency.test/invoice/x", "invoice")).toBe(false);
+    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1", "inv1")).toBe(false);
+    // Never an IP address, localhost or a name ending in a dot.
+    for (const host of ["127.0.0.1", "2130706433", "0x7f.1", "10.0.0.1", "[::1]", "localhost"]) {
+      expect(isGhlPayUrl(`https://${host}/invoice/${id}`, id)).toBe(false);
+    }
+    expect(isGhlPayUrl(`https://localhost./invoice/${id}`, id)).toBe(false);
+    expect(isGhlPayUrl(`https://link.agency.test./invoice/${id}`, id)).toBe(false);
   });
 });

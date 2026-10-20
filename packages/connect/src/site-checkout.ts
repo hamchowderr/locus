@@ -1,6 +1,8 @@
 import { consumeAttempt } from "@locus/auth";
+import { siteCheckoutItems } from "@locus/db/control";
 import { GhlError, ghlRequest } from "@locus/ghl";
 import { operationById } from "@locus/skills";
+import { eq } from "drizzle-orm";
 import {
   consumeSiteLimits,
   countWithDeadline,
@@ -22,8 +24,13 @@ import {
 //   /api/sites/<siteId>/checkout
 //
 // The visitor names a product and one of its prices (the ids the builder wrote into the site's
-// `<BuyButton>`) and says who they are. As with forms and booking, the client is read from the
-// site's registry row, never from the request, and no token reaches the site. Everything about
+// `<BuyButton>`) and says who they are. Only a pair the site's published code sells
+// (`site_checkout_items`, read from its `<BuyButton>`s at publish) is accepted, checked before
+// GHL is called at all; a site published before Locus read them sells nothing until it is
+// published again, as booking treats a site with no calendars. So another of the client's
+// products, or a price of one product sent with another, gets nothing. As with forms and
+// booking, the client is read from the site's registry row, never from the request, and no token
+// reaches the site. Everything about
 // the sale comes from GHL, never from the request: the product and price are read with the
 // client's own session and checked against that sub-account (the product is this client's, the
 // price is that product's), and the amount and currency on the invoice are the price's. A
@@ -66,9 +73,10 @@ export const MAX_CHECKOUT_QTY = 10;
 const GHL_ID = /^[A-Za-z0-9]{1,64}$/;
 
 /**
- * The hosts a GHL invoice's payment page may be on. GHL's docs give no example `invoiceUrl`, so
- * these are GHL's own domains (its API and widget host, its link host, its client portal); an
- * agency's white-label domain is refused until a live account shows what GHL really returns.
+ * GHL's own domains for an invoice's payment page (its API and widget host, its link host, its
+ * client portal). An agency with a white-label domain gets its invoice links there instead (a live
+ * Flowsper invoice was on `link.flowsper.io`); `isGhlPayUrl` takes those only when the link names
+ * the invoice itself.
  */
 const PAY_HOSTS = ["leadconnectorhq.com", "msgsndr.com", "clientclub.net"];
 
@@ -115,8 +123,20 @@ function operation(id: string) {
   return op;
 }
 
-/** Whether an invoice's payment page is one of GHL's own https addresses. */
-export function isGhlPayUrl(value: unknown): value is string {
+/** A GHL invoice id: 24 hex digits, so it can't match an ordinary word in a link's path. */
+const INVOICE_ID = /^[a-f0-9]{24}$/i;
+/** A host name of two or more labels whose last is letters (`link.agency.com`): no IP address. */
+const DOMAIN_NAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+/** The scope that reads the sub-account's invoice settings (the invoice number's prefix). */
+const SETTINGS_SCOPE = "invoices.readonly";
+
+/**
+ * Whether an invoice's payment page is one the site may send the visitor to: an https address on
+ * one of GHL's own domains, or, on an agency's white-label domain, one whose path names this
+ * invoice. Both come from GHL's answer, so the invoice check only keeps out an unrelated link.
+ */
+export function isGhlPayUrl(value: unknown, invoiceId?: string): value is string {
   if (typeof value !== "string" || value.length > 2_000) return false;
   let url: URL;
   try {
@@ -126,7 +146,11 @@ export function isGhlPayUrl(value: unknown): value is string {
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
   const host = url.hostname.toLowerCase();
-  return PAY_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  if (PAY_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`))) return true;
+  // A white-label domain: GHL put it there, but only a link to this very invoice is taken, on a
+  // real domain name (not an IP address, `localhost` or a name ending in a dot).
+  if (!invoiceId || !INVOICE_ID.test(invoiceId) || !DOMAIN_NAME.test(host)) return false;
+  return url.pathname.split("/").includes(invoiceId);
 }
 
 /** One line of the client's own text: no line breaks or column bars, capped. */
@@ -166,6 +190,26 @@ interface Sale {
   amount: number;
   currency: string;
   qty: number;
+}
+
+/**
+ * Whether the site's published code sells this product at this price: one of the pairs read
+ * from its `<BuyButton>`s at publish. A site with no list (published before Locus read them)
+ * sells nothing.
+ */
+async function sells(
+  db: SiteCheckoutDeps["db"],
+  siteId: string,
+  productId: string,
+  priceId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ items: siteCheckoutItems.items })
+    .from(siteCheckoutItems)
+    .where(eq(siteCheckoutItems.siteId, siteId));
+  return (row?.items ?? []).some(
+    (item) => item.productId === productId && item.priceId === priceId,
+  );
 }
 
 /** GHL's "no such product or price" (it answers 400 "Product not found"); anything else throws. */
@@ -271,7 +315,30 @@ async function invoicingUser(ghl: SiteGhl): Promise<string | null> {
 const refusedByGhl = (error: unknown) =>
   error instanceof GhlError && error.status >= 400 && error.status < 500;
 
-/** The invoice, made and emailed by GHL; its number and payment page. */
+/**
+ * The sub-account's invoice number prefix (`INV-`), for the note to name the invoice as GHL shows
+ * it; empty when the connection can't read invoice settings or GHL doesn't answer. Read before
+ * anything is written, so it can't hold up or confuse an invoice that was already made.
+ */
+async function invoicePrefix(ghl: SiteGhl): Promise<string> {
+  if (!ghl.scopes.includes(SETTINGS_SCOPE)) return "";
+  try {
+    const settings = await ghlRequest<{ invoiceNumberPrefix?: unknown }>(
+      operation("invoices.get-invoice-settings"),
+      ghl.session,
+      {},
+      ghl.options,
+    );
+    const prefix = settings.invoiceNumberPrefix;
+    return typeof prefix === "string" ? oneLine(prefix, 10) : "";
+  } catch (error) {
+    // Only the note's wording depends on it.
+    logGhlFailure("Invoice settings", error);
+    return "";
+  }
+}
+
+/** The invoice, made and emailed by GHL; its id, number and payment page. */
 async function invoiceFor(
   ghl: SiteGhl,
   sale: Sale,
@@ -281,7 +348,8 @@ async function invoiceFor(
   userId: string,
   liveMode: boolean,
   now: number,
-): Promise<{ number: string; url: unknown }> {
+  prefix: string,
+): Promise<{ id: string; number: string; url: unknown }> {
   const today = new Date(now).toISOString().slice(0, 10);
   const created = await ghlRequest<{
     invoice?: { _id?: string; invoiceNumber?: number | string };
@@ -325,8 +393,11 @@ async function invoiceFor(
   if (typeof id !== "string" || !id) throw new Error("GoHighLevel's invoice response had no id");
   const number = created.invoice?.invoiceNumber;
   return {
+    id,
     number:
-      typeof number === "number" || typeof number === "string" ? oneLine(String(number), 40) : id,
+      typeof number === "number" || typeof number === "string"
+        ? `${prefix}${oneLine(String(number), 40)}`
+        : id,
     url: created.invoiceUrl,
   };
 }
@@ -396,6 +467,9 @@ export async function startSiteCheckout(
       retryAfterSeconds: limited,
     };
   }
+  // Only what the site sells: refused before any token is minted or GHL is asked, and before the
+  // recipient's daily allowance is touched.
+  if (!(await sells(deps.db, row.site.id, productId, priceId))) return refuse(422, NOT_FOR_SALE);
   // Each checkout emails the address typed, so one address gets only a few a day. Kept as a
   // keyed hash, like a visitor's IP: the counter only needs to tell addresses apart.
   const recipient = hashVisitorIp(deps.ipHashKey, email.trim().toLowerCase());
@@ -433,6 +507,7 @@ export async function startSiteCheckout(
   let ghl: SiteGhl;
   let sale: Sale;
   let userId: string | null;
+  let prefix = "";
   try {
     ghl = await siteGhl(deps, row.location);
     // The invoice needs a scope the connection may not have been granted (GHL answers 401):
@@ -445,6 +520,7 @@ export async function startSiteCheckout(
     if ("refused" in found) return refuse(422, found.refused);
     sale = found;
     userId = await invoicingUser(ghl);
+    if (userId) prefix = await invoicePrefix(ghl);
   } catch (error) {
     logGhlFailure(`Checkout check for site ${row.site.id}`, error);
     return refuse(502, NOT_STARTED);
@@ -460,7 +536,7 @@ export async function startSiteCheckout(
   const testMode = deps.liveMode ? "" : " (test mode)";
   const what = `${sale.productName} × ${sale.qty} (${amountText(sale.amount, sale.currency)}${sale.qty > 1 ? " each" : ""})${testMode}`;
   const done: {
-    invoice?: { number: string; url: unknown };
+    invoice?: { id: string; number: string; url: unknown };
     /** Why the invoice wasn't made, when it was tried. */
     invoiceFailure?: unknown;
     /** Why the contact wasn't. */
@@ -478,6 +554,7 @@ export async function startSiteCheckout(
           userId,
           deps.liveMode,
           now,
+          prefix,
         );
       } catch (error) {
         done.invoiceFailure = error;
@@ -488,7 +565,7 @@ export async function startSiteCheckout(
             ];
       }
       const started = `Started checkout: ${what}, invoice ${done.invoice.number}`;
-      return isGhlPayUrl(done.invoice.url)
+      return isGhlPayUrl(done.invoice.url, done.invoice.id)
         ? [started]
         : [`${started}. It was emailed; the site couldn't open its payment page.`];
     });
@@ -501,7 +578,8 @@ export async function startSiteCheckout(
   const made = done.invoice;
   if (made) {
     await countWithDeadline(deps, row, "delivered", now);
-    if (isGhlPayUrl(made.url)) return { status: 200, body: { ok: true, payUrl: made.url } };
+    if (isGhlPayUrl(made.url, made.id))
+      return { status: 200, body: { ok: true, payUrl: made.url } };
     // GHL made and emailed the invoice; only its payment page can't be opened from here.
     console.error(`Checkout for site ${row.site.id}: the invoice's address isn't GHL's`);
     return { status: 200, body: { ok: true, emailed: true } };

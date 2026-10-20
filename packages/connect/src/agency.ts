@@ -98,6 +98,24 @@ export async function connectAgency(
   return { companyId: grant.companyId, ...(await syncLocations(deps, organizationId)) };
 }
 
+/** The organisation's GHL connection and the grant kept for it, as stored. */
+async function storedGrant(
+  deps: Pick<ConnectDeps, "db" | "secrets">,
+  organizationId: string,
+): Promise<{ secretRef: string; grant: AgencyGrant }> {
+  const [connection] = await deps.db
+    .select()
+    .from(agencyGhlConnection)
+    .where(eq(agencyGhlConnection.organizationId, organizationId));
+  if (!connection) throw new ConnectError("GoHighLevel isn't connected yet.");
+  const stored = await deps.secrets.get(connection.secretRef);
+  if (!stored) throw new ConnectError("GoHighLevel needs to be connected again.");
+  return { secretRef: connection.secretRef, grant: JSON.parse(stored) as AgencyGrant };
+}
+
+const grantScopes = (grant: AgencyGrant): readonly string[] =>
+  (grant.scopes ?? "").split(/\s+/).filter(Boolean);
+
 /**
  * A current agency token for an organisation's GHL connection, renewed when close to expiry,
  * with the scopes GHL granted it (as its last token response said).
@@ -106,25 +124,14 @@ export async function agencyToken(
   deps: Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now">,
   organizationId: string,
 ): Promise<{ token: string; companyId: string; scopes: readonly string[] }> {
-  const [connection] = await deps.db
-    .select()
-    .from(agencyGhlConnection)
-    .where(eq(agencyGhlConnection.organizationId, organizationId));
-  if (!connection) throw new ConnectError("GoHighLevel isn't connected yet.");
-  const stored = await deps.secrets.get(connection.secretRef);
-  if (!stored) throw new ConnectError("GoHighLevel needs to be connected again.");
-
-  let grant = JSON.parse(stored) as AgencyGrant;
+  const stored = await storedGrant(deps, organizationId);
+  let grant = stored.grant;
   const now = deps.now?.() ?? Date.now();
   if (grant.expiresAt - REFRESH_EARLY_MS <= now) {
     grant = await refreshGrant(deps.ghl, grant, deps.http, now);
-    await deps.secrets.set(connection.secretRef, JSON.stringify(grant));
+    await deps.secrets.set(stored.secretRef, JSON.stringify(grant));
   }
-  return {
-    token: grant.accessToken,
-    companyId: grant.companyId,
-    scopes: (grant.scopes ?? "").split(/\s+/).filter(Boolean),
-  };
+  return { token: grant.accessToken, companyId: grant.companyId, scopes: grantScopes(grant) };
 }
 
 /**
@@ -145,6 +152,21 @@ export async function clientGhlSession(
     locationId: ghlLocationId,
     companyId: agency.companyId,
   };
+}
+
+/**
+ * The scopes the agency's connection was granted (what GHL lets a session do, e.g.
+ * `medias.write` before writing to the Media Library), read from the stored grant without
+ * asking GHL, and `session` to mint the client's session (`clientGhlSession`) only when a call
+ * needs one. Takes the result of the staff check, like `clientGhlSession`.
+ */
+export async function clientGhl(
+  deps: ConnectDeps,
+  client: AuthorizedClient,
+): Promise<{ session: () => Promise<GhlSession>; scopes: readonly string[] }> {
+  assertAuthorizedClient(client);
+  const { grant } = await storedGrant(deps, client.location.organizationId);
+  return { session: () => clientGhlSession(deps, client), scopes: grantScopes(grant) };
 }
 
 /**
