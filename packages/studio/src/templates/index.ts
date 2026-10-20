@@ -2,6 +2,16 @@ import { type DesignBrief, DesignBrief as DesignBriefSchema } from "../brief.ts"
 import type { SiteFile } from "../workspace.ts";
 import { baseFiles, lit } from "./base.ts";
 
+export {
+  BACKEND_STACK,
+  backendFiles,
+  FIRST_MIGRATION_PATH,
+  hasBackendFiles,
+  LOGINS_MIGRATION,
+  SITE_DATABASE_ENV,
+  SITE_SCHEMA_PATH,
+  withBackend,
+} from "./backend.ts";
 export { baseFiles, DEFAULT_PALETTE, packageName, readableOn, SITE_STACK } from "./base.ts";
 export {
   LEAD_ROUTE_PATH,

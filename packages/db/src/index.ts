@@ -34,6 +34,17 @@ export {
   type SiteUser,
 } from "./site-db.ts";
 export {
+  applySiteMigrations,
+  migrationStatements,
+  pendingSiteMigrations,
+  SITE_MIGRATIONS_DIR,
+  SITE_MIGRATIONS_TABLE,
+  type SiteMigration,
+  SiteMigrationError,
+  STATEMENT_BREAKPOINT,
+  siteMigrationsIn,
+} from "./site-migrations.ts";
+export {
   loadTenantMigrations,
   type MigrateTenantsDeps,
   migrateTenant,
