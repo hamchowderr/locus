@@ -80,6 +80,47 @@ describe("sitePages", () => {
   });
 });
 
+describe("reading metadata like a person writes it", () => {
+  const one = (content: string) => sitePages([{ path: "app/m/page.tsx", content }])[0];
+
+  it("isn't thrown by quotes or braces in comments", () => {
+    expect(
+      one(`export const metadata: Metadata = {
+  // Members only: don't list it. {
+  /* "quoted" and 'odd */
+  title: "Members", // it's private
+  description: "For members.",
+  robots: { index: false },
+  alternates: { canonical: "/m" },
+};`),
+    ).toMatchObject({
+      title: "Members",
+      description: "For members.",
+      canonical: "/m",
+      noindex: true,
+    });
+  });
+
+  it("reads noindex as a string or beside nested robots settings", () => {
+    expect(one(`export const metadata = { robots: "noindex, nofollow" };`)?.noindex).toBe(true);
+    expect(
+      one(`export const metadata = { robots: { googleBot: { index: true }, index: false } };`)
+        ?.noindex,
+    ).toBe(true);
+    expect(
+      one(`export const metadata = { robots: { googleBot: { index: false } } };`)?.noindex,
+    ).toBe(false);
+  });
+
+  it("takes only the page's own title and description, not its share card's", () => {
+    expect(
+      one(`export const metadata = {
+  openGraph: { title: "Share title", description: "Share text" },
+};`),
+    ).toMatchObject({ title: null, hasTitle: false, description: null, hasDescription: false });
+  });
+});
+
 describe("seoIssues", () => {
   it("lists missing, long and duplicate titles and descriptions, and canonicals", () => {
     const long = "x".repeat(70);

@@ -434,16 +434,20 @@ describe("publishing saved versions", () => {
     expect(row?.status).toBe("pushed");
   });
 
-  it("publishes with the site's own domain as its address, and checks its search basics", async () => {
+  it("publishes with its Vercel address until its domain is live, and checks its search basics", async () => {
     const { client, siteId } = await startedSite();
     const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
       siteId,
       name: "a-site",
     });
-    await db.update(site).set({ customDomain: "www.a-site.test" }).where(eq(site.id, siteId));
+    // A domain Vercel can't confirm is live (here, no Vercel at all) isn't the address yet.
+    await db
+      .update(site)
+      .set({ customDomain: "www.a-site.test", deployUrl: "https://a-site.vercel.app" })
+      .where(eq(site.id, siteId));
     await publishLatestVersion(deps(), ctx("owner"), client, siteId);
     const pushed = github.repoFiles(repoFullName as string);
-    expect(pushed?.["lib/locus.ts"]).toContain('siteUrl: "https://www.a-site.test"');
+    expect(pushed?.["lib/locus.ts"]).toContain('siteUrl: "https://a-site.vercel.app"');
     expect(pushed?.["app/sitemap.ts"]).toContain("locus.pages.map");
     expect(pushed?.["app/llms.txt/route.ts"]).toContain("export function GET");
 

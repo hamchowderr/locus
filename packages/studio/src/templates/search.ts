@@ -40,13 +40,16 @@ export default function sitemap(): MetadataRoute.Sitemap {
     owned(
       ROBOTS_PATH,
       `import type { MetadataRoute } from "next";
-import { siteUrl } from "@/lib/locus";
+import { published, siteUrl } from "@/lib/locus";
 
 /** /robots.txt: open to search engines once published, closed in a draft or preview. */
 export default function robots(): MetadataRoute.Robots {
+  if (!published) return { rules: { userAgent: "*", disallow: "/" } };
   const base = siteUrl();
-  if (!base) return { rules: { userAgent: "*", disallow: "/" } };
-  return { rules: { userAgent: "*", allow: "/" }, sitemap: \`\${base}/sitemap.xml\` };
+  return {
+    rules: { userAgent: "*", allow: "/" },
+    ...(base ? { sitemap: \`\${base}/sitemap.xml\` } : {}),
+  };
 }
 `,
     ),

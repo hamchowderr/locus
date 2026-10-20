@@ -595,7 +595,8 @@ function SeoCheck({ check }: { check: SiteSeo }) {
         </ul>
         <p className="text-neutral-600">
           Every published site also gets a sitemap, robots.txt, llms.txt and the business's
-          structured data. Ask the site builder in the chat to fix anything listed.
+          structured data. They use the site's own domain once it's live, so publish again after the
+          domain starts working. Ask the site builder in the chat to fix anything listed.
         </p>
       </div>
     </details>
