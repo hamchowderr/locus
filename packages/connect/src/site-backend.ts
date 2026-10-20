@@ -519,9 +519,15 @@ export async function ensureSiteBackendEnv(
   if (restore?.envStale) {
     // A restore that failed part way may have left them naming another database.
     await writeSiteDatabaseEnv(deps, env, projectId, provisioner, row);
+    // Deployments made until now may have used any of the databases it stopped using, so
+    // those count from here.
+    const fixedAt = Date.now();
     await deps.db
       .update(siteBackendRestore)
-      .set({ envStale: false })
+      .set({
+        envStale: false,
+        retired: restore.retired.map((r) => ({ ...r, retiredAt: Math.max(r.retiredAt, fixedAt) })),
+      })
       .where(eq(siteBackendRestore.siteId, row.siteId));
     rewritten.push(SITE_DATABASE_ENV.url, SITE_DATABASE_ENV.token);
     env = await projectEnv(deps, client, projectId);
@@ -650,7 +656,8 @@ export async function sweepRetired(
   now: number,
 ): Promise<void> {
   const restore = await restoreOf(deps.db, backend.siteId);
-  if (!restore || restore.retired.length === 0) return;
+  // While the live site's settings may name any of them, none is deleted.
+  if (!restore || restore.retired.length === 0 || restore.envStale) return;
   const keep = new Set([backend.tursoDbName, restore.keptDbName]);
   let due = restore.retired.filter((r) => r.deleteAfter <= now && !keep.has(r.dbName));
   if (due.length === 0) return;

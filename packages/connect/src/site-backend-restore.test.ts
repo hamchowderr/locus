@@ -406,6 +406,9 @@ describe("restoring a site's database", () => {
       value: provisioner.url(row.tursoDbHostname),
     });
     expect((await restoreRow())?.envStale).toBe(false);
+    // The copy counts as unused only from when the settings were fixed.
+    const fixed = (await restoreRow())?.retired[0]?.retiredAt ?? 0;
+    expect(fixed).toBeGreaterThanOrEqual(Date.now() - 60_000);
   });
 
   it("won't go back to before a change the live site's code needs", async () => {
@@ -492,8 +495,17 @@ describe("restoring a site's database", () => {
     // Its hold isn't released for it, and its copy waits to be deleted safely.
     expect(left?.busyUntil).not.toBeNull();
     expect(left?.keptDbName).toBeNull();
-    // The settings already name the copy; the next publish puts them back.
+    // The settings already name the copy; the next publish puts them back, and nothing is
+    // deleted until then.
     expect(left?.envStale).toBe(true);
+    readyAt = Date.now() + 3 * 3_600_000;
+    vi.setSystemTime(Date.now() + 3 * 3_600_000);
+    await db.update(siteBackendRestore).set({ busyUntil: null });
+    await migrateSiteBackend(deps(), owner, { siteId: SITE, files: [] });
+    vi.useRealTimers();
+    expect(
+      await provisioner.findDatabase(`${siteDbName(SITE)}-r${clock.toString(36)}`),
+    ).not.toBeNull();
     expect(left?.retired.map((r) => r.dbName)).toEqual([
       `${siteDbName(SITE)}-r${clock.toString(36)}`,
     ]);
