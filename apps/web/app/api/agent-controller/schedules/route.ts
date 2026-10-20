@@ -1,7 +1,5 @@
-import { forward } from '@/lib/mastra-proxy';
-
-// Same-origin proxy → Mastra server's schedules list endpoint.
-// Returns the agent's recurring schedules so the Schedules panel can render them.
-export async function GET(req: Request) {
-  return forward(req, '/agent-controller/schedules');
+// The chat kit asks for the agent's recurring schedules. Locus's agent server has none yet, so
+// this answers an empty list here rather than forwarding a request it would refuse with 404.
+export function GET() {
+  return Response.json({ schedules: [] });
 }
