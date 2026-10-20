@@ -47,6 +47,7 @@ import {
 } from "@locus/sandbox";
 import {
   bookingCalendarIds,
+  editorOrigin,
   type PageSeo,
   pageSeo,
   readBrief,
@@ -161,6 +162,12 @@ const contextValue = (requestContext: unknown, key: string): unknown => {
 };
 
 /** The sandbox key for a site: stable across processes, one per client and site. */
+/** The pages allowed to drive a preview's visual edits: the Locus web app's own origin. */
+export function editorOrigins(locusUrl: string): string[] {
+  const origin = editorOrigin(locusUrl);
+  return origin ? [origin] : [];
+}
+
 export const siteRuntimeKey = (client: AuthorizedClient, siteId: string) =>
   `${client.location.id}/${siteId}`;
 
@@ -773,6 +780,7 @@ export function createSiteBuilder(
       crm: deps.crm ? deps.crm(client) : null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
+      editorOrigins: editorOrigins(deps.locusUrl),
       ...(onVersionSaved ? { onVersionSaved } : {}),
     };
   };
@@ -1349,3 +1357,5 @@ export async function siteNames(
   }
   return names;
 }
+
+export { saveVisualEdits, type VisualEditsSaved } from "./visual-edits.ts";

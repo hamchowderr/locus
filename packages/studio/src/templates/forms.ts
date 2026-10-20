@@ -10,13 +10,13 @@ import { withSearchFiles } from "./search.ts";
 // `lib/locus.ts` holds where to forward. It is public (a site id and Locus's address, no key)
 // and Locus writes it on every publish, so a draft or a preview has none and the routes answer
 // without sending anything. `/api/lead` is the forms' route; `/api/locus` carries the rest
-// (booking today), forwarding only the calls it lists.
+// (booking and checkout today), forwarding only the calls it lists.
 
 /** The file Locus owns in every site; replaced on every publish. */
 export const LOCUS_SETTINGS_PATH = "lib/locus.ts";
 /** The site's own route that every form posts to. */
 export const LEAD_ROUTE_PATH = "app/api/lead/route.ts";
-/** The site's own route for everything else it asks Locus: booking times, bookings. */
+/** The site's own route for everything else it asks Locus: booking times, bookings, checkouts. */
 export const LOCUS_PROXY_PATH = "app/api/locus/[...path]/route.ts";
 
 /** Locus's endpoint for one site's form submissions. */
@@ -121,7 +121,7 @@ export function withLocusSettings(
  * The calls the site's `/api/locus` route forwards, as `METHOD path`. Anything else gets a 404
  * from the site itself.
  */
-export const LOCUS_PROXY_CALLS = ["GET booking/slots", "POST booking"] as const;
+export const LOCUS_PROXY_CALLS = ["GET booking/slots", "POST booking", "POST checkout"] as const;
 
 /** The site's `/api/locus/...` route: forwards only `LOCUS_PROXY_CALLS`, server to server. */
 export function locusProxyFile(): SiteFile {
@@ -131,7 +131,7 @@ export function locusProxyFile(): SiteFile {
 import { locus } from "@/lib/locus";
 
 // Written by Locus; don't edit it (Locus replaces it on every publish). It forwards the site's
-// booking calls to Locus, which holds the CRM credentials. No key or token is here.
+// booking and checkout calls to Locus, which holds the CRM credentials. No key or token is here.
 
 const CALLS = new Set(${JSON.stringify(LOCUS_PROXY_CALLS)});
 const MAX_BYTES = 16 * 1024;

@@ -29,6 +29,11 @@ export interface BuilderSession {
   meter?: UsageMeter | null;
   userId?: string | null;
   /**
+   * The Locus web app's origins, the only pages the preview's visual-edits script answers.
+   * Empty or missing: the preview can't be edited by clicking.
+   */
+  editorOrigins?: string[];
+  /**
    * Called once the tool call that resolved this session has finished, successfully or not,
    * e.g. to release a pooled database connection.
    */
