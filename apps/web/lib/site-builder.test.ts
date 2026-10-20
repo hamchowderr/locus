@@ -48,6 +48,7 @@ import {
   session,
   site,
   siteBackend,
+  siteCheckoutItems,
   siteFolder,
   siteMemberAccess,
   subscription,
@@ -435,7 +436,9 @@ describe("publishing saved versions", () => {
       {
         action: "write",
         path: "app/book/page.tsx",
-        content: '<Booking calendarId="cal1" form="consult" />\n<Booking calendarId={someVar} />',
+        content:
+          '<Booking calendarId="cal1" form="consult" />\n<Booking calendarId={someVar} />\n' +
+          '<BuyButton productId="prod1" priceId="price1" />\n<BuyButton productId={p} priceId="x" />',
       },
       rc,
     );
@@ -465,6 +468,12 @@ describe("publishing saved versions", () => {
     expect(row?.status).toBe("pushed");
     // Bookings are taken on the calendars the published code names, and only those.
     expect(row?.bookingCalendars).toEqual(["cal1"]);
+    // And checkouts on the products and prices it names, and only those.
+    const [sold] = await db
+      .select()
+      .from(siteCheckoutItems)
+      .where(eq(siteCheckoutItems.siteId, siteId));
+    expect(sold?.items).toEqual([{ productId: "prod1", priceId: "price1" }]);
   });
 
   it("publishes with its Vercel address until its domain is live, and checks its search basics", async () => {

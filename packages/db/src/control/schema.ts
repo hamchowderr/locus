@@ -134,6 +134,23 @@ export const siteFolder = sqliteTable("site_folder", {
 });
 
 /**
+ * The client's products the published site sells, as a JSON array of GHL product and price id
+ * pairs, read from the site's code (its `<BuyButton>`s) each time it is published. A checkout of
+ * any other pair is refused, so a visitor can't buy a product the site doesn't offer. No row
+ * means the site hasn't been published since Locus started reading them: it sells nothing, as a
+ * site with no `bookingCalendars` books nothing. Its own table (not a `site` column) so its
+ * migration can be safely re-run.
+ */
+export const siteCheckoutItems = sqliteTable("site_checkout_items", {
+  siteId: text("site_id")
+    .primaryKey()
+    .references(() => site.id, { onDelete: "cascade" }),
+  items: text("items", { mode: "json" })
+    .$type<{ productId: string; priceId: string }[]>()
+    .notNull(),
+});
+
+/**
  * The database of an app-style site (member logins, bookings, its own records), on Otaku's
  * Turso. Plain websites have no row here. Like `location`, a registry row only: the site's
  * data lives in that database, never in this one.
