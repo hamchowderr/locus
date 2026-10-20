@@ -319,20 +319,33 @@ async function streamingFetch(
       url,
       { method: init?.method ?? "POST", headers: Object.fromEntries(new Headers(init?.headers)) },
       (res) => {
-        const headers = new Headers();
-        for (const [key, value] of Object.entries(res.headers)) {
-          if (value !== undefined)
-            headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+        try {
+          const status = res.statusCode ?? 0;
+          // Response takes 200-599 only, and no body on these.
+          if (status < 200 || status > 599) throw new Error(`GHL answered status ${status}`);
+          const headers = new Headers();
+          for (const [key, value] of Object.entries(res.headers)) {
+            if (value !== undefined) {
+              headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+            }
+          }
+          const empty = status === 204 || status === 205 || status === 304;
+          if (empty) res.resume();
+          // An answer before the whole body went (a refusal): stop sending the rest.
+          res.on("end", () => {
+            if (!req.writableFinished) req.destroy();
+          });
+          resolve(
+            new Response(
+              empty ? null : (Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>),
+              { status, headers },
+            ),
+          );
+        } catch (error) {
+          req.destroy();
+          res.resume();
+          reject(error);
         }
-        const status = res.statusCode ?? 502;
-        const empty = status === 204 || status === 304;
-        if (empty) res.resume();
-        resolve(
-          new Response(
-            empty ? null : (Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>),
-            { status, headers },
-          ),
-        );
       },
     );
     req.on("error", reject);

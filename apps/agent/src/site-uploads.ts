@@ -23,8 +23,16 @@ export const TICKET_HEADER = "x-locus-ticket";
 
 /** Uploads taken at once, across every site: each may be 500 MB of disk. */
 const MAX_ACTIVE = 4;
+/** Uploads taken at once for one site, so one site can't take every place. */
+const MAX_ACTIVE_PER_SITE = 2;
 /** A sender that stops sending for this long is cut off, so its partial file goes. */
 const IDLE_MS = 60_000;
+/**
+ * And one that sends too slowly to finish: after a minute's grace, a file must arrive at about
+ * 2 Mbit/s (a 500 MB video in about 35 minutes), or it would hold its place for an hour.
+ */
+const MIN_BYTES_PER_SECOND = 256 * 1024;
+const GRACE_MS = 60_000;
 
 const cors = {
   "access-control-allow-origin": "*",
@@ -40,12 +48,16 @@ const notTheFile = () => answer({ error: "That isn't the file this upload was fo
 
 class Refused extends Error {}
 
-/** Writes the body to `path`, refusing past `max` bytes or after `idleMs` without any. */
+/**
+ * Writes the body to `path`, refusing past `max` bytes, after `idleMs` without any, or when it
+ * hasn't all arrived by `deadlineMs`.
+ */
 async function saveCapped(
   body: ReadableStream<Uint8Array>,
   path: string,
   max: number,
   idleMs: number,
+  deadlineMs: number,
 ) {
   let seen = 0;
   let idle: NodeJS.Timeout | undefined;
@@ -63,6 +75,7 @@ async function saveCapped(
     idle = setTimeout(() => counted.destroy(new Refused("idle")), idleMs);
   };
   wake();
+  const deadline = setTimeout(() => counted.destroy(new Refused("too slow")), deadlineMs);
   try {
     await pipeline(source, counted, createWriteStream(path, { flags: "wx" }));
     return true;
@@ -71,24 +84,33 @@ async function saveCapped(
     throw error;
   } finally {
     clearTimeout(idle);
+    clearTimeout(deadline);
   }
 }
 
 export function siteUploads(
   deps: SiteUploadDeps,
   logError: (message: string, error?: unknown) => void = console.error,
-  { maxActive = MAX_ACTIVE, idleMs = IDLE_MS } = {},
+  {
+    maxActive = MAX_ACTIVE,
+    maxActivePerSite = MAX_ACTIVE_PER_SITE,
+    idleMs = IDLE_MS,
+    graceMs = GRACE_MS,
+    minBytesPerSecond = MIN_BYTES_PER_SECOND,
+  } = {},
 ) {
   let active = 0;
+  const perSite = new Map<string, number>();
+  const busy = () =>
+    answer({ error: "Too many uploads just now. Try again shortly." }, 503, {
+      "retry-after": "30",
+    });
   return async (request: Request): Promise<Response> => {
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: cors });
     if (request.method !== "PUT") return answer({ error: "Not found." }, 404);
-    if (active >= maxActive) {
-      return answer({ error: "Too many uploads just now. Try again shortly." }, 503, {
-        "retry-after": "30",
-      });
-    }
+    if (active >= maxActive) return busy();
     active++;
+    let site: string | null = null;
     let dir: string | null = null;
     try {
       const length = request.headers.get("content-length");
@@ -104,10 +126,16 @@ export function siteUploads(
       });
       if ("answer" in claimed) return answer(claimed.answer.body, claimed.answer.status);
       const { claim } = claimed;
+      if ((perSite.get(claim.siteId) ?? 0) >= maxActivePerSite) return busy();
+      site = claim.siteId;
+      perSite.set(site, (perSite.get(site) ?? 0) + 1);
       if (!request.body) return answer({ error: "Send the file." }, 400);
       dir = await mkdtemp(join(tmpdir(), "locus-upload-"));
       const path = join(dir, randomUUID());
-      if (!(await saveCapped(request.body, path, claim.size, idleMs))) return notTheFile();
+      const deadlineMs = graceMs + (claim.size / minBytesPerSecond) * 1000;
+      if (!(await saveCapped(request.body, path, claim.size, idleMs, deadlineMs))) {
+        return notTheFile();
+      }
       const file = await openAsBlob(path, { type: claim.contentType });
       const result = await keepTicketedFile(deps, claim, file);
       return answer(result.body, result.status);
@@ -116,6 +144,11 @@ export function siteUploads(
       return answer({ error: "The file couldn't be kept just now. Try again." }, 500);
     } finally {
       active--;
+      if (site) {
+        const left = (perSite.get(site) ?? 1) - 1;
+        if (left > 0) perSite.set(site, left);
+        else perSite.delete(site);
+      }
       if (dir) await rm(dir, { recursive: true, force: true });
     }
   };
