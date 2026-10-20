@@ -32,7 +32,7 @@ export const UNTRUSTED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   add_dependency: ["output", "error", "docs", "theme", "contents"],
   check_site: ["output"],
   preview: ["recentLogs", "output", "logs"],
-  crm: ["calendars", "media"],
+  crm: ["calendars", "products", "media"],
 };
 
 const SOURCE: Record<string, string> = {

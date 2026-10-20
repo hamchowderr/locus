@@ -851,6 +851,7 @@ describe("add_dependency with a component", () => {
 /** A CRM with nothing in it, with whatever a test overrides. */
 const fakeCrm = (over: Partial<SiteCrm> = {}): SiteCrm => ({
   calendars: async () => [],
+  products: async () => [],
   media: async () => [],
   mediaFile: async (id) => {
     throw new CrmMediaError(`There's no image with id ${id} in the client's Media Library.`);
@@ -916,6 +917,69 @@ describe("crm tool", () => {
     });
     expect(await call("crm", { action: "add_calendar_embed" })).toEqual({
       written: "components/calendar-embed.tsx",
+    });
+  });
+});
+
+describe("crm checkout", () => {
+  it("lists each one-time price of the client's products as one line, for the model to pick from", async () => {
+    const { call } = await setup();
+    t.session.crm = fakeCrm({
+      products: async () => [
+        {
+          id: "prod1",
+          name: "Deep Clean",
+          prices: [
+            { id: "price1", name: "Standard", amount: 149.5, currency: "USD" },
+            { id: "price2", name: "Large home", amount: 220, currency: "USD" },
+          ],
+        },
+      ],
+    });
+    expect(await call("crm", { action: "products" })).toEqual({
+      products:
+        "productId: prod1 | priceId: price1 | product: Deep Clean | price: Standard | amount: 149.50 USD\n" +
+        "productId: prod1 | priceId: price2 | product: Deep Clean | price: Large home | amount: 220.00 USD",
+    });
+  });
+
+  it("says when there's nothing to sell, or no CRM to ask", async () => {
+    const { call } = await setup();
+    expect(await call("crm", { action: "products" })).toEqual({
+      error: "The CRM isn't reachable from here.",
+    });
+    t.session.crm = fakeCrm();
+    expect(await call("crm", { action: "products" })).toMatchObject({
+      products: "",
+      note: expect.stringContaining("no products with a one-time price"),
+    });
+  });
+
+  it("writes Locus's buy button and route, keeping a site's own copy unless told to replace it", async () => {
+    const { call } = await setup();
+    // A site made before checkout: no Locus route, and settings without siteApi.
+    await t.session.workspace.writeFile(
+      "lib/locus.ts",
+      "export const locus = { leadEndpoint: null };",
+    );
+    expect(await call("crm", { action: "add_checkout" })).toMatchObject({
+      written: "components/buy-button.tsx",
+      note: expect.stringContaining('priceId="<priceId>"'),
+    });
+    expect(String(await t.session.workspace.readFile("components/buy-button.tsx"))).toContain(
+      'fetch("/api/locus/checkout"',
+    );
+    expect(
+      String(await t.session.workspace.readFile("app/api/locus/[...path]/route.ts")),
+    ).toContain('"POST checkout"');
+    expect(String(await t.session.workspace.readFile("lib/locus.ts"))).toContain("siteApi");
+    await t.session.workspace.writeFile("components/buy-button.tsx", "mine");
+    expect(await call("crm", { action: "add_checkout" })).toMatchObject({
+      kept: "components/buy-button.tsx",
+    });
+    expect(await t.session.workspace.readFile("components/buy-button.tsx")).toBe("mine");
+    expect(await call("crm", { action: "add_checkout", overwrite: true })).toMatchObject({
+      written: "components/buy-button.tsx",
     });
   });
 });
