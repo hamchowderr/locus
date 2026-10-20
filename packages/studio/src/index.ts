@@ -39,10 +39,12 @@ export { startSite } from "./start.ts";
 export {
   BACKEND_STACK,
   BOOKING_COMPONENT_PATH,
+  BUY_BUTTON_PATH,
   backendFiles,
   baseFiles,
   bookingCalendarIds,
   bookingComponentFile,
+  buyButtonFile,
   CALENDAR_EMBED_PATH,
   calendarEmbedFile,
   DEFAULT_PALETTE,

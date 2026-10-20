@@ -538,6 +538,17 @@ const NOTE_LABELS = {
 const FILLABLE = Object.keys(NOTE_LABELS) as (keyof typeof NOTE_LABELS)[];
 
 /**
+ * Who a lead's contact is, as the CRM has it: the contact's own name, email and phone where it
+ * has them, else what the visitor typed (which filled them). For what Locus does next for the
+ * contact, e.g. the invoice of a checkout.
+ */
+export interface LeadContact {
+  name: string;
+  email: string;
+  phone: string;
+}
+
+/**
  * Puts one lead in the client's CRM and returns its contact's id: the contact is found or
  * created, tagged, its blank fields filled, and the rest of what the visitor typed noted.
  * `beforeNote` runs once the contact exists, before the note is written; the lines it returns
@@ -546,7 +557,7 @@ const FILLABLE = Object.keys(NOTE_LABELS) as (keyof typeof NOTE_LABELS)[];
 export async function sendToGhl(
   { session, options }: SiteGhl,
   lead: Lead,
-  beforeNote?: (contactId: string) => Promise<string[]>,
+  beforeNote?: (contactId: string, contact: LeadContact) => Promise<string[]>,
 ): Promise<string> {
   const { fields, extras } = lead;
   const form = fields.form ?? "contact";
@@ -646,7 +657,19 @@ export async function sendToGhl(
   }
   for (const [key, value] of extras) lines.push(`${key}: ${value}`);
   if (fields.page) lines.push(`Page: ${fields.page}`);
-  if (beforeNote) lines.push(...(await beforeNote(contactId)));
+  if (beforeNote) {
+    const own = (value: string | null | undefined, typed: string | undefined) =>
+      blank(value) ? (typed ?? "") : (value as string).trim();
+    const fullName = [existing.firstName, existing.lastName].filter((v) => !blank(v)).join(" ");
+    const typedName =
+      fields.name ?? ([fields.firstName, fields.lastName].filter(Boolean).join(" ") || undefined);
+    const contact: LeadContact = {
+      name: unnamed ? (typedName ?? "") : own(existing.name, fullName),
+      email: own(existing.email, fields.email),
+      phone: own(existing.phone, fields.phone),
+    };
+    lines.push(...(await beforeNote(contactId, contact)));
+  }
   if (lines.length > 0) {
     await ghlRequest(
       operation("contacts.create-note"),

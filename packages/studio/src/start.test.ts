@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { briefForAgent, DesignBrief, openQuestions, readBrief } from "./brief.ts";
 import { startSite } from "./start.ts";
 import {
+  BUY_BUTTON_PATH,
+  buyButtonFile,
+  LOCUS_PROXY_CALLS,
   LOCUS_PROXY_PATH,
   LOCUS_SETTINGS_PATH,
   leadEndpoint,
@@ -136,7 +139,7 @@ describe("templates", () => {
       // So does Locus's other route, and only the calls it lists.
       const proxy = String(file(files, LOCUS_PROXY_PATH));
       expect(file(files, "lib/locus.ts")).toContain("siteApi: null as string | null");
-      expect(proxy).toContain('new Set(["GET booking/slots","POST booking"])');
+      expect(proxy).toContain('new Set(["GET booking/slots","POST booking","POST checkout"])');
       expect(proxy).toContain('"x-locus-visitor-ip"');
       expect(proxy).not.toMatch(/authorization|bearer|process\.env/i);
       const layout = String(files.find((f) => f.path === "app/layout.tsx")?.content);
@@ -173,6 +176,32 @@ describe("Locus settings at publish", () => {
     expect(leadEndpoint("https://app.locus.test/", "a/b")).toBe(
       "https://app.locus.test/api/sites/a%2Fb/leads",
     );
+  });
+});
+
+describe("the buy button", () => {
+  it("checks out through the site's own route, with no price or credential, and leaves only for https", () => {
+    const button = buyButtonFile();
+    expect(button.path).toBe(BUY_BUTTON_PATH);
+    const source = String(button.content);
+    expect(LOCUS_PROXY_CALLS).toContain("POST checkout");
+    expect(source).toContain('fetch("/api/locus/checkout"');
+    expect(source).toContain('payUrl.startsWith("https://")');
+    expect(source).toContain("window.location.assign(payUrl)");
+    expect(source).toContain("Checkout works on the published site.");
+    // Name, email and phone are all required (GHL's invoice needs them), with the spam checks.
+    for (const field of ['name="name"', 'name="email"', 'name="phone"']) {
+      expect(source).toMatch(new RegExp(`${field}[^>]*required`));
+    }
+    expect(source).toContain('name="fax"');
+    expect(source).toContain("elapsedMs: Date.now() - shownAt.current");
+    // The amount is GHL's: the button never sends one.
+    expect(source).not.toMatch(/amount|currency/);
+    expect(source).not.toMatch(/authorization|bearer|process\.env/i);
+    // Built from the site's own vendored components.
+    for (const [, name] of source.matchAll(/from "@\/components\/ui\/([\w-]+)"/g)) {
+      expect(SHADCN_COMPONENTS).toContain(name);
+    }
   });
 });
 

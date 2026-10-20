@@ -94,6 +94,14 @@ export function siteLeadIpKey(): Buffer {
   return devIpKey;
 }
 
+/**
+ * Whether invoices a site's checkout makes take real money: only with
+ * `LOCUS_GHL_LIVE_PAYMENTS=true`. Anything else makes GHL test-mode invoices.
+ */
+export function ghlLivePayments(): boolean {
+  return process.env.LOCUS_GHL_LIVE_PAYMENTS === "true";
+}
+
 /** Everything the connect flow needs, from the environment. Server-side only. */
 export function connectDeps(): ConnectDeps {
   const mode = ghlMode();
