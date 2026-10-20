@@ -9,10 +9,10 @@ import {
 } from "@locus/auth";
 import { redirect } from "next/navigation";
 import { after } from "next/server";
+import { openBillingPortal, setExtraUsage, subscribe } from "@/app/actions";
+import { Notice, Page } from "@/app/ui";
 import { sendExtraUsage } from "@/lib/extra-usage";
 import { billingEnabled, currentSession, locus, sessionContext } from "@/lib/locus";
-import { openBillingPortal, setExtraUsage, subscribe } from "../actions";
-import { Notice, Page } from "../ui";
 
 const STATUS: Record<string, string> = {
   comped: "Comped by this deployment's operator: full access, no payment.",

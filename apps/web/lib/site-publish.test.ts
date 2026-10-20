@@ -295,11 +295,11 @@ describe("an agency without the connections", () => {
   it("says to connect GitHub first, for the list and for giving a repository", async () => {
     const client = await authorized("owner", "client-1");
     await expect(listInstallationRepos(deps(), ctx("owner"))).rejects.toThrow(
-      "Connect GitHub on the Connections page first.",
+      "Connect GitHub on the Integrations page first.",
     );
     const giving = giveSiteRepo(deps(), ctx("owner"), client, choice("site-1", { name: "a" }));
     await expect(giving).rejects.toBeInstanceOf(ConnectError);
-    await expect(giving).rejects.toThrow("Connect GitHub on the Connections page first.");
+    await expect(giving).rejects.toThrow("Connect GitHub on the Integrations page first.");
   });
 
   it("says to connect Vercel first before creating a project", async () => {
@@ -308,7 +308,9 @@ describe("an agency without the connections", () => {
     await giveSiteRepo(deps(), ctx("owner"), client, choice("site-1", { name: "bright-smiles" }));
     const giving = giveSiteProject(deps(), ctx("owner"), client, "site-1");
     await expect(giving).rejects.toBeInstanceOf(ConnectError);
-    await expect(giving).rejects.toThrow("Connect your Vercel team on the Connections page first.");
+    await expect(giving).rejects.toThrow(
+      "Connect your Vercel team on the Integrations page first.",
+    );
     expect((await siteRow("site-1"))?.hostProjectId).toBeNull();
   });
 });

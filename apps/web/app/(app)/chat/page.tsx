@@ -1,12 +1,10 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
 import { SITE_BUILDER_MODE_ID } from "@locus/builder";
-import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Notice } from "@/app/ui";
 import { ProjectChat } from "@/components/chat-project/project-chat";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { Notice } from "../ui";
 
 /**
  * The modes the agent server's controller has for every client: Locus's default "act"
@@ -28,26 +26,21 @@ export default async function ChatPage() {
   if (!client) redirect("/clients");
 
   return (
-    <main className="mx-auto flex h-dvh max-w-3xl flex-col px-6 py-6">
-      <p className="text-sm">
-        <Link href="/" className="underline">
-          Locus
-        </Link>{" "}
-        · Chat about <strong>{client.location.name}</strong>
-      </p>
+    <div className="mx-auto flex h-full max-w-4xl flex-col px-4 py-4">
       {chatKitEnabled() ? (
         // The chat kit's project chat: one main chat whose agent hands longer work to threads
         // of their own, each shown under the message that started it. Its requests go through
         // this site's /api/agent-controller routes, which the agent server checks against the
-        // sign-in.
-        <TooltipProvider>
-          <ProjectChat className="mt-4 min-h-0 flex-1" modes={CHAT_MODES} />
-        </TooltipProvider>
+        // sign-in. The menu's layout already provides the tooltips it needs.
+        <ProjectChat className="min-h-0 flex-1" modes={CHAT_MODES} />
       ) : (
         <div className="mt-6">
-          <Notice tone="info">The chat isn't set up here yet.</Notice>
+          <Notice tone="info">
+            The chat isn't turned on here yet. It needs Locus's chat server, which this site doesn't
+            have.
+          </Notice>
         </div>
       )}
-    </main>
+    </div>
   );
 }

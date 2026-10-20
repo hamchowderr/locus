@@ -14,11 +14,11 @@ import {
 import { provisionerFromEnv } from "@locus/db";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { Notice, Page } from "@/app/ui";
 import { configured, connectDeps } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { Notice, Page } from "../../../ui";
 import { restoreDatabase, undoDatabaseRestore } from "./actions";
 
 const PAGE_SIZE = 50;
