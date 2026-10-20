@@ -1,5 +1,5 @@
 import type { GhlSession } from "@locus/ghl";
-import { createLocusController } from "@locus/harness";
+import { createLocusController, TAINT_KEY } from "@locus/harness";
 import { createFakeGhl, type FakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
 import type { AgentController } from "@mastra/core/agent-controller";
@@ -7,7 +7,7 @@ import { createTool } from "@mastra/core/tools";
 import { LibSQLStore } from "@mastra/libsql";
 import { beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
-import { type AgentApiMember, createAgentApi } from "./index.ts";
+import { type AgentApiMember, clientWorkThreads, createAgentApi } from "./index.ts";
 
 const mock = useAimock();
 beforeEach(() => mock().llm.clearRequests());
@@ -20,6 +20,7 @@ function apiFor(
   ghl: FakeGhl,
   extras: Partial<Parameters<typeof createLocusController>[0]> = {},
   hostContext?: Record<string, unknown>,
+  { workThreads = false }: { workThreads?: boolean } = {},
 ) {
   let signedIn: AgentApiMember | null = {
     memberId: "m1",
@@ -31,6 +32,9 @@ function apiFor(
     prefix: PREFIX,
     authorize: async () => signedIn,
     controllerFor: async ({ locationId }) => {
+      const storage = new LibSQLStore({ id: "client", url: ":memory:" });
+      // Wired as the agent server wires it (apps/agent/src/host.ts).
+      const work = workThreads ? clientWorkThreads(storage) : undefined;
       controller = await createLocusController({
         model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
         locationId,
@@ -39,10 +43,12 @@ function apiFor(
           tokenKind: "location",
           locationId,
         }),
-        storage: new LibSQLStore({ id: "client", url: ":memory:" }),
+        storage,
         fetch: ghl.fetch,
+        ...(work ? { tools: { [work.tool.id]: work.tool }, ownTextTools: [work.tool.id] } : {}),
         ...extras,
       });
+      work?.attach(controller);
       return controller;
     },
     ...(hostContext ? { requestContext: async () => hostContext } : {}),
@@ -424,5 +430,133 @@ describe("the chat kit's routes", () => {
     expect((await kit(api, "threads/someone-elses/messages")).status).toBe(404);
     signIn(null);
     expect((await kit(api, "threads")).status).toBe(401);
+  });
+});
+
+describe("work threads, through the chat kit's routes", () => {
+  const kit = (api: ReturnType<typeof apiFor>["api"], path: string, body?: unknown) =>
+    api.fetch(
+      new Request(`http://locus.test${PREFIX}/kit/agent-controller/${path}`, {
+        method: body === undefined ? "GET" : "POST",
+        ...(body === undefined
+          ? {}
+          : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+      }),
+    );
+  type Listed = { id: string; title: string; parentThreadId?: string; status?: string };
+  const threads = async (api: ReturnType<typeof apiFor>["api"]) =>
+    ((await (await kit(api, "threads")).json()) as { threads: Listed[] }).threads;
+  /** Polls the thread list until a work thread reaches `status`. */
+  const workThreadReaching = async (api: ReturnType<typeof apiFor>["api"], status: string) => {
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline) {
+      const found = (await threads(api)).find((t) => t.parentThreadId && t.status === status);
+      if (found) return found;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    throw new Error(`no work thread became ${status}`);
+  };
+  const startThread = (id: string, title: string, brief: string) => ({
+    toolCalls: [{ id, name: "start_thread", arguments: JSON.stringify({ title, brief }) }],
+  });
+
+  test("the main chat hands work to a thread, which reports back without a model call", async () => {
+    mock().llm.on(
+      { userMessage: /spring tag tidy-up/i, hasToolResult: false },
+      startThread("w1-start", "Spring tags", "List the tags to retire this spring."),
+    );
+    mock().llm.on({ toolCallId: "w1-start" }, { content: "Started a thread for it." });
+    mock().llm.on(
+      { userMessage: /tags to retire this spring/i },
+      { content: "Retire old-2024 and promo-x." },
+    );
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+
+    const main = kitEvents(await kit(api, "stream", { text: "Do the spring tag tidy-up" }));
+    await main.until((e) => e.type === "__done__");
+    // Handing work off changes nothing in GHL, so it needs no approval.
+    expect(main.events.some((e) => e.type === "tool_approval_required")).toBe(false);
+    const mainThread = main.events.find((e) => e.type === "__thread__")?.threadId as string;
+
+    const work = await workThreadReaching(api, "done");
+    expect(work).toMatchObject({ title: "Spring tags", parentThreadId: mainThread });
+    const modelCalls = mock().llm.getRequests().length;
+
+    const res = await kit(api, `threads/${encodeURIComponent(mainThread)}/messages`);
+    const { messages } = (await res.json()) as {
+      messages: { role: string; parts: { type: string; text?: string; data?: unknown }[] }[];
+    };
+    const parts = messages.flatMap((m) => m.parts);
+    expect(parts).toContainEqual({
+      type: "data-work-thread",
+      data: { threadId: work.id, title: "Spring tags" },
+    });
+    const report = parts.find((p) => p.type === "text" && p.text?.includes("is done"));
+    expect(report?.text).toContain(`#thread=${encodeURIComponent(work.id)}`);
+    expect(report?.text).toContain("Retire old-2024 and promo-x.");
+    expect(mock().llm.getRequests().length).toBe(modelCalls);
+  });
+
+  test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {
+    mock().llm.on(
+      { userMessage: /clean out contact c7/i, hasToolResult: false },
+      startThread("w2-start", "Contact c7", "Delete contact c7."),
+    );
+    mock().llm.on({ toolCallId: "w2-start" }, { content: "On it in a thread." });
+    mock().llm.on(
+      { userMessage: /^Delete contact c7\.$/, hasToolResult: false },
+      perform("w2-del", "contacts.delete-contact", { path: { contactId: "c7" } }),
+    );
+    mock().llm.on({ toolCallId: "w2-del" }, { content: "Deleted c7." });
+    const ghl = createFakeGhl({ "*": { body: {} } });
+    const { api } = apiFor(ghl, {}, undefined, { workThreads: true });
+
+    const main = kitEvents(await kit(api, "stream", { text: "Clean out contact c7" }));
+    await main.until((e) => e.type === "__done__");
+    const work = await workThreadReaching(api, "needs_you");
+    expect(ghl.requests).toEqual([]);
+
+    const pending = (await (
+      await kit(api, `threads/${encodeURIComponent(work.id)}/pending`)
+    ).json()) as { events: { type: string; toolCallId?: string }[] };
+    expect(pending.events).toContainEqual(
+      expect.objectContaining({ type: "tool_approval_required", toolCallId: "w2-del" }),
+    );
+
+    const approved = await kit(api, "approve", {
+      decision: "approve",
+      toolCallId: "w2-del",
+      threadId: work.id,
+    });
+    expect(approved.status).toBe(200);
+    await workThreadReaching(api, "done");
+    expect(ghl.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
+      "DELETE /contacts/c7",
+    ]);
+  });
+
+  test("a run that read untrusted text needs a yes before it starts a thread", async () => {
+    mock().llm.on(
+      { userMessage: /follow up on that form/i, hasToolResult: false },
+      startThread("w3-start", "Form follow-up", "Follow up on the form."),
+    );
+    mock().llm.on({ toolCallId: "w3-start" }, { content: "Started it." });
+    mock().llm.on({ userMessage: /^Follow up on the form\.$/ }, { content: "Followed up." });
+    // As if the run had already read text from the public (see the harness's `untrusted.ts`).
+    const { api } = apiFor(createFakeGhl({}), {}, { [TAINT_KEY]: true }, { workThreads: true });
+
+    const main = kitEvents(await kit(api, "stream", { text: "Follow up on that form" }));
+    const asked = await main.until((e) => e.type === "tool_approval_required");
+    expect(asked.toolCallId).toBe("w3-start");
+    expect((await threads(api)).some((t) => t.parentThreadId)).toBe(false);
+
+    await kit(api, "approve", { decision: "approve", toolCallId: "w3-start" });
+    await main.until((e) => e.type === "__done__");
+    expect(await workThreadReaching(api, "done")).toMatchObject({ title: "Form follow-up" });
+  });
+
+  test("refuses what a thread that is not the client.s waits on", async () => {
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+    expect((await kit(api, "threads/someone-elses/pending")).status).toBe(404);
   });
 });

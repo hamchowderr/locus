@@ -9,10 +9,12 @@
  * resumed through it gets the host's request context, as Mastra's routes do.
  *
  * Served: the stream, approvals (not "always allow", which would change what needs approval),
- * answers to the agent's questions, the client's threads and their messages, and the session's
- * goal and observational memory. Not served: deleting or renaming threads, schedules, and the
- * kit's workspace, browser and image routes, which belong to the whole server rather than one
- * client.
+ * answers to the agent's questions, the client's threads, their messages and what a work thread
+ * waits on, and the session's goal and observational memory. A request about a work thread
+ * (`work-threads.ts`) drives that thread's own session, with the same caller's context.
+ *
+ * Not served: deleting or renaming threads, schedules, and the kit's workspace, browser and
+ * image routes, which belong to the whole server rather than one client.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -22,6 +24,7 @@ import { RequestContext } from "@mastra/core/request-context";
 import { createControllerRoutes } from "./mastra/routes/controller.ts";
 import { createThreadRoutes } from "./mastra/routes/threads.ts";
 import type { ChatServerDeps } from "./mastra/routes/types.ts";
+import { workThreadsOf } from "./work-threads.ts";
 
 /** Who a kit request is for, and the request context its runs carry. */
 export interface KitCaller {
@@ -41,7 +44,9 @@ const KIT_ROUTES: Record<string, (tail: string[]) => boolean> = {
   GET: (tail) =>
     (tail.length === 1 && ["threads", "goal", "om"].includes(tail[0] as string)) ||
     (tail.length === 2 && tail[0] === "threads" && tail[1] === "search") ||
-    (tail.length === 3 && tail[0] === "threads" && tail[2] === "messages"),
+    (tail.length === 3 &&
+      tail[0] === "threads" &&
+      ["messages", "pending"].includes(tail[2] as string)),
   POST: (tail) => tail.length === 1 && ["stream", "approve", "answer"].includes(tail[0] as string),
 };
 
@@ -52,10 +57,14 @@ export function isKitRoute(method: string, tail: string[]): boolean {
 
 /** The kit's routes for one client's controller. */
 export function kitRoutes(controller: AgentController) {
-  const getSession = async (): Promise<Session> => {
+  const callerOf = () => {
     const who = caller.getStore();
     // Only the guard calls into these routes, and always inside `asCaller`.
     if (!who) throw new Error("kit route reached without a caller");
+    return who;
+  };
+  const getSession = async (): Promise<Session> => {
+    const who = callerOf();
     // The member's own session over the controller's client: the one Mastra's routes reach.
     return withHostContext(
       await openClientSession(controller, { memberId: who.memberId }),
@@ -65,8 +74,21 @@ export function kitRoutes(controller: AgentController) {
   const unserved = () => {
     throw new Error("not served");
   };
+  /**
+   * A work thread's own session (`start_thread`), for the routes that act on that thread. Only
+   * a work thread over this controller's client has one; the resource is the member's own
+   * session's, never one the route names.
+   */
+  const getThreadSession = async (threadId: string): Promise<Session | undefined> => {
+    const threads = workThreadsOf(controller);
+    if (!threads) return undefined;
+    const { identity } = await getSession();
+    const work = await threads.sessionForThread(threadId, identity.getResourceId());
+    return work && withHostContext(work, callerOf().context);
+  };
   const deps: ChatServerDeps = {
     getSession,
+    getThreadSession,
     getAgentController: async () => controller,
     agentId: CONTROLLER_ID,
     // Never switch models from the browser: the allowlist is empty.
@@ -79,6 +101,7 @@ export function kitRoutes(controller: AgentController) {
     "GET /agent-controller/threads",
     "GET /agent-controller/threads/search",
     "GET /agent-controller/threads/:id/messages",
+    "GET /agent-controller/threads/:id/pending",
     "POST /agent-controller/stream",
     "POST /agent-controller/approve",
     "POST /agent-controller/answer",
