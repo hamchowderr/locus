@@ -71,6 +71,7 @@ describe("an app-style site's files", () => {
       "lib/files.ts",
       "lib/files-client.ts",
       "app/api/files/upload/route.ts",
+      "app/api/files/ticket/route.ts",
       "app/api/files/preview/[fileId]/route.ts",
     ]) {
       expect(app.map((f) => f.path)).toContain(path);
@@ -267,14 +268,83 @@ describe("the generated preview database", () => {
     await expect(
       files.keepFile(new File(["<script>"], "a.html", { type: "text/html" })),
     ).rejects.toThrow(/can't be uploaded/);
+    // The preview has no upload server, so its own route takes files up to 25 MB.
+    expect(files.MAX_ROUTE_BYTES).toBe(25 * 1024 * 1024);
+    const big = await files.keepFile(
+      new File([new Uint8Array(files.MAX_FILE_BYTES + 1)], "big.png", { type: "image/png" }),
+    );
+    expect(big.size).toBe(files.MAX_FILE_BYTES + 1);
     await expect(
       files.keepFile(
-        new File([new Uint8Array(files.MAX_FILE_BYTES + 1)], "a.png", { type: "image/png" }),
+        new File([new Uint8Array(files.MAX_ROUTE_BYTES + 1)], "a.png", { type: "image/png" }),
       ),
-    ).rejects.toThrow(/up to 4 MB/);
+    ).rejects.toThrow(/up to 25 MB/);
+    const video = await files.keepFile(new File(["mp4"], "clip.mp4", { type: "video/mp4" }));
+    const played = await files.previewFileResponse(video.fileId);
+    expect(played?.headers.get("content-type")).toBe("video/mp4");
+    expect(played?.headers.get("content-disposition")).toBeNull();
+    await expect(
+      files.startBigUpload({ name: "big.png", contentType: "image/png", size: 5_000_000 }),
+    ).resolves.toEqual({ uploadUrl: null, preview: true });
 
-    await files.deleteFiles([kept.fileId]);
+    await files.deleteFiles([kept.fileId, big.fileId, video.fileId]);
     expect(await files.previewFileResponse(kept.fileId)).toBeNull();
+  });
+
+  it("asks Locus for a ticket for a published site's bigger files", async () => {
+    await writeFile(
+      join(root, "lib/locus.ts"),
+      'export const locus = { siteApi: "https://locus.test/api/sites/s1" as string | null };\n',
+    );
+    vi.stubEnv("SITE_FILES_KEY", "files-key");
+    const sent: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return Response.json({
+        uploadUrl: "https://agent.test/site-files/upload",
+        ticket: "t.mac",
+        contentType: "video/mp4",
+        expiresAt: 1,
+      });
+    });
+    try {
+      const files = await import(join(root, "lib/files.ts"));
+      expect(files.previewFiles).toBe(false);
+      expect(files.MAX_ROUTE_BYTES).toBe(4 * 1024 * 1024);
+      const started = await files.startBigUpload(
+        { name: "clip.mp4", contentType: "video/mp4; codecs=avc1", size: 100 * 1024 * 1024 },
+        "203.0.113.9",
+      );
+      expect(started).toMatchObject({ uploadUrl: "https://agent.test/site-files/upload" });
+      expect(sent[0]?.url).toBe("https://locus.test/api/sites/s1/files/ticket");
+      const headers = sent[0]?.init.headers as Record<string, string>;
+      expect(headers.authorization).toBe("Bearer files-key");
+      expect(headers["x-locus-visitor-ip"]).toBe("203.0.113.9");
+      expect(JSON.parse(String(sent[0]?.init.body))).toEqual({
+        name: "clip.mp4",
+        contentType: "video/mp4",
+        size: 100 * 1024 * 1024,
+      });
+      // Checked here first: a video over 500 MB, or another file over 25 MB, never asks.
+      await expect(
+        files.startBigUpload({ name: "a.mp4", contentType: "video/mp4", size: 501 * 1024 * 1024 }),
+      ).rejects.toThrow(/up to 500 MB/);
+      await expect(
+        files.startBigUpload({
+          name: "a.pdf",
+          contentType: "application/pdf",
+          size: 26 * 1024 * 1024,
+        }),
+      ).rejects.toThrow(/up to 25 MB/);
+      await expect(
+        files.keepFile(
+          new File([new Uint8Array(files.MAX_FILE_BYTES + 1)], "a.png", { type: "image/png" }),
+        ),
+      ).rejects.toThrow(/up to 4 MB/);
+      expect(sent).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("lets a check build load the site without its database", async () => {

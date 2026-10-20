@@ -110,16 +110,23 @@ export {
 export {
   deleteSiteFiles,
   hasSiteFilesKey,
+  issueSiteUploadTicket,
+  MAX_LARGE_SITE_FILE_BYTES,
   MAX_SITE_FILE_BYTES,
+  MAX_SITE_VIDEO_BYTES,
   SITE_FILE_LIMITS,
   SITE_FILE_TYPES,
+  SITE_VIDEO_TYPES,
   type SiteFileAnswer,
   type SiteFilesDeps,
   type SiteMediaFile,
+  signSiteUploadTicket,
   siteFilesFolderName,
   siteFilesKey,
   siteFilesOverview,
+  siteUploadTicket,
   uploadSiteFile,
+  uploadSiteFileWithTicket,
 } from "./site-files.ts";
 export {
   countSiteLead,
