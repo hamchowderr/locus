@@ -1,10 +1,10 @@
 import { CrmMediaError, type SiteCrm, siteCrm, siteImagesFolderName } from "@locus/connect";
 import { startSite } from "@locus/studio";
 import { createFakeGhl, type FakeGhl, type FakeRoutes } from "@locus/testing";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ImageGenerator } from "./images.ts";
 import { type TestSession, testSession } from "./test-session.ts";
-import { createSiteBuilderTools, PublishError } from "./tools.ts";
+import { createSiteBuilderTools, MEDIA_LIBRARY_TIMEOUT_MS, PublishError } from "./tools.ts";
 
 let t: TestSession;
 afterEach(() => t?.close());
@@ -526,7 +526,11 @@ describe("generate_image and the client's Media Library", () => {
     library = [];
     fake = createFakeGhl(routes(over));
     t.session.crm = siteCrm(async () => ({
-      session: { token: "location-token", tokenKind: "location", locationId: GHL_LOCATION },
+      session: async () => ({
+        token: "location-token",
+        tokenKind: "location",
+        locationId: GHL_LOCATION,
+      }),
       http: { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" },
       scopes,
     }));
@@ -549,12 +553,17 @@ describe("generate_image and the client's Media Library", () => {
     expect(fake.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
       "GET /medias/files",
       "POST /medias/folder",
+      "GET /medias/files",
       "POST /medias/upload-file",
     ]);
-    const [find, make, upload] = fake.requests;
+    const [find, make, older, upload] = fake.requests;
     expect(find?.url.searchParams.get("type")).toBe("folder");
     expect(find?.url.searchParams.get("query")).toBe(siteImagesFolderName("site-1"));
     expect(find?.url.searchParams.get("altId")).toBe(GHL_LOCATION);
+    // Any earlier copy of hero.png in that folder, to replace.
+    expect(older?.url.searchParams.get("type")).toBe("file");
+    expect(older?.url.searchParams.get("parentId")).toBe("folder0");
+    expect(older?.url.searchParams.get("query")).toBe("hero.png");
     expect(make?.body).toMatchObject({
       name: "Site images site-1",
       altId: GHL_LOCATION,
@@ -577,10 +586,63 @@ describe("generate_image and the client's Media Library", () => {
     ).toMatchObject({ mediaLibrary: expect.any(String) });
     expect(fake.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
       "GET /medias/files",
+      "GET /medias/files",
       "POST /medias/upload-file",
     ]);
-    expect((fake.requests[1]?.body as FormData | undefined)?.get("parentId")).toBe("folder0");
+    expect((fake.requests[2]?.body as FormData | undefined)?.get("parentId")).toBe("folder0");
     expect(library.filter((f) => f.type === "folder")).toHaveLength(1);
+  });
+
+  it("replaces the copy kept before when the same image is made again", async () => {
+    const { call } = await setup({ images: fakeImages });
+    connect(["medias.write"], {
+      "*": (req) => {
+        const id = /^\/medias\/([A-Za-z0-9]+)$/.exec(req.url.pathname)?.[1];
+        if (req.method !== "DELETE" || !id) return { status: 404, body: { message: "no" } };
+        library = library.filter((f) => f._id !== id);
+        return { body: {} };
+      },
+    });
+    await generate(call);
+    await generate(call);
+    expect(fake.requests.filter((r) => r.method === "DELETE").map((r) => r.url.pathname)).toEqual([
+      "/medias/file1",
+    ]);
+    expect(library.map((f) => `${f._id} ${f.name}`)).toEqual([
+      "folder0 Site images site-1",
+      "file2 hero.png",
+    ]);
+  });
+
+  it("answers without the Media Library when GHL doesn't answer in time", async () => {
+    const { call } = await setup({ images: fakeImages });
+    let asked!: () => void;
+    const saving = new Promise<void>((resolve) => {
+      asked = resolve;
+    });
+    t.session.crm = fakeCrm({
+      saveImage: () => {
+        asked();
+        return new Promise(() => {});
+      },
+    });
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const result = generate(call);
+      await saving;
+      await vi.advanceTimersByTimeAsync(MEDIA_LIBRARY_TIMEOUT_MS);
+      expect(await result).toEqual({
+        saved: "public/images/hero.png",
+        src: "/images/hero.png",
+        bytes: PNG.byteLength,
+        note: "The image is in the site, but it wasn't saved to the client's Media Library. The Media Library couldn't be reached just now.",
+      });
+    } finally {
+      vi.useRealTimers();
+      errors.mockRestore();
+    }
+    expect(await t.session.workspace.readFile("public/images/hero.png")).toEqual(PNG);
   });
 
   it("asks nothing of GHL when the connection may not write to the Media Library", async () => {

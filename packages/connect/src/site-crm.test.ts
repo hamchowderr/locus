@@ -9,6 +9,7 @@ import {
   listMedia,
   listProducts,
   MAX_MEDIA_BYTES,
+  savedImageName,
   saveSiteImage,
   siteCrm,
   siteImagesFolderName,
@@ -283,7 +284,7 @@ describe("keeping a generated image in the Media Library", () => {
       fileId: "f1",
       url: `${STORE}/hero.png`,
     });
-    const form = fake.requests[1]?.body as FormData;
+    const form = fake.requests.find((r) => r.method === "POST")?.body as FormData;
     expect(form.get("name")).toBe("Hero-Shot.png");
     expect(form.get("parentId")).toBe("fold1");
   });
@@ -302,10 +303,157 @@ describe("keeping a generated image in the Media Library", () => {
     expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE" });
   });
 
-  it("writes nothing without the medias.write scope", async () => {
+  it("writes nothing without the medias.write scope, and mints no token for it", async () => {
     const options = http({ "*": { body: {} } });
-    const crm = siteCrm(async () => ({ session, http: options, scopes: ["medias.readonly"] }));
+    let minted = 0;
+    const mint = async () => {
+      minted++;
+      return session;
+    };
+    const crm = siteCrm(async () => ({
+      session: mint,
+      http: options,
+      scopes: ["medias.readonly"],
+    }));
     await expect(crm.saveImage(image)).rejects.toThrow(CrmMediaError);
     expect(fake.requests).toEqual([]);
+    expect(minted).toBe(0);
+  });
+
+  it("names the image from its path with its type's extension, or 'image' when nothing is left", () => {
+    expect(savedImageName("public/images/.png", "image/png")).toBe("image.png");
+    expect(savedImageName("public/images/hero.png", "image/png")).toBe("hero.png");
+    expect(savedImageName("public/images/hero.png", "image/jpeg")).toBe("hero.jpg");
+    expect(savedImageName("../Hero Shot.png", "image/webp")).toBe("Hero-Shot.webp");
+    expect(savedImageName("team", "image/png")).toBe("team.png");
+    expect(savedImageName("", "image/jpeg")).toBe("image.jpg");
+    expect(savedImageName("public/images/...png", "image/png")).toBe("image.png");
+  });
+
+  it("keeps an image whose path names nothing as image.<ext>", async () => {
+    const options = http({
+      "GET /medias/files": {
+        body: { files: [{ _id: "fold1", type: "folder", name: siteImagesFolderName("site-1") }] },
+      },
+      "POST /medias/upload-file": { body: { fileId: "f1", url: `${STORE}/image.png` } },
+    });
+    await saveSiteImage(session, options, { ...image, name: "public/images/.png" });
+    const form = fake.requests.find((r) => r.method === "POST")?.body as FormData;
+    expect(form.get("name")).toBe("image.png");
+    expect((form.get("file") as File).name).toBe("image.png");
+  });
+
+  describe("made again under the same name", () => {
+    const FOLDER = siteImagesFolderName("site-1");
+    let library: { _id: string; type: string; name: string; parentId?: string; url?: string }[];
+    const routes = (over: FakeRoutes = {}): FakeRoutes => ({
+      "GET /medias/files": (req) => {
+        const q = req.url.searchParams;
+        return {
+          body: {
+            // GHL's query matches loosely: anything containing it, wherever it is.
+            files: library.filter(
+              (f) =>
+                f.type === q.get("type") &&
+                (!q.get("parentId") || f.parentId === q.get("parentId")) &&
+                (!q.get("query") || f.name.includes(q.get("query") ?? "")),
+            ),
+          },
+        };
+      },
+      "POST /medias/upload-file": (req) => {
+        const form = req.body as FormData;
+        const id = `new${library.length}`;
+        const name = String(form.get("name"));
+        library.push({ _id: id, type: "file", name, parentId: String(form.get("parentId")) });
+        return { body: { fileId: id, url: `${STORE}/${id}.png` } };
+      },
+      "*": (req) => {
+        const id = /^\/medias\/([A-Za-z0-9]+)$/.exec(req.url.pathname)?.[1];
+        if (req.method !== "DELETE" || !id) return { status: 404, body: { message: "no" } };
+        library = library.filter((f) => f._id !== id);
+        return { body: {} };
+      },
+      ...over,
+    });
+    const deletes = () =>
+      fake.requests.filter((r) => r.method === "DELETE").map((r) => r.url.pathname);
+    const hero = { ...image, name: "public/images/hero.png" };
+
+    it("replaces the earlier copy in the site's folder, and nothing else", async () => {
+      library = [
+        { _id: "fold1", type: "folder", name: FOLDER },
+        { _id: "old1", type: "file", name: "hero.png", parentId: "fold1", url: `${STORE}/o1.png` },
+        // Not exactly the name, another folder, a folder: all left alone.
+        { _id: "old2", type: "file", name: "hero.png.png", parentId: "fold1", url: `${STORE}/2` },
+        { _id: "else1", type: "file", name: "hero.png", parentId: "other", url: `${STORE}/3` },
+        { _id: "fold2", type: "folder", name: "hero.png" },
+      ];
+      const options = http(routes());
+      expect(await saveSiteImage(session, options, hero)).toEqual({
+        fileId: "new5",
+        url: `${STORE}/new5.png`,
+      });
+      expect(fake.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
+        "GET /medias/files",
+        "GET /medias/files",
+        "POST /medias/upload-file",
+        "DELETE /medias/old1",
+      ]);
+      const look = fake.requests[1]?.url.searchParams;
+      expect(look?.get("type")).toBe("file");
+      expect(look?.get("parentId")).toBe("fold1");
+      expect(look?.get("query")).toBe("hero.png");
+      expect(fake.requests[3]?.headers.version).toBe("v3");
+      expect(fake.requests[3]?.url.searchParams.get("altId")).toBe(GHL_LOCATION);
+      expect(library.map((f) => f._id)).toEqual(["fold1", "old2", "else1", "fold2", "new5"]);
+    });
+
+    it("never deletes a listed file GHL says is in another folder", async () => {
+      library = [
+        { _id: "fold1", type: "folder", name: FOLDER },
+        { _id: "else1", type: "file", name: "hero.png", parentId: "other", url: `${STORE}/3` },
+      ];
+      // A listing that ignores parentId.
+      const options = http(
+        routes({
+          "GET /medias/files": (req) => ({
+            body: { files: library.filter((f) => f.type === req.url.searchParams.get("type")) },
+          }),
+        }),
+      );
+      await saveSiteImage(session, options, hero);
+      expect(deletes()).toEqual([]);
+    });
+
+    it("deletes nothing when the upload fails", async () => {
+      library = [
+        { _id: "fold1", type: "folder", name: FOLDER },
+        { _id: "old1", type: "file", name: "hero.png", parentId: "fold1", url: `${STORE}/o1.png` },
+      ];
+      const options = http(
+        routes({ "POST /medias/upload-file": { status: 500, body: { message: "boom" } } }),
+      );
+      await expect(saveSiteImage(session, options, hero)).rejects.toThrow();
+      expect(deletes()).toEqual([]);
+      expect(library.map((f) => f._id)).toContain("old1");
+    });
+
+    it("still answers with the new image when deleting the old one fails", async () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      library = [
+        { _id: "fold1", type: "folder", name: FOLDER },
+        { _id: "old1", type: "file", name: "hero.png", parentId: "fold1", url: `${STORE}/o1.png` },
+      ];
+      const options = http(
+        routes({ "DELETE /medias/old1": { status: 500, body: { message: "boom" } } }),
+      );
+      expect(await saveSiteImage(session, options, hero)).toMatchObject({ fileId: "new2" });
+      expect(deletes()).toEqual(["/medias/old1"]);
+      expect(errors.mock.calls.flat().join(" ")).toContain(
+        "Deleting an older copy of an image of site site-1 failed: GhlError medias.delete-media-content 500",
+      );
+      errors.mockRestore();
+    });
   });
 });
