@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import {
   type AuthorizedClient,
   assertAuthorizedClient,
@@ -21,7 +21,7 @@ import {
   siteMigrationsIn,
   type TenantProvisioner,
 } from "@locus/db";
-import { site, siteBackend } from "@locus/db/control";
+import { auditLog, site, siteBackend } from "@locus/db/control";
 import { and, eq } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { audit } from "./sites.ts";
@@ -77,9 +77,25 @@ export async function enableSiteBackend(
 ): Promise<SiteBackendRow> {
   assertAuthorizedClient(client);
   await requireAgencyManager(deps.db, ctx);
-  const row = await clientSite(deps.db, client, input.siteId);
+  const { row, created } = await provisionSiteBackend(deps, client, input.siteId);
+  if (created) {
+    await audit(deps.db, ctx, client, "site.backend.enable", {
+      siteId: row.siteId,
+      dbName: row.tursoDbName,
+    });
+  }
+  return row;
+}
+
+/** The site's database, made (and registered) if it has none yet. */
+async function provisionSiteBackend(
+  deps: SiteBackendDeps,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<{ row: SiteBackendRow; created: boolean }> {
+  const row = await clientSite(deps.db, client, siteId);
   const existing = await siteBackendOf(deps.db, client, row.id);
-  if (existing) return existing;
+  if (existing) return { row: existing, created: false };
 
   const name = siteDbName(row.id);
   let made: { dbName: string; hostname: string };
@@ -113,10 +129,9 @@ export async function enableSiteBackend(
   if (!created) {
     const winner = await siteBackendOf(deps.db, client, row.id);
     if (!winner) throw new ConnectError("The site's database wasn't saved. Try again.");
-    return winner;
+    return { row: winner, created: false };
   }
-  await audit(deps.db, ctx, client, "site.backend.enable", { siteId: row.id, dbName });
-  return created;
+  return { row: created, created: true };
 }
 
 /**
@@ -230,32 +245,62 @@ const NO_PROVISIONER = "This site's database isn't set up on this deployment yet
 /**
  * Applies the version's new database changes (its `db/migrations/` files) to the site's own
  * database, before the version is sent to GitHub: a change that fails stops the publish, so
- * the live site never runs code that expects tables its database lacks. Does nothing for a
- * plain website. Anyone who may work on the client may publish; the token is minted after
- * that check, names only the site's database and lives ten minutes.
+ * the live site never runs code that expects tables its database lacks. The first version
+ * with migrations gives the site its database (the agent made it an app-style site in the
+ * chat). Does nothing for a plain website. Anyone who may work on the client may publish; the
+ * token is minted after that check, names only the site's database and lives ten minutes.
  */
 export async function migrateSiteBackend(
   deps: SiteReleaseDeps,
   client: AuthorizedClient,
   input: { siteId: string; files: { path: string; content: string | Uint8Array }[] },
 ): Promise<{ applied: string[] } | null> {
-  const row = await siteBackendOf(deps.db, client, input.siteId);
-  if (!row) return null;
+  assertAuthorizedClient(client);
+  let migrations: ReturnType<typeof siteMigrationsIn>;
+  try {
+    migrations = siteMigrationsIn(input.files);
+  } catch (error) {
+    throw migrationRefusal(error);
+  }
+  let row = await siteBackendOf(deps.db, client, input.siteId);
+  if (!row && migrations.length === 0) return null;
   if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
+  if (!row) {
+    const provisioned = await provisionSiteBackend(
+      { db: deps.db, provisioner: deps.provisioner },
+      client,
+      input.siteId,
+    );
+    row = provisioned.row;
+    if (provisioned.created) {
+      await deps.db.insert(auditLog).values({
+        id: randomUUID(),
+        organizationId: client.location.organizationId,
+        // Made by publishing, for whoever saved the version: no one chose it on its own.
+        actorUserId: null,
+        locationId: client.location.id,
+        action: "site.backend.enable",
+        detail: { siteId: row.siteId, dbName: row.tursoDbName, by: "publish" },
+      });
+    }
+  }
   const token = await deps.provisioner.mintToken(row.tursoDbName, { ttl: MIGRATE_TTL });
   const db = openSiteDb(deps.provisioner.url(row.tursoDbHostname), token);
   try {
-    return await applySiteMigrations(db, siteMigrationsIn(input.files));
+    return await applySiteMigrations(db, migrations);
   } catch (error) {
-    if (error instanceof SiteMigrationError) {
-      throw new ConnectError(
-        `The site's database change didn't apply: ${error.message.replace(/\.?$/, ".")} Changes that already ran stay as they are, even if their publish failed; fix this with a new migration file, and keep changes additive so the live site's current code still works.`,
-      );
-    }
-    throw error;
+    throw migrationRefusal(error);
   } finally {
     db.close();
   }
+}
+
+/** A migration's own fault, for the person and the agent; anything else as it was. */
+function migrationRefusal(error: unknown): unknown {
+  if (!(error instanceof SiteMigrationError)) return error;
+  return new ConnectError(
+    `The site's database change didn't apply: ${error.message.replace(/\.?$/, ".")} Changes that already ran stay as they are, even if their publish failed; fix this with a new migration file, and keep changes additive so the live site's current code still works.`,
+  );
 }
 
 type EnvVar = { id?: string; key?: string; target?: string[] | string; gitBranch?: string | null };

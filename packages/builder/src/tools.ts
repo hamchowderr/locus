@@ -1,4 +1,5 @@
 import { CrmMediaError, type MediaFormat } from "@locus/connect";
+import { SiteMigrationError, siteMigrationsIn } from "@locus/db";
 import { InvalidPathError, type SiteRuntime } from "@locus/sandbox";
 import {
   bookingComponentFile,
@@ -7,6 +8,7 @@ import {
   DesignBrief,
   GHL_TRACKING_PATH,
   ghlTrackingFile,
+  hasBackendFiles,
   LOCUS_PROXY_PATH,
   LOCUS_SETTINGS_PATH,
   layoutWithTracking,
@@ -19,6 +21,7 @@ import {
   SCREENSHOT_TYPES,
   seoIssues,
   WorkspaceError,
+  withBackend,
   writeBrief,
 } from "@locus/studio";
 import { createTool } from "@mastra/core/tools";
@@ -647,10 +650,63 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           const { url } = await runtime.startPreview();
           const page = input.path ? previewPage(url, input.path) : url;
-          return { ok: true, url: page, recentLogs: tail(await runtime.previewLogs(), 4_000) };
+          const database = hasBackendFiles(await session.workspace.snapshot())
+            ? await migratePreview(runtime)
+            : undefined;
+          return {
+            ok: true,
+            url: page,
+            ...(database ? { database } : {}),
+            recentLogs: tail(await runtime.previewLogs(), 4_000),
+          };
         });
       },
     ),
+  });
+
+  const database = createTool({
+    id: "database",
+    description:
+      "The site's own database, for app features that keep data (member sign-up and login, " +
+      "the site's own bookings or saved records). Load the site-database skill first. action " +
+      "add: make this an app-style site (its database, logins and the db/ folder); safe to " +
+      "repeat. apply: bring the preview's database up to date with db/migrations/ after you " +
+      "add a migration (preview does this too) and say which ran.",
+    requireApproval: noApproval,
+    inputSchema: z.object({ action: z.enum(["add", "apply"]) }),
+    execute: withSession(async (session, input: { action: "add" | "apply" }) => {
+      const ws = session.workspace;
+      const files = await ws.snapshot();
+      if (input.action === "add") {
+        const before = new Map(files.map((file) => [file.path, file.content]));
+        const changed = withBackend(files).filter((file) => before.get(file.path) !== file.content);
+        if (changed.length > 0) await ws.writeFiles(changed);
+        return {
+          changed: changed.map((file) => file.path),
+          next:
+            "Add the site's own tables as new db/migrations files with matching tables in " +
+            "db/schema.ts, then preview: it installs the new packages and applies them.",
+        };
+      }
+      if (!hasBackendFiles(files)) {
+        throw new BuilderError("This site has no database yet: use database add first.");
+      }
+      try {
+        siteMigrationsIn(files);
+      } catch (error) {
+        if (error instanceof SiteMigrationError) throw new BuilderError(error.message);
+        throw error;
+      }
+      return metered(session, async () => {
+        const runtime = await ready(session);
+        const installed = await runtime.install();
+        if (installed.exitCode !== 0) {
+          return { ok: false, step: "install", output: tail(installed.stderr || installed.stdout) };
+        }
+        await runtime.startPreview();
+        return migratePreview(runtime);
+      });
+    }),
   });
 
   const fetch_reference = createTool({
@@ -1067,6 +1123,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     add_dependency,
     check_site,
     preview,
+    database,
     fetch_reference,
     generate_image,
     view_reference,
@@ -1185,6 +1242,52 @@ const text = html.replace(/<script[\\s\\S]*?<\\/script>|<style[\\s\\S]*?<\\/styl
   .replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 12000);
 console.log(JSON.stringify({ status: res.status, title, headings, colours, text }, null, 1));
 `;
+
+/** The preview's own route that applies db/migrations/ to its local database (preview only). */
+const PREVIEW_MIGRATIONS_URL = "http://localhost:3000/api/locus/preview-migrations";
+
+const PREVIEW_MIGRATIONS_SCRIPT = `
+const res = await fetch(${JSON.stringify(PREVIEW_MIGRATIONS_URL)}, { method: "POST" });
+console.log(JSON.stringify({ status: res.status, body: (await res.text()).slice(0, 8000) }));
+`;
+
+/**
+ * Applies the site's migrations to the preview's database through the preview itself, so the
+ * running dev server sees them without a restart. The answer is the site's own code's output.
+ */
+async function migratePreview(
+  runtime: SiteRuntime,
+): Promise<{ applied: string[] } | { error: string }> {
+  const result = await runtime.run(
+    "node",
+    ["--input-type=module", "-e", PREVIEW_MIGRATIONS_SCRIPT],
+    {
+      timeoutMs: 120_000,
+    },
+  );
+  let answer: { status?: number; body?: string } = {};
+  try {
+    answer = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}");
+  } catch {}
+  if (answer.status === 200) {
+    try {
+      const body = JSON.parse(answer.body ?? "{}") as { applied?: unknown };
+      if (Array.isArray(body.applied)) return { applied: body.applied.map(String) };
+    } catch {}
+  }
+  if (answer.status === 422) {
+    try {
+      const body = JSON.parse(answer.body ?? "{}") as { error?: unknown };
+      return { error: `A migration failed in the preview: ${String(body.error)}` };
+    } catch {}
+  }
+  return {
+    error:
+      "The preview didn't apply the migrations" +
+      (answer.status ? ` (it answered ${answer.status})` : "") +
+      `. Check preview with logs. ${tail(result.stderr || result.stdout, 2_000)}`.trimEnd(),
+  };
+}
 
 /**
  * Mistakes the model can fix come back as data so it can correct itself. Anything else (a bug,
