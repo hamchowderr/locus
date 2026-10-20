@@ -43,7 +43,7 @@ export default async function Preview({
   const canEdit = (await buildRefusal(locus().db, client, siteId)) === null;
 
   return (
-    <main className="mx-auto flex h-dvh max-w-6xl flex-col px-6 py-6">
+    <div className="mx-auto flex h-full max-w-6xl flex-col px-6 py-6">
       <p className="text-sm">
         <Link href="/sites" className="underline">
           Sites
@@ -64,6 +64,6 @@ export default async function Preview({
         version={version}
         start={previewSite.bind(null, siteId, version)}
       />
-    </main>
+    </div>
   );
 }
