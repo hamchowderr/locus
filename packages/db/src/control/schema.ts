@@ -175,6 +175,35 @@ export const siteBackend = sqliteTable(
   (t) => [index("site_backend_location_idx").on(t.locationId)],
 );
 
+/**
+ * Restores of a site's database. Turso restores into a new database, so a restore swaps the
+ * site onto that one and keeps the database it replaced, until the next restore or until the
+ * site's database is removed, so the restore can be undone. One row per site, only once it has
+ * been restored. Its own table (not `site_backend` columns) so its migration can be re-run.
+ */
+export const siteBackendRestore = sqliteTable(
+  "site_backend_restore",
+  {
+    // Restrict, like site_backend: whatever removes the site destroys the kept database first.
+    siteId: text("site_id")
+      .primaryKey()
+      .references(() => site.id, { onDelete: "restrict" }),
+    locationId: text("location_id")
+      .notNull()
+      .references(() => location.id, { onDelete: "restrict" }),
+    /** When the site's current database was made: no restore point can be earlier. */
+    currentSince: integer("current_since", { mode: "timestamp_ms" }).notNull(),
+    /** The database the last restore replaced, kept for undo; null once undone. */
+    keptDbName: text("kept_db_name").unique(),
+    keptDbHostname: text("kept_db_hostname"),
+    keptSince: integer("kept_since", { mode: "timestamp_ms" }),
+    /** The moment the site's data was restored to, and when. */
+    restoredTo: integer("restored_to", { mode: "timestamp_ms" }),
+    restoredAt: integer("restored_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [index("site_backend_restore_location_idx").on(t.locationId)],
+);
+
 // The three connections. Each names its credential by path (`secretRef`); the value lives in
 // `secret` below, sealed, never in these rows.
 
