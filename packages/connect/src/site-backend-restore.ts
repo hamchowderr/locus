@@ -109,14 +109,16 @@ async function moveLiveSite(
   siteId: string,
   target: Target,
   fallback: Target,
-): Promise<boolean> {
+): Promise<{ redeployed: boolean; switchedAt: number }> {
   const projectId = await siteProjectId(deps.db, client, siteId);
-  if (!projectId) return false;
+  if (!projectId) return { redeployed: false, switchedAt: deps.now?.() ?? Date.now() };
   const env = await projectEnv(deps, client, projectId);
   try {
     await writeSiteDatabaseEnv(deps, env, projectId, deps.provisioner, target);
+    // Any deployment made from here on, this one included, uses `target`.
+    const switchedAt = deps.now?.() ?? Date.now();
     await deployProduction(deps, env, client, siteId, projectId);
-    return true;
+    return { redeployed: true, switchedAt };
   } catch (error) {
     // The live deployment never changed; its settings go back to the database it uses.
     try {
@@ -128,11 +130,7 @@ async function moveLiveSite(
         fallback,
       );
     } catch {
-      // The next publish rewrites them from the registry row.
-      await deps.db
-        .update(siteBackendRestore)
-        .set({ envStale: true })
-        .where(eq(siteBackendRestore.siteId, siteId));
+      await markStale(deps.db, siteId);
     }
     throw error;
   }
@@ -217,13 +215,19 @@ async function commitSwap(
 
 /** Keeps a database the live site may be using until a newer deployment is ready. */
 async function retire(db: ControlDb, siteId: string, dbName: string, now: number) {
-  const restore = await restoreOf(db, siteId);
-  if (!restore) return;
+  // Appended in one statement: whoever holds the site may be changing the list too.
+  const entry = JSON.stringify({ dbName, retiredAt: now, deleteAfter: now + RETIRE_AFTER_MS });
   await db
     .update(siteBackendRestore)
-    .set({
-      retired: [...restore.retired, { dbName, retiredAt: now, deleteAfter: now + RETIRE_AFTER_MS }],
-    })
+    .set({ retired: sql`json_insert(${siteBackendRestore.retired}, '$[#]', json(${entry}))` })
+    .where(eq(siteBackendRestore.siteId, siteId));
+}
+
+/** The live site's settings may not name its registered database: the next publish rewrites them. */
+async function markStale(db: ControlDb, siteId: string) {
+  await db
+    .update(siteBackendRestore)
+    .set({ envStale: true })
     .where(eq(siteBackendRestore.siteId, siteId));
 }
 
@@ -278,7 +282,7 @@ export async function restoreSiteBackend(
         throw error;
       });
     const copy = { tursoDbName: made.dbName, tursoDbHostname: made.hostname };
-    let redeployed: boolean;
+    let moved: { redeployed: boolean; switchedAt: number };
     try {
       // The live site's code expects the tables its published versions added.
       const missing = await migrationsMissing(provisioner, backend, copy);
@@ -287,13 +291,7 @@ export async function restoreSiteBackend(
           `At that moment the database didn't have changes the live site needs (${missing.join(", ")}). Choose a later time.`,
         );
       }
-      redeployed = await moveLiveSite(
-        { ...deps, provisioner },
-        client,
-        backend.siteId,
-        copy,
-        backend,
-      );
+      moved = await moveLiveSite({ ...deps, provisioner }, client, backend.siteId, copy, backend);
     } catch (error) {
       // Settings that couldn't be put back may name the copy: it stays until they're fixed.
       if ((await restoreOf(deps.db, backend.siteId))?.envStale) {
@@ -306,13 +304,13 @@ export async function restoreSiteBackend(
 
     // The database replaced before this one is no longer kept for undo; the one just replaced
     // is, and nothing is deleted while a deployment may still use it.
-    const moved = deps.now?.() ?? Date.now();
+    const { redeployed, switchedAt } = moved;
     const retired = [...restore.retired];
     if (restore.keptDbName) {
       retired.push({
         dbName: restore.keptDbName,
-        retiredAt: moved,
-        deleteAfter: moved + RETIRE_AFTER_MS,
+        retiredAt: switchedAt,
+        deleteAfter: switchedAt + RETIRE_AFTER_MS,
       });
     }
     try {
@@ -326,7 +324,10 @@ export async function restoreSiteBackend(
         retired,
       });
     } catch (error) {
-      await retire(deps.db, backend.siteId, copy.tursoDbName, moved);
+      // The live site is moving onto the copy, but the registry still names the database it
+      // had: the next publish puts the settings back, and the copy waits until a deploy after it.
+      await markStale(deps.db, backend.siteId);
+      await retire(deps.db, backend.siteId, copy.tursoDbName, deps.now?.() ?? Date.now());
       throw error;
     }
     await audit(deps.db, ctx, client, "site.backend.restore", {
@@ -335,7 +336,7 @@ export async function restoreSiteBackend(
       from: backend.tursoDbName,
       to: copy.tursoDbName,
     });
-    await sweepRetired({ ...deps, provisioner }, client, { ...backend, ...copy }, moved);
+    await sweepRetired({ ...deps, provisioner }, client, { ...backend, ...copy }, switchedAt);
     return { redeployed };
   } finally {
     await letGo(deps.db, backend.siteId, until);
@@ -376,14 +377,13 @@ export async function undoSiteBackendRestore(
         `A publish since the restore changed the database (${missing.join(", ")}), and the database from before doesn't have those changes, so the restore can't be undone.`,
       );
     }
-    const redeployed = await moveLiveSite(
+    const { redeployed, switchedAt } = await moveLiveSite(
       { ...deps, provisioner },
       client,
       backend.siteId,
       kept,
       backend,
     );
-    const moved = deps.now?.() ?? Date.now();
     await commitSwap(deps.db, backend.siteId, until, kept, {
       currentSince: restore.keptSince ?? backend.createdAt,
       keptDbName: null,
@@ -393,15 +393,23 @@ export async function undoSiteBackendRestore(
       restoredAt: null,
       retired: [
         ...restore.retired,
-        { dbName: backend.tursoDbName, retiredAt: moved, deleteAfter: moved + RETIRE_AFTER_MS },
+        {
+          dbName: backend.tursoDbName,
+          retiredAt: switchedAt,
+          deleteAfter: switchedAt + RETIRE_AFTER_MS,
+        },
       ],
+    }).catch(async (error) => {
+      // The live site is moving back, but the registry still names the restored database.
+      await markStale(deps.db, backend.siteId);
+      throw error;
     });
     await audit(deps.db, ctx, client, "site.backend.restore.undo", {
       siteId: backend.siteId,
       from: backend.tursoDbName,
       to: kept.tursoDbName,
     });
-    await sweepRetired({ ...deps, provisioner }, client, { ...backend, ...kept }, moved);
+    await sweepRetired({ ...deps, provisioner }, client, { ...backend, ...kept }, switchedAt);
     return { redeployed };
   } finally {
     await letGo(deps.db, backend.siteId, until);
