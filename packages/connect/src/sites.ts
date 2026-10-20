@@ -85,11 +85,17 @@ const MAX_PROJECT_PAGES = 10;
 const projectPath = (projectId: string, rest = "") =>
   `/v9/projects/${encodeURIComponent(projectId)}${rest}`;
 
+export interface HostProjectList {
+  projects: HostProject[];
+  /** False when the page cap stopped the listing: a project missing from it may still exist. */
+  complete: boolean;
+}
+
 /** The projects on the agency's Vercel team, newest first, for linking one to a client. */
 export async function listHostProjects(
   deps: SiteDeps,
   ctx: SessionContext,
-): Promise<HostProject[]> {
+): Promise<HostProjectList> {
   const { organizationId } = await requireAgencyManager(deps.db, ctx);
   const grant = await hostGrant(deps, organizationId);
   const projects: HostProject[] = [];
@@ -105,10 +111,10 @@ export async function listHostProjects(
     if (!result.ok) throw refused(result, "Vercel didn't list your projects. Try again.");
     projects.push(...(result.body.projects ?? []).map(({ id, name }) => ({ id, name })));
     const next = result.body.pagination?.next;
-    if (next == null) break;
+    if (next == null) return { projects, complete: true };
     until = String(next);
   }
-  return projects;
+  return { projects, complete: false };
 }
 
 /** The client's sites. */
