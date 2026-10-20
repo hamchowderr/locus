@@ -857,9 +857,11 @@ describe("deleting a site", () => {
     }
     const before = await tenantCounts(client, kept.siteId);
 
+    await runtimes.open(`${clientA}/${siteId}`);
     await deleteClientSite(deps(), ctx("owner"), client, siteId);
 
     expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(runtimes.runtimes.has(`${clientA}/${siteId}`)).toBe(false);
     expect(await activeSiteIdForSession(db, ctx("owner"), client)).toBeNull();
     const after = await tenantCounts(client, siteId);
     expect(after).toMatchObject({ versions: 0, drafts: 0, briefs: 0, leadDays: 0 });

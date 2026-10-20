@@ -3,8 +3,8 @@ import { InvalidPathError } from "./paths.ts";
 import type { SiteRuntime } from "./runtime.ts";
 import { sandboxFromEnv, sandboxName, VercelRuntimeProvider } from "./vercel.ts";
 
-const sdk = vi.hoisted(() => ({ getOrCreate: vi.fn() }));
-vi.mock("@vercel/sandbox", () => ({ Sandbox: { getOrCreate: sdk.getOrCreate } }));
+const sdk = vi.hoisted(() => ({ getOrCreate: vi.fn(), get: vi.fn() }));
+vi.mock("@vercel/sandbox", () => ({ Sandbox: { getOrCreate: sdk.getOrCreate, get: sdk.get } }));
 
 const TOKEN = "vercel-token-must-not-leak";
 const CONFIG = { token: TOKEN, teamId: "team_1", projectId: "prj_1", timeoutMs: 600_000 };
@@ -109,6 +109,7 @@ function serve(
 
 beforeEach(() => {
   sdk.getOrCreate.mockReset();
+  sdk.get.mockReset();
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -573,5 +574,31 @@ describe("VercelRuntimeProvider", () => {
   it("refuses incomplete config", () => {
     expect(() => new VercelRuntimeProvider({ ...CONFIG, token: "" })).toThrow();
     expect(() => new VercelRuntimeProvider({ ...CONFIG, ports: [] })).toThrow();
+  });
+});
+
+describe("destroying a site's sandbox", () => {
+  it("deletes the named sandbox and the snapshots only it used", async () => {
+    const remove = vi.fn(async () => {});
+    sdk.get.mockResolvedValue({ delete: remove });
+    await new VercelRuntimeProvider(CONFIG).destroy("client-1/site-1");
+    expect(sdk.get).toHaveBeenCalledWith({
+      name: sandboxName("client-1/site-1"),
+      token: TOKEN,
+      teamId: "team_1",
+      projectId: "prj_1",
+    });
+    expect(remove).toHaveBeenCalledWith({ deleteOrphanSnapshots: true });
+  });
+
+  it("is done when the sandbox no longer exists", async () => {
+    sdk.get.mockRejectedValue(Object.assign(new Error("not found"), { response: { status: 404 } }));
+    await expect(new VercelRuntimeProvider({ oidc: true }).destroy("k")).resolves.toBeUndefined();
+    expect(sdk.get.mock.calls[0]?.[0]).toEqual({ name: sandboxName("k") });
+  });
+
+  it("passes on any other failure", async () => {
+    sdk.get.mockRejectedValue(Object.assign(new Error("boom"), { response: { status: 500 } }));
+    await expect(new VercelRuntimeProvider(CONFIG).destroy("k")).rejects.toThrow("boom");
   });
 });
