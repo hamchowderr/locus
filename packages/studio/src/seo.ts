@@ -97,41 +97,120 @@ function literalAt(source: string, start: number, vars: Vars = {}): string | nul
   return null;
 }
 
-/** The first `key: …` in the source: whether there is one, and its value if a plain string. */
-function field(source: string, key: string, vars: Vars = {}) {
-  const match = new RegExp(`\\b${key}\\s*:\\s*`).exec(source);
-  if (!match) return { found: false, value: null };
-  const value = literalAt(source, match.index + match[0].length, vars);
+/** Where the string starting at `start` ends (its closing quote), skipping escapes. */
+function stringEnd(source: string, start: number): number {
+  const quote = source[start];
+  for (let i = start + 1; i < source.length; i++) {
+    if (source[i] === "\\") i++;
+    else if (source[i] === quote) return i;
+  }
+  return source.length;
+}
+
+/** The source with its comments blanked out, so a quote or brace in one counts for nothing. */
+function withoutComments(source: string): string {
+  let out = "";
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const end = stringEnd(source, i);
+      out += source.slice(i, end + 1);
+      i = end;
+    } else if (c === "/" && source[i + 1] === "/") {
+      const end = source.indexOf("\n", i);
+      const stop = end < 0 ? source.length : end;
+      out += " ".repeat(stop - i);
+      i = stop - 1;
+    } else if (c === "/" && source[i + 1] === "*") {
+      const end = source.indexOf("*/", i + 2);
+      const stop = end < 0 ? source.length : end + 2;
+      out += source.slice(i, stop).replace(/[^\n]/g, " ");
+      i = stop - 1;
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+/** The object literal opening at `open` (a `{`), braces in strings not counted. */
+function objectAt(source: string, open: number): string {
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const c = source[i];
+    if (c === '"' || c === "'" || c === "`") i = stringEnd(source, i);
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return source.slice(open, i + 1);
+  }
+  return source.slice(open);
+}
+
+/** Where each of an object literal's own keys' values starts; nested objects' keys excluded. */
+function ownKeys(object: string): Map<string, number> {
+  const keys = new Map<string, number>();
+  let depth = 0;
+  for (let i = 0; i < object.length; i++) {
+    const c = object[i] as string;
+    if (c === "{" || c === "[" || c === "(") depth++;
+    else if (c === "}" || c === "]" || c === ")") depth--;
+    else if (c === '"' || c === "'" || c === "`") {
+      const end = stringEnd(object, i);
+      const after = /^\s*:\s*/.exec(object.slice(end + 1));
+      if (depth === 1 && c !== "`" && after && /[{,]\s*$/.test(object.slice(0, i))) {
+        keys.set(object.slice(i + 1, end), end + 1 + after[0].length);
+      }
+      i = end;
+    } else if (depth === 1 && /[A-Za-z_$]/.test(c) && !/[\w$.]/.test(object[i - 1] ?? "")) {
+      const key = /^[\w$]+/.exec(object.slice(i))?.[0] ?? c;
+      const after = /^\s*:\s*/.exec(object.slice(i + key.length));
+      if (after && /[{,]\s*$/.test(object.slice(0, i)) && !keys.has(key)) {
+        keys.set(key, i + key.length + after[0].length);
+      }
+      i += key.length - 1;
+    }
+  }
+  return keys;
+}
+
+/** One of the object's own keys: whether it is there, and its value if a plain string. */
+function field(object: string, key: string, vars: Vars = {}) {
+  const at = ownKeys(object).get(key);
+  if (at === undefined) return { found: false, value: null };
+  const value = literalAt(object, at, vars);
   return { found: true, value: value === null ? null : squash(value) };
 }
 
-const stringField = (source: string, key: string, vars?: Vars) => field(source, key, vars).value;
+const stringField = (object: string, key: string, vars?: Vars) => field(object, key, vars).value;
 
-/** The text of the `export const metadata` object, or null when there is none. */
+/** The object literal a key of `object` holds, or null when it holds something else. */
+function objectField(object: string, key: string): string | null {
+  const at = ownKeys(object).get(key);
+  return at !== undefined && object[at] === "{" ? objectAt(object, at) : null;
+}
+
+/** The `export const metadata` object, comments blanked; null when there is none. */
 function metadataBlock(source: string): string | null {
-  const match = /export\s+const\s+metadata\b[^=]*=\s*\{/.exec(source);
-  if (!match) return null;
-  let depth = 0;
-  const start = match.index + match[0].length - 1;
-  for (let i = start; i < source.length; i++) {
-    const c = source[i];
-    if (c === "{") depth++;
-    else if (c === "}" && --depth === 0) return source.slice(start, i + 1);
-    else if (c === '"' || c === "'" || c === "`") {
-      // Skip the string, so a brace inside it doesn't count.
-      for (i++; i < source.length && source[i] !== c; i++) if (source[i] === "\\") i++;
-    }
-  }
-  return null;
+  const clean = withoutComments(source);
+  const match = /export\s+const\s+metadata\b[^=]*=\s*\{/.exec(clean);
+  return match ? objectAt(clean, match.index + match[0].length - 1) : null;
 }
 
 /** A page's title as its metadata sets it: a string, or `{ default }` / `{ absolute }`. */
 function titleOf(block: string, vars: Vars) {
-  const nested = /\btitle\s*:\s*\{/.exec(block);
+  const nested = objectField(block, "title");
   if (!nested) return field(block, "title", vars);
-  const inner = block.slice(nested.index);
-  const value = stringField(inner, "absolute", vars) ?? stringField(inner, "default", vars);
+  const value = stringField(nested, "absolute", vars) ?? stringField(nested, "default", vars);
   return { found: true, value };
+}
+
+/** `robots: { index: false }` or a `robots` string saying noindex. */
+function isNoindex(block: string): boolean {
+  const robots = objectField(block, "robots");
+  if (robots) {
+    const at = ownKeys(robots).get("index");
+    return at !== undefined && /^false\b/.test(robots.slice(at));
+  }
+  return /noindex/i.test(stringField(block, "robots") ?? "");
 }
 
 /** The site's pages and what each declares, home first then by address. */
@@ -155,9 +234,12 @@ export function sitePages(files: SiteFile[]): PageSeo[] {
       description: description.value,
       hasTitle: title.found,
       hasDescription: description.found,
-      canonical: block ? stringField(block, "canonical") : null,
+      canonical: (() => {
+        const alternates = block ? objectField(block, "alternates") : null;
+        return alternates ? stringField(alternates, "canonical") : null;
+      })(),
       dynamic,
-      noindex: !!block && /\brobots\s*:\s*\{[^}]*\bindex\s*:\s*false/.test(block),
+      noindex: !!block && isNoindex(block),
       schema: /application\/ld\+json|<JsonLd\b/.test(source),
     });
   }
@@ -169,8 +251,10 @@ export function sitePages(files: SiteFile[]): PageSeo[] {
 /** The site's name and description from `lib/site.ts`, when it still states them plainly. */
 export function siteFacts(files: SiteFile[]): { name: string | null; description: string | null } {
   const file = files.find((f) => f.path === "lib/site.ts");
-  const source = file ? textOf(file) : "";
-  return { name: stringField(source, "name"), description: stringField(source, "description") };
+  const source = withoutComments(file ? textOf(file) : "");
+  const match = /export\s+const\s+site\b[^=]*=\s*\{/.exec(source);
+  const site = match ? objectAt(source, match.index + match[0].length - 1) : "";
+  return { name: stringField(site, "name"), description: stringField(site, "description") };
 }
 
 /** An address's path without a trailing slash; a full URL counts by its path. */

@@ -15,7 +15,13 @@ import {
   type SessionContext,
   type UsageMeasurement,
 } from "@locus/auth";
-import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
+import {
+  ConnectError,
+  commitSiteVersion,
+  type PublishDeps,
+  type SiteDeps,
+  siteDomainStatus,
+} from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
 import { auditLog, member, session, site } from "@locus/db/control";
 import {
@@ -251,11 +257,20 @@ const SITES_PAGE_PUBLISH_ERROR =
 
 /**
  * The address a published site goes by, for its sitemap, links and structured data: its own
- * domain once it has one, else its host's address. Null before either exists, when the site
- * falls back to the host's production address at build time.
+ * domain once that is live (verified and pointing at Vercel), else its Vercel address. Null
+ * before either exists, when the site falls back to the host's production address at build.
  */
-export function siteAddress(row: { customDomain: string | null; deployUrl: string | null }) {
-  return row.customDomain ? `https://${row.customDomain}` : row.deployUrl;
+export async function siteAddress(
+  deps: SiteDeps,
+  client: AuthorizedClient,
+  row: { id: string; customDomain: string | null; deployUrl: string | null },
+): Promise<string | null> {
+  if (row.customDomain) {
+    // A domain still being set up (or a check that fails) doesn't hold up the publish.
+    const status = await siteDomainStatus(deps, client, row.id).catch(() => null);
+    if (status?.state === "live") return `https://${row.customDomain}`;
+  }
+  return row.deployUrl;
 }
 
 /** What runs after each saved version (`BuilderSession.onVersionSaved`). */
@@ -290,13 +305,15 @@ export function publishHook(
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
     try {
-      const { commitSha, url } = await commitSiteVersion(publish(), client, {
+      const deps = publish();
+      const siteUrl = await siteAddress(deps, client, row);
+      const { commitSha, url } = await commitSiteVersion(deps, client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
         // The version's files, with this site's form endpoint and address in `lib/locus.ts`.
         files: withLocusSettings(
           files.map(({ path, content }) => ({ path, content })),
-          { siteId, locusUrl, siteUrl: siteAddress(row) },
+          { siteId, locusUrl, siteUrl },
         ),
       });
       return { commitSha, url };

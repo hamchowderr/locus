@@ -303,12 +303,8 @@ export const metadata: Metadata = {
   ...(url ? { metadataBase: new URL(url) } : {}),
   title: { default: site.name, template: \`%s · \${site.name}\` },
   description: site.description,
-  openGraph: {
-    type: "website",
-    siteName: site.name,
-    title: site.name,
-    description: site.description,
-  },
+  // Share cards take each page's own title and description.
+  openGraph: { type: "website", siteName: site.name },
   twitter: { card: "summary_large_image" },
   // A draft or preview stays out of search results; the published site is indexed.
   ...(published ? {} : { robots: { index: false, follow: false } }),
