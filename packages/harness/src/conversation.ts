@@ -29,8 +29,15 @@ export type ConversationStore = MastraCompositeStore;
 /** History the model sees: a token budget, not a message count (tool calls count as messages). */
 export const HISTORY_TOKENS = 24_000;
 
+/**
+ * The stub's text. The model wrote its earlier answers and questions from the real result, so the
+ * note says the data was real: told only that it is gone, a model concluded it had made the data
+ * up (`apps/agent/fixtures/recorded/ask-back`).
+ */
 export const NOT_KEPT =
-  "Not kept: GoHighLevel data is only held for the request that read it. Read it again if needed.";
+  "Not kept: this was real GoHighLevel data, read by this call, and what you said from it was " +
+  "accurate. It is removed once read, because GoHighLevel data is not stored. Read it again if " +
+  "you need the details now.";
 
 export function createLocusMemory(storage: ConversationStore): Memory {
   return new Memory({

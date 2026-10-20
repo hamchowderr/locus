@@ -385,4 +385,12 @@ describe("forgetResult", () => {
     });
     expect(forgetResult("query_data", tainted)).toEqual({ notKept: NOT_KEPT, rowCount: 0 });
   });
+
+  test("tells the model the data it read was real, so it does not think it invented it", () => {
+    // After an approval or a question, a model told only "not kept" apologised for making up
+    // the contacts it had just read.
+    expect(NOT_KEPT).toMatch(/real GoHighLevel data/);
+    expect(NOT_KEPT).toMatch(/accurate/);
+    expect(NOT_KEPT).toMatch(/Read it again/);
+  });
 });
