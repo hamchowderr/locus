@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { AppServiceError } from "./apps.ts";
 import { appUserId, createComposioConnector } from "./composio.ts";
 
 // A pretend Composio API: the real SDK runs against it, so this proves what Locus asks Composio
@@ -55,6 +56,72 @@ beforeEach(() => {
   };
 });
 
+/** A search answer as Composio sends it. */
+const searchBody = () => ({
+  success: true,
+  error: null,
+  results: [
+    {
+      index: 0,
+      use_case: "read my email",
+      primary_tool_slugs: ["GMAIL_FETCH_EMAILS"],
+      related_tool_slugs: ["GMAIL_GET_PROFILE"],
+      toolkits: ["gmail"],
+    },
+  ],
+  tool_schemas: {
+    GMAIL_FETCH_EMAILS: {
+      tool_slug: "GMAIL_FETCH_EMAILS",
+      toolkit: "gmail",
+      description: "Fetch emails",
+      input_schema: { type: "object", properties: { max_results: { type: "integer" } } },
+    },
+  },
+  toolkit_connection_statuses: [
+    {
+      toolkit: "gmail",
+      description: "Gmail",
+      has_active_connection: true,
+      status_message: "",
+    },
+    {
+      toolkit: "slack",
+      description: "Slack",
+      has_active_connection: false,
+      status_message: "",
+    },
+  ],
+  next_steps_guidance: [],
+  session: { id: "trs_1", generate_id: false, instructions: "" },
+  time_info: {
+    current_time_utc: "2026-10-20T00:00:00Z",
+    current_time_utc_epoch_seconds: 1_792_454_400,
+    message: "",
+  },
+});
+
+/** A tool as Composio describes it. */
+const toolBody = (slug: string, tags: string[]) => ({
+  slug,
+  name: slug,
+  description: "",
+  tags,
+  toolkit: { slug: slug.split("_")[0]?.toLowerCase(), name: "", logo: "" },
+  input_parameters: {},
+  output_parameters: {},
+  available_versions: [],
+  version: "1",
+  no_auth: false,
+  is_deprecated: false,
+  deprecated: {
+    displayName: slug,
+    version: "1",
+    available_versions: [],
+    toolkit: { logo: "" },
+    is_deprecated: false,
+  },
+});
+
 const connector = () =>
   createComposioConnector({ apiKey: "test-key", clientId: "client-1", baseURL });
 
@@ -88,48 +155,7 @@ describe("Composio connector", () => {
   test("search lists tools with their arguments, and which apps aren't connected", async () => {
     routes[`POST ${SESSION}/trs_1/search`] = (body) => {
       expect(body).toMatchObject({ queries: [{ use_case: "read my email" }] });
-      return {
-        success: true,
-        error: null,
-        results: [
-          {
-            index: 0,
-            use_case: "read my email",
-            primary_tool_slugs: ["GMAIL_FETCH_EMAILS"],
-            related_tool_slugs: ["GMAIL_GET_PROFILE"],
-            toolkits: ["gmail"],
-          },
-        ],
-        tool_schemas: {
-          GMAIL_FETCH_EMAILS: {
-            tool_slug: "GMAIL_FETCH_EMAILS",
-            toolkit: "gmail",
-            description: "Fetch emails",
-            input_schema: { type: "object", properties: { max_results: { type: "integer" } } },
-          },
-        },
-        toolkit_connection_statuses: [
-          {
-            toolkit: "gmail",
-            description: "Gmail",
-            has_active_connection: true,
-            status_message: "",
-          },
-          {
-            toolkit: "slack",
-            description: "Slack",
-            has_active_connection: false,
-            status_message: "",
-          },
-        ],
-        next_steps_guidance: [],
-        session: { id: "trs_1", generate_id: false, instructions: "" },
-        time_info: {
-          current_time_utc: "2026-10-20T00:00:00Z",
-          current_time_utc_epoch_seconds: 1_792_454_400,
-          message: "",
-        },
-      };
+      return searchBody();
     };
 
     const found = await connector().search("read my email");
@@ -149,30 +175,10 @@ describe("Composio connector", () => {
   });
 
   test("a tool counts as read-only only when Composio tags it so, and the answer is kept", async () => {
-    const tool = (slug: string, tags: string[]) => ({
-      slug,
-      name: slug,
-      description: "",
-      tags,
-      toolkit: { slug: slug.split("_")[0]?.toLowerCase(), name: "", logo: "" },
-      input_parameters: {},
-      output_parameters: {},
-      available_versions: [],
-      version: "1",
-      no_auth: false,
-      is_deprecated: false,
-      deprecated: {
-        displayName: slug,
-        version: "1",
-        available_versions: [],
-        toolkit: { logo: "" },
-        is_deprecated: false,
-      },
-    });
     routes["GET /api/v3.1/tools/GMAIL_FETCH_EMAILS"] = () =>
-      tool("GMAIL_FETCH_EMAILS", ["readOnlyHint", "idempotentHint"]);
+      toolBody("GMAIL_FETCH_EMAILS", ["readOnlyHint", "idempotentHint"]);
     routes["GET /api/v3.1/tools/GMAIL_SEND_EMAIL"] = () =>
-      tool("GMAIL_SEND_EMAIL", ["openWorldHint"]);
+      toolBody("GMAIL_SEND_EMAIL", ["openWorldHint"]);
     const apps = connector();
 
     expect(await apps.readOnly("GMAIL_FETCH_EMAILS")).toBe(true);
@@ -218,5 +224,40 @@ describe("Composio connector", () => {
   test("a client id is required to name the Composio user", () => {
     expect(() => appUserId("")).toThrow(/need a client/);
     expect(appUserId("c1")).toBe("locus-client:c1");
+  });
+
+  test("Composio's own errors come back as service errors, and the session is opened again", async () => {
+    // No execute route: the pretend API answers 404, as for a lost session.
+    const apps = connector();
+    const failed = apps.execute("GMAIL_FETCH_EMAILS", {});
+    await expect(failed).rejects.toThrow(AppServiceError);
+    await expect(failed).rejects.toThrow(/^Composio: /);
+    routes[`POST ${SESSION}/trs_1/execute`] = () => ({
+      data: {},
+      error: null,
+      log_id: "log_4",
+      result_type: "completed",
+    });
+    expect(await apps.execute("GMAIL_FETCH_EMAILS", {})).toEqual({ ok: true, data: {} });
+    expect(seen.filter((s) => s.path === SESSION)).toHaveLength(2);
+  });
+
+  test("a failed search says so, rather than finding nothing", async () => {
+    routes[`POST ${SESSION}/trs_1/search`] = () => ({
+      ...searchBody(),
+      success: false,
+      error: "toolkit index unavailable",
+    });
+    await expect(connector().search("email")).rejects.toThrow(
+      "Composio: toolkit index unavailable",
+    );
+  });
+
+  test("a tool from another toolkit never counts as read-only", async () => {
+    routes["GET /api/v3.1/tools/GMAIL_SNEAKY"] = () => ({
+      ...toolBody("GMAIL_SNEAKY", ["readOnlyHint"]),
+      toolkit: { slug: "github", name: "", logo: "" },
+    });
+    expect(await connector().readOnly("GMAIL_SNEAKY")).toBe(false);
   });
 });

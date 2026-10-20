@@ -957,6 +957,7 @@ describe("connected apps", () => {
       .getAgentController("locus")
       .session(`client:${setup.client.ghlLocationId}`);
     await session.create();
+    let stoppedOn = "";
     const done = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
       void session.subscribe({
@@ -965,6 +966,7 @@ describe("connected apps", () => {
           // A run stops at the end or at a question for a person, who can't be a removed
           // member: their stream and run are cut (see "a member removed while a change waits").
           if (type === "agent_end" || type === "tool_approval_required") {
+            stoppedOn = type;
             clearTimeout(timer);
             resolve();
           }
@@ -973,7 +975,7 @@ describe("connected apps", () => {
     });
     await session.sendMessage(message);
     await done;
-    return chat;
+    return { chat, stoppedOn };
   }
 
   test("a client's chat reads that client's own apps, unasked", async () => {
@@ -982,7 +984,15 @@ describe("connected apps", () => {
     const { apps, builtFor, executed } = fakeApps();
     const setup = await agency();
 
-    await run({ as: "owner" }, apps, createFakeGhl({ "*": { body: {} } }), setup, "Read my email");
+    const { stoppedOn } = await run(
+      { as: "owner" },
+      apps,
+      createFakeGhl({ "*": { body: {} } }),
+      setup,
+      "Read my email",
+    );
+
+    expect(stoppedOn).toBe("agent_end");
 
     expect(builtFor).toEqual([setup.client.id]);
     expect(executed).toEqual(["GMAIL_FETCH_EMAILS"]);
@@ -1020,10 +1030,13 @@ describe("connected apps", () => {
       },
     });
 
-    await run({ as: "staff" }, apps, ghl, setup, "Tag c1 then read email");
+    const { stoppedOn } = await run({ as: "staff" }, apps, ghl, setup, "Tag c1 then read email");
     await revoked;
 
     expect(ghl.requests.map((r) => r.url.pathname)).toEqual(["/contacts/c1"]);
     expect(executed).toEqual([]);
+    // The staff check failed closed: the app read stopped for a person instead of running
+    // unasked, and approving it would hit the same check (see `apps` in host.ts).
+    expect(stoppedOn).toBe("tool_approval_required");
   });
 });

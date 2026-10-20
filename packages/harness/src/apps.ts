@@ -48,8 +48,17 @@ export interface AppConnector {
   execute(slug: string, args: Record<string, unknown>): Promise<AppResult>;
 }
 
+/** A mistake the model can fix, in Locus's own words. */
 export class AppError extends Error {
   override name = "AppError";
+}
+
+/**
+ * The app service refused or failed. Its message can quote the app (an email provider's
+ * error, say), so it reaches the model as data, through the same screen as any app result.
+ */
+export class AppServiceError extends Error {
+  override name = "AppServiceError";
 }
 
 export const APP_TOOL_NAMES = ["find_app_tools", "use_app"] as const;
@@ -95,8 +104,8 @@ export function createAppTools(
       arguments: z.record(z.string(), z.unknown()).optional(),
     }),
     requireApproval: async ({ tool }, ctx) => {
-      if (isTainted(ctx?.requestContext) || !allowedSlug(tool)) return true;
       try {
+        if (isTainted(ctx?.requestContext) || !allowedSlug(tool)) return true;
         return !(await (await resolve(asRunContext(ctx?.requestContext))).readOnly(tool));
       } catch {
         // Can't tell: ask.
@@ -128,12 +137,13 @@ function asRunContext(requestContext: unknown): RunContext | undefined {
   return typeof ctx.get === "function" ? (ctx as RunContext) : { get: (key) => ctx[key] };
 }
 
-function allowed(toolkit: string): boolean {
+export function allowed(toolkit: string): boolean {
   return (APP_TOOLKITS as readonly string[]).includes(toolkit.toLowerCase());
 }
 
 /** Tool slugs start with their toolkit's slug: GMAIL_SEND_EMAIL, SLACK_LIST_CHANNELS. */
-function allowedSlug(slug: string): boolean {
+function allowedSlug(slug: unknown): boolean {
+  if (typeof slug !== "string") return false;
   return APP_TOOLKITS.some((toolkit) => slug.toUpperCase().startsWith(`${toolkit.toUpperCase()}_`));
 }
 
@@ -142,6 +152,7 @@ async function recoverable<T>(run: () => Promise<T>) {
     return await run();
   } catch (error) {
     if (error instanceof AppError) return locusError(error.message);
+    if (error instanceof AppServiceError) return { error: error.message };
     throw error;
   }
 }
