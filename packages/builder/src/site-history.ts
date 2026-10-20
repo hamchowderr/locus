@@ -7,11 +7,13 @@ import {
   WorkspaceError,
 } from "@locus/studio";
 import {
-  clientSite,
+  buildRefusal,
   editorOrigins,
   leaseClientDb,
+  SITE_BUILDER_OFF,
   type SiteBuilderDeps,
   SiteInputError,
+  siteOfClient,
   siteRuntimeKey,
   usageMeter,
 } from "./host.ts";
@@ -20,7 +22,9 @@ import { syncRuntime } from "./sync.ts";
 
 // The Sites pages' view of a site's history and preview: its saved versions (bookmark,
 // restore) and a live preview of the draft or of one version. The client is always the
-// session's, after the staff check; the site must be one of its.
+// session's, after the staff check; the site must be one of its. Anyone with the client may look;
+// bookmarking and restoring need the right to build the site (`buildRefusal`), and previews need
+// the site builder on for the client, since they run (and bill) a sandbox.
 
 /** How many versions the Versions page lists, newest first. */
 export const VERSIONS_SHOWN = 50;
@@ -32,9 +36,14 @@ async function withWorkspace<T>(
   client: AuthorizedClient,
   siteId: string,
   work: (workspace: SiteWorkspace) => Promise<T>,
+  access: "view" | "build" = "view",
 ): Promise<T> {
   assertAuthorizedClient(client);
-  await clientSite(deps.db, client, siteId);
+  await siteOfClient(deps.db, client, siteId);
+  if (access === "build") {
+    const refusal = await buildRefusal(deps.db, client, siteId);
+    if (refusal) throw new SiteInputError(refusal);
+  }
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     return await work(new SiteWorkspace(tenant, siteId));
@@ -52,6 +61,8 @@ export interface SiteHistory {
   unsaved: boolean;
   /** Versions beyond `VERSIONS_SHOWN` that aren't listed. */
   more: number;
+  /** Why the member may not bookmark or restore versions, or null when they may. */
+  refusal: string | null;
 }
 
 /** A site's saved versions, newest first, and whether the draft has unsaved changes. */
@@ -69,6 +80,7 @@ export async function siteHistory(
       versions: all.slice(0, VERSIONS_SHOWN),
       unsaved,
       more: Math.max(0, all.length - VERSIONS_SHOWN),
+      refusal: await buildRefusal(deps.db, client, siteId),
     };
   });
 }
@@ -88,10 +100,16 @@ export async function bookmarkSiteVersion(
   siteId: string,
   input: { number: number; bookmarked: boolean },
 ): Promise<void> {
-  await withWorkspace(deps, client, siteId, async (workspace) => {
-    const version = await versionByNumber(workspace, input.number);
-    await workspace.setBookmark(version.id, input.bookmarked);
-  });
+  await withWorkspace(
+    deps,
+    client,
+    siteId,
+    async (workspace) => {
+      const version = await versionByNumber(workspace, input.number);
+      await workspace.setBookmark(version.id, input.bookmarked);
+    },
+    "build",
+  );
 }
 
 /**
@@ -107,11 +125,17 @@ export async function restoreSiteVersion(
   siteId: string,
   number: number,
 ): Promise<{ restored: number; version: VersionInfo; kept: VersionInfo | null }> {
-  return withWorkspace(deps, client, siteId, async (workspace) => {
-    const target = await versionByNumber(workspace, number);
-    const { version, kept } = await workspace.restoreKeeping(target.id, { userId: ctx.userId });
-    return { restored: target.number, version, kept };
-  });
+  return withWorkspace(
+    deps,
+    client,
+    siteId,
+    async (workspace) => {
+      const target = await versionByNumber(workspace, number);
+      const { version, kept } = await workspace.restoreKeeping(target.id, { userId: ctx.userId });
+      return { restored: target.number, version, kept };
+    },
+    "build",
+  );
 }
 
 export interface SitePreview {
@@ -142,6 +166,7 @@ export async function startSitePreview(
   options: { version?: number | null } = {},
 ): Promise<SitePreview> {
   assertAuthorizedClient(client);
+  if (!client.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
   const meter = usageMeter(deps.db, client, { siteId, userId: ctx.userId });
   const verdict = await meter.check();
   if (!verdict.ok) throw new SiteInputError(verdict.reason);

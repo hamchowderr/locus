@@ -4,6 +4,7 @@ import {
   assertAuthorizedClient,
   requireAgencyManager,
   type SessionContext,
+  siteAccessLevel,
 } from "@locus/auth";
 import type { ControlDb } from "@locus/db";
 import { auditLog, site, siteBackend, siteFolder } from "@locus/db/control";
@@ -579,7 +580,7 @@ export const MAX_FOLDER_LENGTH = 60;
 /**
  * Files one of the client's sites under a folder on the Sites page, or under none when `folder`
  * is blank. A folder is just a name the client's sites share: it exists while a site is in it.
- * Anyone who may work on the client may file its sites.
+ * Anyone who may work on the client may file its sites, except on a site they may only view.
  */
 export async function setSiteFolder(
   db: ControlDb,
@@ -591,6 +592,9 @@ export async function setSiteFolder(
   const folder = input.folder.trim().replace(/\s+/g, " ") || null;
   if (folder && folder.length > MAX_FOLDER_LENGTH) {
     throw new ConnectError(`Give the folder a name of up to ${MAX_FOLDER_LENGTH} characters.`);
+  }
+  if ((await siteAccessLevel(db, client, input.siteId)) === "view") {
+    throw new ConnectError("You can view this site but not change it.");
   }
   const [row] = await db
     .select({ id: site.id })
