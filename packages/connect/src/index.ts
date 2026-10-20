@@ -109,6 +109,7 @@ export {
 } from "./site-crm.ts";
 export {
   deleteSiteFiles,
+  hasSiteFilesKey,
   MAX_SITE_FILE_BYTES,
   SITE_FILE_LIMITS,
   SITE_FILE_TYPES,

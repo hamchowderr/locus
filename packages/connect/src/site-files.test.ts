@@ -254,17 +254,49 @@ describe("a site's files", () => {
     expect(library).toEqual([]);
   });
 
-  it("deletes only files in the site's folder, all or none", async () => {
+  it("deletes only files in the site's folders, so a retry after a partial delete works", async () => {
     await upload(deps());
     library.push({ _id: "elsewhere", type: "file", name: "x.png", url: fileUrl("x.png") });
     const remove = (fileIds: unknown) =>
       deleteSiteFiles(deps(), { siteId: SITE, authorization: bearer(SITE), body: { fileIds } });
-    expect(await remove(["file1", "elsewhere"])).toMatchObject({ status: 400 });
     expect(await remove(["../x"])).toMatchObject({ status: 400 });
-    expect(library.map((f) => f._id)).toContain("file1");
-    expect(await remove(["file1"])).toEqual({ status: 200, body: { deleted: 1 } });
+    expect(await remove(["file1", "elsewhere"])).toEqual({ status: 200, body: { deleted: 1 } });
     expect(library.map((f) => f._id)).not.toContain("file1");
     expect(library.map((f) => f._id)).toContain("elsewhere");
+    expect(fake.requests.filter((r) => r.method === "DELETE").map((r) => r.url.pathname)).toEqual([
+      "/medias/file1",
+    ]);
+    // Already gone: nothing to do, and no error.
+    expect(await remove(["file1"])).toEqual({ status: 200, body: { deleted: 0 } });
+  });
+
+  it("treats every folder with the site's name as the site's, and finds a folder GHL made without saying its id", async () => {
+    // GHL's documented answer to making a folder carries no id.
+    const quiet: FakeRoutes = {
+      ...routes,
+      "POST /medias/folder": (req) => {
+        (routes["POST /medias/folder"] as (r: typeof req) => unknown)(req);
+        return { body: { name: (req.body as { name: string }).name, type: "folder" } };
+      },
+    };
+    const d = {
+      ...deps(),
+      http: { fetch: createFakeGhl(quiet).fetch, baseUrl: "https://fake.ghl.test" },
+    };
+    expect((await upload(d)).status).toBe(200);
+    // A second folder of the same name, as two first uploads at once could make.
+    library.push({ _id: "twin", type: "folder", name: siteFilesFolderName(SITE) });
+    library.push({ _id: "late", type: "file", name: "b.png", parentId: "twin", url: fileUrl("b") });
+    const owner = await authorizeClient(db, ctx, "client-1");
+    const listed = await siteFilesOverview(deps(), owner, { siteId: SITE });
+    expect(listed.files.map((f) => f.id).sort()).toEqual(["file1", "late"]);
+    expect(
+      await deleteSiteFiles(deps(), {
+        siteId: SITE,
+        authorization: bearer(SITE),
+        body: { fileIds: ["late"] },
+      }),
+    ).toEqual({ status: 200, body: { deleted: 1 } });
   });
 
   it("limits how fast one site takes uploads", async () => {

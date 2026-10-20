@@ -77,6 +77,16 @@ function sameKey(given: string, expected: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
+/** Whether a call carries the site's own files key: a cheap check before reading a body. */
+export function hasSiteFilesKey(
+  filesKey: Uint8Array,
+  siteId: string,
+  authorization: string | null,
+): boolean {
+  const given = /^Bearer (\S+)$/.exec(authorization ?? "")?.[1];
+  return Boolean(given && sameKey(given, siteFilesKey(filesKey, siteId)));
+}
+
 /** A file name that is safe to show and store: letters, digits, dot, dash and underscore. */
 function safeName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? "";
@@ -113,8 +123,7 @@ function op(id: string): GhlOperation {
  */
 async function siteFor(deps: SiteFilesDeps, siteId: string, authorization: string | null) {
   if (!/^[A-Za-z0-9-]{1,64}$/.test(siteId)) return null;
-  const given = /^Bearer (\S+)$/.exec(authorization ?? "")?.[1];
-  if (!given || !sameKey(given, siteFilesKey(deps.filesKey, siteId))) return null;
+  if (!hasSiteFilesKey(deps.filesKey, siteId, authorization)) return null;
   const [row] = await deps.db
     .select({ site, location })
     .from(siteBackend)
@@ -126,12 +135,17 @@ async function siteFor(deps: SiteFilesDeps, siteId: string, authorization: strin
 }
 
 /** GHL's file objects are only loosely documented; read them defensively. */
-function mediaItem(raw: unknown, locationId: string): (SiteMediaFile & { type: string }) | null {
+function mediaItem(
+  raw: unknown,
+  locationId: string,
+  asked: string,
+): (SiteMediaFile & { type: string }) | null {
   if (!raw || typeof raw !== "object") return null;
   const f = raw as Record<string, unknown>;
   const id = typeof f._id === "string" ? f._id : typeof f.id === "string" ? f.id : "";
   if (!/^[A-Za-z0-9]{1,64}$/.test(id)) return null;
-  const type = typeof f.type === "string" ? f.type : "file";
+  // GHL may leave the type out; then it is what the listing asked for.
+  const type = typeof f.type === "string" ? f.type : asked;
   const url = typeof f.url === "string" ? f.url : "";
   if (type === "file" && !isGhlStorageUrl(url, locationId)) return null;
   const name = typeof f.name === "string" ? f.name.slice(0, 200) : "";
@@ -167,39 +181,72 @@ async function listMedia(
   const raw = Array.isArray(found.files) ? found.files : [];
   return {
     items: raw
-      .map((f) => mediaItem(f, ghl.session.locationId ?? "-"))
+      .map((f) => mediaItem(f, ghl.session.locationId ?? "-", query.type ?? "file"))
       .filter((f): f is SiteMediaFile & { type: string } => f !== null),
     more: raw.length >= PAGE,
   };
 }
 
-/** The site's folder in the Media Library, made the first time a member uploads. */
-async function siteFolder(ghl: SiteGhl, siteId: string, make: boolean): Promise<string | null> {
+/**
+ * The site's folders in the Media Library, oldest first. There is normally one, made the first
+ * time a member uploads; two uploads at once can make two, and every one of them is the site's.
+ */
+async function siteFolders(ghl: SiteGhl, siteId: string): Promise<string[]> {
   const name = siteFilesFolderName(siteId);
   const { items } = await listMedia(ghl, { type: "folder", query: name }, 0);
-  const found = items.find((f) => f.type === "folder" && f.name === name);
-  if (found) return found.id;
-  if (!make) return null;
+  return items
+    .filter((f) => f.type === "folder" && f.name === name)
+    .reverse()
+    .map((f) => f.id);
+}
+
+/** The folder new files go into, made when the site has none yet. */
+async function uploadFolder(ghl: SiteGhl, siteId: string): Promise<string> {
+  const [existing] = await siteFolders(ghl, siteId);
+  if (existing) return existing;
   const made = await ghlRequest<{ _id?: string; id?: string }>(
     op("medias.create-media-folder"),
     ghl.session,
-    { body: { name } },
+    { body: { name: siteFilesFolderName(siteId) } },
     ghl.options,
   );
   const id = made._id ?? made.id;
-  if (!id || !/^[A-Za-z0-9]{1,64}$/.test(id)) throw new Error("GHL made a folder with no id");
-  return id;
+  if (id && /^[A-Za-z0-9]{1,64}$/.test(id)) return id;
+  // GHL's documented answer names no id: find the folder it just made.
+  const [found] = await siteFolders(ghl, siteId);
+  if (!found) throw new Error("GHL made a folder that can't be found");
+  return found;
 }
 
-/** Every file in the site's folder, newest first, up to `MAX_PAGES` pages. */
-async function folderFiles(ghl: SiteGhl, folderId: string, pages = MAX_PAGES) {
+/**
+ * The files in the site's folders, newest first per folder, up to `pages` pages in all. With
+ * `until`, stops as soon as every one of those ids has been seen.
+ */
+async function folderFiles(
+  ghl: SiteGhl,
+  folderIds: string[],
+  pages = MAX_PAGES,
+  until?: ReadonlySet<string>,
+) {
   const files: SiteMediaFile[] = [];
-  for (let page = 0; page < pages; page++) {
-    const { items, more } = await listMedia(ghl, { type: "file", parentId: folderId }, page * PAGE);
-    for (const { type, ...file } of items) if (type === "file") files.push(file);
-    if (!more) return { files, more: false };
+  const seen = () =>
+    until !== undefined && [...until].every((id) => files.some((f) => f.id === id));
+  let read = 0;
+  for (const folderId of folderIds) {
+    for (let page = 0; ; page++) {
+      if (read >= pages) return { files, more: true };
+      read++;
+      const { items, more } = await listMedia(
+        ghl,
+        { type: "file", parentId: folderId },
+        page * PAGE,
+      );
+      for (const { type, ...file } of items) if (type === "file") files.push(file);
+      if (seen()) return { files, more };
+      if (!more) break;
+    }
   }
-  return { files, more: true };
+  return { files, more: false };
 }
 
 /** Whether the agency's GHL connection may write to the Media Library. */
@@ -244,7 +291,7 @@ export async function uploadSiteFile(
   if (!canWriteMedia(ghl)) return refuse(403, "This site's HighLevel connection can't keep files.");
   const name = safeName(file.name);
   try {
-    const folderId = await siteFolder(ghl, row.site.id, true);
+    const folderId = await uploadFolder(ghl, row.site.id);
     const sent = await ghlRequest<{ fileId?: string; url?: string }>(
       op("medias.upload-media-content"),
       ghl.session,
@@ -252,13 +299,23 @@ export async function uploadSiteFile(
         body: {
           file: new File([file], name, { type: contentType }),
           name,
-          ...(folderId ? { parentId: folderId } : {}),
+          parentId: folderId,
         },
       },
       ghl.options,
     );
     const url = sent.url ?? "";
     if (!sent.fileId || !isGhlStorageUrl(url, row.location.ghlLocationId)) {
+      // Kept, but not where Locus can vouch for it: take it back rather than leave a stray.
+      console.error(`GHL kept a file for site ${row.site.id} at an unexpected address`);
+      if (sent.fileId && /^[A-Za-z0-9]{1,64}$/.test(sent.fileId)) {
+        await ghlRequest(
+          op("medias.delete-media-content"),
+          ghl.session,
+          { path: { id: sent.fileId } },
+          ghl.options,
+        ).catch((error) => logGhlFailure(`Taking back a file for site ${row.site.id}`, error));
+      }
       return refuse(502, "The file couldn't be kept just now. Try again.");
     }
     return { status: 200, body: { fileId: sent.fileId, url, name, contentType, size: file.size } };
@@ -268,7 +325,10 @@ export async function uploadSiteFile(
   }
 }
 
-/** Deletes some of the site's files. Ids that aren't in the site's folder are refused, all or none. */
+/**
+ * Deletes some of the site's files. Only ids found in the site's folders reach GHL; the others
+ * are skipped (already gone, or never the site's), so a retry after a partial failure works.
+ */
 export async function deleteSiteFiles(
   deps: SiteFilesDeps,
   input: { siteId: string; authorization: string | null; body: unknown },
@@ -285,13 +345,23 @@ export async function deleteSiteFiles(
     return refuse(400, `Give the ids of up to ${MAX_DELETE} files to delete.`);
   }
   const ids = [...new Set(given as string[])];
+  const limits = { ...SITE_FILE_LIMITS, ...deps.limits };
+  const now = deps.now?.() ?? Date.now();
+  const wait = await consumeSiteLimits(deps, row.site.id, null, limits, now, "file-delete");
+  if (wait !== null) {
+    return {
+      status: 429,
+      body: { error: "Too many deletes just now. Try again in a little while." },
+      retryAfterSeconds: wait,
+    };
+  }
   const ghl = await siteGhl(deps, row.location);
   if (!canWriteMedia(ghl)) return refuse(403, "This site's HighLevel connection can't keep files.");
   try {
-    const folderId = await siteFolder(ghl, row.site.id, false);
-    const mine = new Set(folderId ? (await folderFiles(ghl, folderId)).files.map((f) => f.id) : []);
-    if (ids.some((id) => !mine.has(id))) return refuse(400, "That isn't one of this site's files.");
-    for (const id of ids) {
+    const wanted = new Set(ids);
+    const listed = await folderFiles(ghl, await siteFolders(ghl, row.site.id), MAX_PAGES, wanted);
+    const mine = ids.filter((id) => listed.files.some((f) => f.id === id));
+    for (const id of mine) {
       await ghlRequest(
         op("medias.delete-media-content"),
         ghl.session,
@@ -299,7 +369,7 @@ export async function deleteSiteFiles(
         ghl.options,
       );
     }
-    return { status: 200, body: { deleted: ids.length } };
+    return { status: 200, body: { deleted: mine.length } };
   } catch (error) {
     logGhlFailure(`Deleting files for site ${row.site.id}`, error);
     return refuse(502, "The files couldn't be deleted just now. Try again.");
@@ -324,7 +394,9 @@ export async function siteFilesOverview(
     );
   if (!backend) throw new ConnectError("This site doesn't keep files.");
   const ghl = await siteGhl(deps, client.location);
-  const folderId = await siteFolder(ghl, backend.siteId, false);
-  if (!folderId) return { files: [], more: false };
-  return folderFiles(ghl, folderId, 1);
+  if (!ghl.scopes.includes("medias.readonly") && !canWriteMedia(ghl)) {
+    throw new ConnectError("This client's HighLevel connection can't read its Media Library.");
+  }
+  const folders = await siteFolders(ghl, backend.siteId);
+  return folderFiles(ghl, folders, folders.length);
 }
