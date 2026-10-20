@@ -21,6 +21,25 @@ export const SITE_DATABASE_ENV = {
   filesKey: "SITE_FILES_KEY",
 } as const;
 
+/** The largest file a site's member may upload. */
+export const MAX_SITE_FILE_BYTES = 25 * 1024 * 1024;
+
+/** What a site's members may upload: pictures and everyday documents. Never HTML or SVG. */
+export const SITE_FILE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/avif",
+  "application/pdf",
+  "text/plain",
+  "text/csv",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+] as const;
+
 const FILE = /^db\/migrations\/(\d{4}_[a-z0-9_]+)\.sql$/;
 
 export interface SiteMigration {

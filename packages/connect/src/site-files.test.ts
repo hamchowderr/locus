@@ -14,6 +14,7 @@ import {
   memoryFileStore,
   readSiteFile,
   type SiteFilesDeps,
+  siteFileHeaders,
   siteFilesKey,
   siteFilesOverview,
   startSiteFileUpload,
@@ -85,6 +86,7 @@ describe("a site's files", () => {
     const { pathname, token } = answer.body as { pathname: string; token: string };
     expect(pathname).toMatch(new RegExp(`^sites/${SITE}/[0-9a-f-]{36}/My-Photo-1-.png$`));
     expect(token).toBe("memory-token-1");
+    expect(answer.body).toMatchObject({ contentType: "image/png" });
     expect(store.tokens).toEqual([
       { pathname, contentType: "image/png", maxBytes: 10, validUntil: 1_000 + 10 * 60 * 1000 },
     ]);
@@ -124,8 +126,9 @@ describe("a site's files", () => {
   });
 
   it("reads and deletes only the site's own files", async () => {
-    const mine = `sites/${SITE}/abc/photo.png`;
-    const theirs = `sites/${OTHER}/abc/photo.png`;
+    const folder = "0b9c1f2e-3d4a-4b5c-8d6e-7f8091a2b3c4";
+    const mine = `sites/${SITE}/${folder}/photo.png`;
+    const theirs = `sites/${OTHER}/${folder}/photo.png`;
     for (const pathname of [mine, theirs]) {
       store.files.set(pathname, {
         bytes: new TextEncoder().encode("png"),
@@ -140,7 +143,19 @@ describe("a site's files", () => {
     });
     expect(read.status).toBe(200);
     if (read.status === 200) expect(await new Response(read.body).text()).toBe("png");
-    for (const pathname of [theirs, `sites/${SITE}/../${OTHER}/abc/photo.png`, `sites/${SITE}/`]) {
+    for (const pathname of [
+      theirs,
+      `sites/${SITE}/`,
+      `sites/${SITE}/photo.png`,
+      `sites/${SITE}/../${OTHER}/${folder}/photo.png`,
+      // A URL parser turns these into a step up, into the other site's folder.
+      `sites/${SITE}/%2e%2e/${OTHER}/${folder}/photo.png`,
+      `sites/${SITE}/.%2E/${OTHER}/${folder}/photo.png`,
+      `sites/${SITE}/${folder}\\..\\..\\${OTHER}\\${folder}\\photo.png`,
+      `sites/${SITE}/${folder}/photo.png?x`,
+      `sites/${SITE}/${folder}/photo.png#x`,
+      `sites/${SITE}/${folder}/.hidden`,
+    ]) {
       expect(
         (await readSiteFile(deps, { siteId: SITE, authorization: bearer(SITE), pathname })).status,
       ).toBe(404);
@@ -165,14 +180,15 @@ describe("a site's files", () => {
   });
 
   it("lists the files on the Database page, for the session's client only", async () => {
-    store.files.set(`sites/${SITE}/a/one.pdf`, {
+    const one = `sites/${SITE}/0b9c1f2e-3d4a-4b5c-8d6e-7f8091a2b3c4/one.pdf`;
+    store.files.set(one, {
       bytes: new Uint8Array(3),
       contentType: "application/pdf",
       uploadedAt: now,
     });
     const owner = await authorizeClient(db, ctx, "client-1");
     expect((await siteFilesOverview(deps, owner, { siteId: SITE })).files).toEqual([
-      { pathname: `sites/${SITE}/a/one.pdf`, size: 3, uploadedAt: now },
+      { pathname: one, size: 3, uploadedAt: now },
     ]);
     const other = await authorizeClient(db, ctx, "client-2");
     await expect(siteFilesOverview(deps, other, { siteId: SITE })).rejects.toBeInstanceOf(
@@ -182,5 +198,15 @@ describe("a site's files", () => {
     // Removing the site's database takes its files with it.
     await removeSiteBackend({ db, provisioner, files: store }, ctx, owner, { siteId: SITE });
     expect(store.files.size).toBe(0);
+  });
+
+  it("sends a file so the browser never runs it as a page", () => {
+    expect(siteFileHeaders("text/csv")).toMatchObject({
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "sandbox; default-src 'none'",
+      "content-disposition": "attachment",
+    });
+    expect(siteFileHeaders("image/png")["content-disposition"]).toBeUndefined();
+    expect(siteFileHeaders("application/pdf")["content-disposition"]).toBeUndefined();
   });
 });

@@ -2,6 +2,7 @@ import {
   deleteSiteFiles,
   readSiteFile,
   type SiteFileAnswer,
+  siteFileHeaders,
   startSiteFileUpload,
 } from "@locus/connect";
 import { NotConfigured } from "@/lib/locus";
@@ -12,7 +13,7 @@ import { siteFilesDeps } from "@/lib/site-files";
  * the site's member first. The site proves itself with its files key (`Authorization: Bearer`);
  * the client is read from the site's registry row, never from the request.
  *
- * - `POST upload` `{ name, contentType, size }` → `{ pathname, token, validUntil }`
+ * - `POST upload` `{ name, contentType, size }` → `{ pathname, token, validUntil, contentType }`
  * - `GET read?pathname=…` → the file's bytes
  * - `POST delete` `{ pathnames }` → `{ deleted }`
  */
@@ -88,8 +89,7 @@ export async function GET(request: Request, { params }: Params) {
     return new Response(result.body, {
       headers: {
         ...noStore,
-        "content-type": result.contentType,
-        "x-content-type-options": "nosniff",
+        ...siteFileHeaders(result.contentType),
         ...(result.size === null ? {} : { "content-length": String(result.size) }),
       },
     });
