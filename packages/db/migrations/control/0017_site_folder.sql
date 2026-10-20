@@ -1,1 +1,1 @@
-ALTER TABLE `site` ADD `folder` text;
+ALTER TABLE `site` ADD `folder_name` text;
