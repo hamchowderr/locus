@@ -27,6 +27,11 @@ describe("the products a site's code sells", () => {
     ]);
   });
 
+  it("reads props written with spaces around the equals sign", () => {
+    const files = [page('<BuyButton productId = "prod6"\n  priceId= {"price6"} />')];
+    expect(checkoutItems(files)).toEqual([{ productId: "prod6", priceId: "price6" }]);
+  });
+
   it("ignores ids worked out at run time, half-written buttons and other files", () => {
     const files = [
       page(
