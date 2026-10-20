@@ -98,11 +98,14 @@ export async function connectAgency(
   return { companyId: grant.companyId, ...(await syncLocations(deps, organizationId)) };
 }
 
-/** A current agency token for an organisation's GHL connection, renewed when close to expiry. */
+/**
+ * A current agency token for an organisation's GHL connection, renewed when close to expiry,
+ * with the scopes GHL granted it (as its last token response said).
+ */
 export async function agencyToken(
   deps: Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now">,
   organizationId: string,
-): Promise<{ token: string; companyId: string }> {
+): Promise<{ token: string; companyId: string; scopes: readonly string[] }> {
   const [connection] = await deps.db
     .select()
     .from(agencyGhlConnection)
@@ -117,7 +120,11 @@ export async function agencyToken(
     grant = await refreshGrant(deps.ghl, grant, deps.http, now);
     await deps.secrets.set(connection.secretRef, JSON.stringify(grant));
   }
-  return { token: grant.accessToken, companyId: grant.companyId };
+  return {
+    token: grant.accessToken,
+    companyId: grant.companyId,
+    scopes: (grant.scopes ?? "").split(/\s+/).filter(Boolean),
+  };
 }
 
 /**

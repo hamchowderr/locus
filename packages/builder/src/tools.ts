@@ -1,8 +1,9 @@
-import { CrmMediaError, type MediaFormat } from "@locus/connect";
+import { amountText, CrmMediaError, type MediaFormat } from "@locus/connect";
 import { InvalidPathError, type SiteRuntime } from "@locus/sandbox";
 import {
   bookingComponentFile,
   briefForAgent,
+  buyButtonFile,
   calendarEmbedFile,
   DesignBrief,
   GHL_TRACKING_PATH,
@@ -110,6 +111,8 @@ const CRM_ACTIONS = [
   "calendars",
   "add_booking",
   "add_calendar_embed",
+  "products",
+  "add_checkout",
   "media",
   "use_media",
   "add_tracking",
@@ -931,7 +934,11 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "components/booking.tsx, the site's own booking UI (<Booking calendarId=... />). " +
       "add_calendar_embed: write components/calendar-embed.tsx, GHL's own booking widget " +
       "(<CalendarEmbed src=embedUrl />). An existing file is kept unless `overwrite`. Load the " +
-      "site-booking skill first. media: the client's Media Library images (id, name, format), " +
+      "site-booking skill first. products: the client's products with their one-time prices " +
+      "(productId, priceId, names, amount as GHL lists it). add_checkout: write " +
+      "components/buy-button.tsx (<BuyButton productId=... priceId=... />), which sells one " +
+      "price through a CRM invoice; load the site-checkout skill first. media: the client's " +
+      "Media Library images (id, name, format), " +
       "newest first; `search` matches names. use_media: copy image `id` into the site `as` " +
       "favicon (the site's icon), share (the link-preview image) or image (under public/, at " +
       "`path` if given); pass the same `search` it was found with. add_tracking: put the CRM's " +
@@ -1000,6 +1007,45 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           case "add_calendar_embed":
             return addPiece(session, calendarEmbedFile(), input.overwrite ?? false);
+          case "products": {
+            if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+            const products = await session.crm.products();
+            if (products.length === 0) {
+              return {
+                products: "",
+                note:
+                  "The client has no products with a one-time price. Ask them to add one in " +
+                  "their CRM (Payments → Products).",
+              };
+            }
+            return {
+              // One line per price, as text: names are the client's own and are screened as data.
+              products: products
+                .flatMap((p) =>
+                  p.prices.map(
+                    (price) =>
+                      `productId: ${p.id} | priceId: ${price.id} | product: ${p.name} | ` +
+                      `price: ${price.name} | amount: ${amountText(price.amount, price.currency)}`,
+                  ),
+                )
+                .join("\n"),
+            };
+          }
+          case "add_checkout": {
+            const added = await addPiece(session, buyButtonFile(), input.overwrite ?? false);
+            // As for booking: a site made before checkout lacks Locus's route (and lib/locus.ts
+            // its siteApi); the preview needs both now, not only after the next publish.
+            await session.workspace.writeFile(LOCUS_PROXY_PATH, locusProxyFile().content);
+            const settings = await session.workspace.readFile(LOCUS_SETTINGS_PATH);
+            if (typeof settings !== "string" || !settings.includes("siteApi")) {
+              const { path, content } = locusSettingsFile({ leadEndpoint: null, siteApi: null });
+              await session.workspace.writeFile(path, content);
+            }
+            return {
+              ...added,
+              note: 'Use <BuyButton productId="<productId>" priceId="<priceId>" /> with both ids written out as text, copied from crm products; never invent them. Show the price on the page exactly as products lists it: the invoice charges GHL\'s price, whatever the page says.',
+            };
+          }
           case "media": {
             if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
             const media = await session.crm.media(input.search);
