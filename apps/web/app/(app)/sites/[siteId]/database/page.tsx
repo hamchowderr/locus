@@ -224,7 +224,9 @@ export default async function SiteDatabase({
                           {t.name}
                         </Link>
                       )}
-                      {` · ${t.rows} ${t.rows === 1 ? "row" : "rows"}`}
+                      {t.rows === null
+                        ? " · can't be read"
+                        : ` · ${t.rows} ${t.rows === 1 ? "row" : "rows"}`}
                     </p>
                     <p className="text-xs text-neutral-500">
                       {LOGIN_SECRET_TABLES.has(t.name)

@@ -1,4 +1,4 @@
-import { type Client, createClient, type InValue } from "@libsql/client";
+import { type Client, createClient, type InValue, LibsqlError } from "@libsql/client";
 
 // Reads an app-style site's own database for the Locus dashboard. The site's app owns its
 // schema (the agent writes it through chat), so nothing here assumes a table exists: every
@@ -14,7 +14,8 @@ export interface SiteColumn {
 export interface SiteTable {
   name: string;
   columns: SiteColumn[];
-  rows: number;
+  /** Null when the table can't be read, such as a search table whose source table is gone. */
+  rows: number | null;
 }
 
 export interface SiteRows {
@@ -82,7 +83,13 @@ export async function listSiteTables(db: Client): Promise<SiteTable[]> {
   const tables: SiteTable[] = [];
   for (const name of await tableNames(db)) {
     const info = await db.execute(`pragma table_info(${quote(name)})`);
-    const count = await db.execute(`select count(*) as n from ${quote(name)}`);
+    // One broken table (a search table whose source table was dropped) mustn't hide the rest.
+    const count = await db
+      .execute(`select count(*) as n from ${quote(name)}`)
+      .catch((error: unknown) => {
+        if (error instanceof LibsqlError) return null;
+        throw error;
+      });
     tables.push({
       name,
       columns: info.rows.map((row) => ({
@@ -91,7 +98,7 @@ export async function listSiteTables(db: Client): Promise<SiteTable[]> {
         notNull: Number(row.notnull) === 1,
         primaryKey: Number(row.pk) > 0,
       })),
-      rows: Number(count.rows[0]?.n ?? 0),
+      rows: count ? Number(count.rows[0]?.n ?? 0) : null,
     });
   }
   return tables;
