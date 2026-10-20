@@ -12,11 +12,14 @@
  * - Its runs carry the starting run's request context (the member's session, so every GHL call
  *   still runs the staff check, and the host's values), minus Mastra's own keys.
  * - A run that read untrusted content approves every change, and a thread starts from the brief
- *   alone, so in such a run `start_thread` itself waits for the person's yes.
+ *   alone, so in such a run `start_thread` itself waits for the person's yes, and the thread is
+ *   kept as `untrusted`: every run in it is tainted (see `kit.ts`), so its changes wait too.
+ * - A report carries the thread's own words into the main chat, so what reads like
+ *   instructions in it is withheld, as in any GHL data.
  * - Its sessions get no grants: Locus's approval rules hold there as everywhere.
  */
 
-import { isTainted } from "@locus/harness";
+import { isTainted, withholdInstructions } from "@locus/harness";
 import type { AgentController } from "@mastra/core/agent-controller";
 import type { MastraStorage } from "@mastra/core/storage";
 import { createWorkThreads, type WorkThreads } from "./mastra/lib/work-threads.ts";
@@ -33,6 +36,11 @@ export function clientWorkThreads(storage: MastraStorage) {
     getController: () => controller,
     storage,
     requireApproval: isTainted,
+    startsUntrusted: isTainted,
+    screenReport: (text) => {
+      const screened = withholdInstructions(text).value;
+      return typeof screened === "string" ? screened : "";
+    },
   });
   return {
     /** The `start_thread` tool, for `createLocusController({ tools })`. */
@@ -41,6 +49,8 @@ export function clientWorkThreads(storage: MastraStorage) {
     attach(made: AgentController) {
       attached.set(made, threads);
       attach(made);
+      // Threads left working or waiting by an earlier process show as stopped.
+      void threads.recover().catch(() => undefined);
     },
   };
 }
