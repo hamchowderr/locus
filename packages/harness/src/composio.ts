@@ -185,8 +185,12 @@ export interface ComposioConnectorConfig {
 
 const READ_ONLY_TAG = "readOnlyHint";
 const DESTRUCTIVE_TAG = "destructiveHint";
-/** A tool named for deleting, should its app not tag it so: GMAIL_DELETE_MESSAGE, X_REMOVE_Y. */
-const DELETING_NAME = /(^|_)(DELETE|DELETES|REMOVE|REMOVES|TRASH|DESTROY|PURGE|ERASE|WIPE)(_|$)/i;
+/**
+ * A tool named for deleting or undoing something, should its app not tag it so:
+ * GMAIL_DELETE_MESSAGE, GOOGLESHEETS_CLEAR_VALUES, SLACK_ARCHIVE_CONVERSATION.
+ */
+const DELETING_NAME =
+  /(^|_)(DELETE|REMOVE|TRASH|DESTROY|PURGE|ERASE|WIPE|CLEAR|ARCHIVE|CANCEL|REVOKE|EMPTY|DROP|TRUNCATE|UNINSTALL|DISCARD)S?(_|$)/i;
 
 export function createComposioConnector({
   apiKey,

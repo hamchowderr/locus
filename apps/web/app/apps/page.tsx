@@ -55,11 +55,13 @@ export default async function Apps({ searchParams }: { searchParams: Promise<Sea
     );
   }
   const ctx = sessionContext(current);
-  const listing = await clientApps(locus().db, ctx, connections, clientDbFromEnv()).catch((e) => {
-    if (e instanceof ClientAccessDenied) return null;
-    console.error("Apps page: listing failed", e);
-    return { problem: true as const };
-  });
+  const listing = await Promise.resolve()
+    .then(() => clientApps(locus().db, ctx, connections, clientDbFromEnv()))
+    .catch((e) => {
+      if (e instanceof ClientAccessDenied) return null;
+      console.error("Apps page: listing failed", e);
+      return { problem: true as const };
+    });
   if (!listing) redirect("/clients");
 
   return (
