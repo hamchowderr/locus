@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import { organization, subscription, usageEvent } from "@locus/db/control";
-import { isNull } from "drizzle-orm";
+import { eq, isNull } from "drizzle-orm";
 import type Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -121,6 +121,8 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+let seq = 0;
+
 async function event(id: string, organizationId: string, overageCredits: number, minute = 0) {
   await db.insert(usageEvent).values({
     id,
@@ -129,7 +131,7 @@ async function event(id: string, organizationId: string, overageCredits: number,
     kind: "sandbox",
     credits: overageCredits + 100,
     overageCredits,
-    createdAt: new Date(NOW.getTime() - 3_600_000 + minute * 60_000),
+    createdAt: new Date(NOW.getTime() - 3_600_000 + minute * 60_000 + seq++),
   });
 }
 
@@ -209,6 +211,60 @@ describe("reportOverage", () => {
     await event("e2", "agency-a", 250, 1);
     expect(await reportOverage(db, stripe, { now: NOW })).toEqual({ reported: 2, pending: 0 });
     expect(sent(calls)).toEqual([expect.objectContaining({ identifier: "e2" })]);
+  });
+
+  it("never lets an agency it can't bill hold up the others, however much it has waiting", async () => {
+    const { stripe, calls } = fakeStripe();
+    // agency-c's plan was cancelled: its usage waits, and there is a lot of it, oldest first.
+    const rows = (prefix: string, organizationId: string, from: number) =>
+      Array.from({ length: 450 }, (_, i) => ({
+        id: `${prefix}${i}`,
+        organizationId,
+        locationId: `${organizationId}-1`,
+        kind: "sandbox" as const,
+        credits: 110,
+        overageCredits: 10,
+        createdAt: new Date(from + i),
+      }));
+    await db.insert(usageEvent).values(rows("c", "agency-c", NOW.getTime() - 7_200_000));
+    await db.insert(usageEvent).values(rows("a", "agency-a", NOW.getTime() - 3_600_000));
+    expect(await reportOverage(db, stripe, { now: NOW })).toEqual({ reported: 450, pending: 450 });
+    expect(sent(calls)).toHaveLength(450);
+  });
+
+  it("bills the agency's current subscription, not an old overdue one", async () => {
+    await db.insert(subscription).values({
+      id: "s-a-old",
+      plan: "starter",
+      referenceId: "agency-a",
+      status: "unpaid",
+      stripeCustomerId: "cus_a",
+      stripeSubscriptionId: "sub_old",
+    });
+    // The old row is listed first: the current one is written again after it.
+    const [current] = await db.select().from(subscription).where(eq(subscription.id, "s-a"));
+    await db.delete(subscription).where(eq(subscription.id, "s-a"));
+    if (current) await db.insert(subscription).values(current);
+    const { stripe, calls } = fakeStripe();
+    await event("e1", "agency-a", 1_500);
+    await reportOverage(db, stripe, { now: NOW });
+    expect(calls.filter((c) => c.method === "subscriptionItems.create")).toEqual([
+      {
+        method: "subscriptionItems.create",
+        params: expect.objectContaining({ subscription: "sub_a" }),
+      },
+    ]);
+  });
+
+  it("stops starting new pages once the deadline passes", async () => {
+    const { stripe, calls } = fakeStripe();
+    await event("e1", "agency-a", 1_500);
+    const past = new Date(Date.now() - 1);
+    expect(await reportOverage(db, stripe, { now: NOW, deadline: past })).toEqual({
+      reported: 0,
+      pending: 1,
+    });
+    expect(sent(calls)).toEqual([]);
   });
 
   it("reports one agency only when asked to", async () => {

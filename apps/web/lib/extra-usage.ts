@@ -34,11 +34,13 @@ export async function prepareExtraUsage(organizationId: string): Promise<string 
 }
 
 /** Sends waiting extra usage to Stripe: every agency's, or one agency's. Never throws. */
-export async function sendExtraUsage(organizationId?: string): Promise<OverageReport | null> {
+export async function sendExtraUsage(
+  opts: { organizationId?: string; deadline?: Date } = {},
+): Promise<OverageReport | null> {
   const s = extraUsageStripe();
   if (!s) return null;
   try {
-    return await reportOverage(locus().db, s, organizationId ? { organizationId } : {});
+    return await reportOverage(locus().db, s, opts);
   } catch (error) {
     console.error("[locus] sending extra usage to Stripe failed:", error);
     return null;

@@ -321,7 +321,7 @@ export async function subscribe(form: FormData) {
 /**
  * Turns the session agency's extra usage on or off, with a monthly limit in US dollars. Owners
  * and admins only (`setUsageOverage`). Turning it on first adds the metered price to the agency's
- * subscription, so no extra credit is ever used without a way to bill it.
+ * subscription, so Stripe can bill extra credits from the first one.
  */
 export async function setExtraUsage(form: FormData) {
   const current = await currentSession();
@@ -351,7 +351,7 @@ export async function setExtraUsage(form: FormData) {
   }
   if (refusal) back("/billing", new Error(refusal));
   // Usage from before it was turned off is still owed; send it now rather than at the next run.
-  if (!enabled) await sendExtraUsage(organizationId);
+  if (!enabled) await sendExtraUsage({ organizationId });
   revalidatePath("/billing");
   redirect("/billing?saved=1");
 }
