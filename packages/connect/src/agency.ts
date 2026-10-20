@@ -136,14 +136,28 @@ export async function clientGhlSession(
   deps: ConnectDeps,
   client: AuthorizedClient,
 ): Promise<GhlSession> {
+  return (await clientGhl(deps, client)).session;
+}
+
+/**
+ * `clientGhlSession`, with the scopes the agency's connection was granted: what GHL lets the
+ * session do (e.g. `medias.write` before writing to the Media Library).
+ */
+export async function clientGhl(
+  deps: ConnectDeps,
+  client: AuthorizedClient,
+): Promise<{ session: GhlSession; scopes: readonly string[] }> {
   assertAuthorizedClient(client);
   const agency = await agencyToken(deps, client.location.organizationId);
   const ghlLocationId = client.location.ghlLocationId;
   return {
-    token: await mintLocationToken(agency, ghlLocationId, deps.http),
-    tokenKind: "location",
-    locationId: ghlLocationId,
-    companyId: agency.companyId,
+    session: {
+      token: await mintLocationToken(agency, ghlLocationId, deps.http),
+      tokenKind: "location",
+      locationId: ghlLocationId,
+      companyId: agency.companyId,
+    },
+    scopes: agency.scopes,
   };
 }
 

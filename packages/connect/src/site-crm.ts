@@ -1,5 +1,8 @@
 import { type GhlRequestOptions, type GhlSession, ghlRequest, sharedRateLimiter } from "@locus/ghl";
 import { operationById } from "@locus/skills";
+import { isGhlStorageUrl, mediaFolder, uploadMedia } from "./media-library.ts";
+
+export { isGhlStorageUrl };
 
 // What the site builder may read from the client's sub-account to wire a site into it:
 // calendars to book on, products to sell, and images from the Media Library (a logo for the
@@ -11,6 +14,10 @@ import { operationById } from "@locus/skills";
 // here, not in the sandbox: only from the file's address as GHL lists it for this sub-account,
 // never one the model names, only from GHL's own storage hosts, only an image, and no bigger
 // than a site file may be.
+//
+// One write: an image the builder generates is also kept in the client's Media Library (in a
+// folder per site), so the client owns a copy in their own storage. Only when the agency's
+// connection was granted `medias.write`; the site keeps its own copy either way.
 
 /** A calendar the builder can put on a site. */
 export interface CrmCalendar {
@@ -56,7 +63,13 @@ export interface CrmMediaFile {
   bytes: Uint8Array;
 }
 
-/** The sub-account reads the builder uses. */
+/** An image kept in the client's Media Library. */
+export interface CrmSavedMedia {
+  fileId: string;
+  url: string;
+}
+
+/** What the builder uses of the sub-account: reads, and keeping its generated images. */
 export interface SiteCrm {
   calendars(): Promise<CrmCalendar[]>;
   /** Up to `MAX_PRODUCTS` products, newest first, each with its one-time prices. */
@@ -65,7 +78,27 @@ export interface SiteCrm {
   media(search?: string): Promise<CrmMedia[]>;
   /** One image from `media`, by id, downloaded; pass the `search` it was found with. */
   mediaFile(id: string, search?: string): Promise<CrmMediaFile>;
+  /**
+   * Keeps a copy of an image the builder made for `siteId` in the Media Library, in the site's
+   * folder (`siteImagesFolderName`). Throws `CrmMediaError` when the connection may not write
+   * there.
+   */
+  saveImage(input: {
+    siteId: string;
+    name: string;
+    bytes: Uint8Array;
+    contentType: SavedImageType;
+  }): Promise<CrmSavedMedia>;
 }
+
+/** The image types the builder keeps in the Media Library. */
+export type SavedImageType = "image/png" | "image/jpeg" | "image/webp";
+
+/** The scope GHL asks for to write to the Media Library. */
+export const MEDIA_WRITE_SCOPE = "medias.write";
+
+/** The Media Library folder a site's generated images are kept in. */
+export const siteImagesFolderName = (siteId: string) => `Site images ${siteId}`;
 
 /** A Media Library read the builder can explain to the person. */
 export class CrmMediaError extends Error {
@@ -98,27 +131,6 @@ export const MAX_MEDIA_BYTES = 4 * 1024 * 1024;
 /** How many of the newest files are searched for an id. */
 const MEDIA_SCAN = 500;
 const MEDIA_PAGE = 100;
-
-/**
- * GHL's own file storage. A listed file's address must be on one of these, over https; any
- * other address is refused, so a planted address can't make Locus fetch something else. On the
- * bucket every sub-account shares, only this sub-account's own folder counts.
- */
-export function isGhlStorageUrl(value: string, locationId?: string): boolean {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
-  const host = url.hostname.toLowerCase();
-  if (host === "storage.googleapis.com") {
-    const folder = locationId ? `/msgsndr/${locationId}/` : "/msgsndr/";
-    return url.pathname.startsWith(folder);
-  }
-  return host === "assets.cdn.filesafe.space" || host === "images.leadconnectorhq.com";
-}
 
 /** The image format a file name says, or null for anything else. */
 export function mediaFormat(name: string): MediaFormat | null {
@@ -345,17 +357,50 @@ export async function listProducts(
 }
 
 /**
- * The builder's reads for one client. `open` mints the client's GHL session for each read (the
- * host's `clientGhlSession`, after the staff check) and says how to reach GHL; nothing is kept
- * between reads. `download` fetches Media Library files (tests pass a fake).
+ * Keeps an image in the site's folder of the Media Library, making the folder the first time.
+ * The caller has checked the connection may write there.
+ */
+export async function saveSiteImage(
+  session: GhlSession,
+  options: GhlRequestOptions,
+  input: { siteId: string; name: string; bytes: Uint8Array; contentType: SavedImageType },
+): Promise<CrmSavedMedia> {
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(input.siteId)) throw new CrmMediaError("That isn't a site.");
+  const name =
+    input.name
+      .split(/[\\/]/)
+      .pop()
+      ?.replace(/[^\w.-]+/g, "-")
+      .slice(-80)
+      .replace(/^[.-]+/, "") || "image.png";
+  const ghl = { session, options };
+  const parentId = await mediaFolder(ghl, siteImagesFolderName(input.siteId));
+  return uploadMedia(ghl, {
+    // A copy, so the File owns a plain ArrayBuffer whatever backs the bytes.
+    file: new File([new Uint8Array(input.bytes)], name, { type: input.contentType }),
+    name,
+    parentId,
+  });
+}
+
+/**
+ * What the builder uses of one client. `open` mints the client's GHL session for each call (the
+ * host's `clientGhl`, after the staff check), says how to reach GHL, and gives the scopes the
+ * agency's connection was granted; nothing is kept between calls. `download` fetches Media
+ * Library files (tests pass a fake).
  */
 export function siteCrm(
-  open: () => Promise<{ session: GhlSession; http?: Pick<GhlRequestOptions, "fetch" | "baseUrl"> }>,
+  open: () => Promise<{
+    session: GhlSession;
+    http?: Pick<GhlRequestOptions, "fetch" | "baseUrl">;
+    /** The connection's granted scopes. Left out, nothing is written to the sub-account. */
+    scopes?: readonly string[];
+  }>,
   download: typeof fetch = fetch,
 ): SiteCrm {
   const opened = async () => {
-    const { session, http } = await open();
-    return { session, options: { ...http, rateLimiter: sharedRateLimiter } };
+    const { session, http, scopes } = await open();
+    return { session, options: { ...http, rateLimiter: sharedRateLimiter }, scopes: scopes ?? [] };
   };
   return {
     calendars: async () => {
@@ -373,6 +418,15 @@ export function siteCrm(
     mediaFile: async (id, search) => {
       const { session, options } = await opened();
       return downloadMedia(session, options, id, download, search);
+    },
+    saveImage: async (input) => {
+      const { session, options, scopes } = await opened();
+      if (!scopes.includes(MEDIA_WRITE_SCOPE)) {
+        throw new CrmMediaError(
+          "This client's HighLevel connection isn't allowed to add files to its Media Library.",
+        );
+      }
+      return saveSiteImage(session, options, input);
     },
   };
 }
