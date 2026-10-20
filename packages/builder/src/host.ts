@@ -299,7 +299,7 @@ export function usageMeter(
  */
 const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^Give the site a GitHub repository first\.$/,
-  /^Connect GitHub on the Connections page first\.$/,
+  /^Connect GitHub on the Integrations page first\.$/,
   /^The Locus GitHub app is no longer installed\. Connect GitHub again\.$/,
   /^GitHub refused\. Check on GitHub that the Locus app is still installed and has access to the site's repository\.$/,
   /^Locus can't reach [\w.-]+\/[\w.-]+ on GitHub\. Check that the Locus app has access to it\.$/,
@@ -320,7 +320,7 @@ const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^Locus couldn't make the site's database\. Try again\.$/,
   /^This site's database was removed, so Locus won't make a new one on its own\. Take the db\/migrations files out to publish it as a plain website\.$/,
   /^Vercel didn't (show|take|remove) the site's (database )?settings\. Try again\.$/,
-  /^Vercel refused\. Reconnect Vercel on the Connections page and allow access to all projects\.$/,
+  /^Vercel refused\. Reconnect Vercel on the Integrations page and allow access to all projects\.$/,
 ];
 
 const GENERIC_PUBLISH_ERROR =

@@ -1571,7 +1571,7 @@ describe("site creation limits and failures", () => {
 
 describe("what reaches the model from a publishing refusal", () => {
   it("passes Locus's own messages and hides GitHub's raw text", () => {
-    const known = "Connect GitHub on the Connections page first.";
+    const known = "Connect GitHub on the Integrations page first.";
     expect(publishMessage(new ConnectError(known))).toBe(known);
     expect(publishMessage(new ConnectError("GitHub didn't take the commit."))).toBe(
       "GitHub didn't take the commit.",

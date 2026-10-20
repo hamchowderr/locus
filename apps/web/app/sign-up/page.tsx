@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { safeNext } from "@/lib/next-path";
 import { signUp } from "../actions";
-import { Button, Field, Notice, Page } from "../ui";
+import { AuthPage, Button, Field, Notice } from "../ui";
 
 export default async function SignUp({
   searchParams,
@@ -11,15 +11,15 @@ export default async function SignUp({
   const { error, sent, next } = await searchParams;
   if (sent) {
     return (
-      <Page title="Check your email">
+      <AuthPage title="Check your email">
         <Notice tone="info">
           We sent you a link to verify your address. Open it to finish signing up.
         </Notice>
-      </Page>
+      </AuthPage>
     );
   }
   return (
-    <Page title="Create your Locus account">
+    <AuthPage title="Create your Locus account">
       {error && <Notice tone="error">{error}</Notice>}
       <form action={signUp} className="space-y-4">
         <input type="hidden" name="next" value={safeNext(next, "/onboarding")} />
@@ -41,6 +41,6 @@ export default async function SignUp({
           Sign in
         </Link>
       </p>
-    </Page>
+    </AuthPage>
   );
 }

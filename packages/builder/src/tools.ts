@@ -54,7 +54,7 @@ export class BuilderError extends Error {
 
 /**
  * Thrown by the host's `onVersionSaved` with a message written for the person (e.g. "Connect
- * GitHub on the Connections page first."). Any other error is reported generically, so a git
+ * GitHub on the Integrations page first."). Any other error is reported generically, so a git
  * host's raw error text never reaches the model.
  */
 export class PublishError extends Error {
