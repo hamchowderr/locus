@@ -31,13 +31,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ sit
   } catch {
     return Response.json({ error: "Send the changes as JSON." }, { status: 400 });
   }
-  const edits = VisualEdits.safeParse((body as { edits?: unknown } | null)?.edits);
+  const fields = (body ?? {}) as { edits?: unknown; draft?: unknown };
+  const edits = VisualEdits.safeParse(fields.edits);
+  const draft = typeof fields.draft === "string" ? fields.draft.slice(0, 128) : "";
   if (!edits.success) {
     return Response.json({ error: "Those changes couldn't be read." }, { status: 400 });
   }
   try {
     const client = await resolveActiveClient(locus().db, sessionContext(current));
-    const saved = await saveVisualEdits(siteBuilderDeps(), client, siteId, edits.data);
+    const saved = await saveVisualEdits(siteBuilderDeps(), client, siteId, edits.data, draft);
     return Response.json(saved, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     if (error instanceof ClientAccessDenied) {

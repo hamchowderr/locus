@@ -1,6 +1,7 @@
 import type { AuthorizedClient } from "@locus/auth";
 import {
   applyVisualEdits,
+  draftFingerprint,
   type VisualEdit,
   type VisualEditFailure,
   WorkspaceError,
@@ -16,7 +17,13 @@ export interface VisualEditsSaved {
   failed: VisualEditFailure[];
   /** Set when the version is saved but couldn't be sent to the site's repository. */
   publishError?: string;
+  /** The draft's fingerprint after the save, for the next save from the same preview. */
+  draft: string;
 }
+
+/** Said when the preview was made from older files than the draft has now. */
+export const PREVIEW_OUT_OF_DATE =
+  "The site changed since this preview loaded. Reload the preview and make the change again.";
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -28,12 +35,15 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  *
  * `client` must come from `resolveActiveClient` / `authorizeClient` for the signed-in session;
  * the staff check runs again and the site must be that client's, exactly as for the chat.
+ * `draft` is the fingerprint the preview was made from (`draftFingerprint`): the edits name
+ * places in those files, so a draft that has changed since refuses them all.
  */
 export async function saveVisualEdits(
   deps: SiteBuilderDeps,
   client: AuthorizedClient,
   siteId: string,
   edits: VisualEdit[],
+  draft: string,
 ): Promise<VisualEditsSaved> {
   const { resolve } = createSiteBuilder(deps, { client });
   const session = await resolve(
@@ -45,18 +55,17 @@ export async function saveVisualEdits(
   try {
     const { workspace } = session;
     const snapshot = await workspace.snapshot();
+    if (draftFingerprint(snapshot) !== draft) throw new WorkspaceError(PREVIEW_OUT_OF_DATE);
     const result = applyVisualEdits(snapshot, edits);
     if (result.files.length === 0) {
-      return { version: null, applied: 0, failed: result.failed };
+      return { version: null, applied: 0, failed: result.failed, draft };
     }
     // The site builder may have changed one of these files since the snapshot: never write
     // over its change with an edit worked out from the older file.
     for (const file of result.files) {
       const before = snapshot.find((f) => f.path === file.path)?.content;
       if ((await workspace.readFile(file.path)) !== before) {
-        throw new WorkspaceError(
-          "The site builder changed this page just now. Reload the preview and make the change again.",
-        );
+        throw new WorkspaceError(PREVIEW_OUT_OF_DATE);
       }
     }
     await workspace.writeFiles(result.files);
@@ -65,10 +74,11 @@ export async function saveVisualEdits(
       source: "edit",
       userId: session.userId ?? null,
     });
+    const saved = await workspace.snapshot();
     let publishError: string | undefined;
     if (version && session.onVersionSaved) {
       try {
-        const published = await session.onVersionSaved(version, await workspace.snapshot());
+        const published = await session.onVersionSaved(version, saved);
         if (published?.commitSha) {
           await workspace.setCommitSha(version.id, published.commitSha).catch(() => {});
         }
@@ -83,7 +93,7 @@ export async function saveVisualEdits(
     // if the sandbox can't be reached; the next preview start syncs it.
     await Promise.resolve()
       .then(async () =>
-        syncRuntime(await session.runtime(), await workspace.snapshot(), {
+        syncRuntime(await session.runtime(), saved, {
           editorOrigins: session.editorOrigins ?? [],
         }),
       )
@@ -94,6 +104,7 @@ export async function saveVisualEdits(
       version: version?.number ?? null,
       applied: result.applied,
       failed: result.failed,
+      draft: draftFingerprint(saved),
       ...(publishError ? { publishError } : {}),
     };
   } finally {

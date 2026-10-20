@@ -12,6 +12,7 @@ import {
   VisualEdits,
 } from "./visual-edits.ts";
 import {
+  draftFingerprint,
   editorOrigin,
   previewFiles,
   VISUAL_EDITS_SCRIPT_PATH,
@@ -329,6 +330,37 @@ export default () => services.map((s) => <img key={s.name} src={s.image} alt="" 
 });
 
 describe("review fixes", () => {
+  it("never turns a link held in a string into one a site can't use", () => {
+    const page = `function Social({ url }) { return <a href={url}>{url}</a>; }
+export default () => <Social url="https://example.com/us" />;
+`;
+    const edit = (to: string) =>
+      applyVisualEdits(
+        [{ path: "app/page.tsx", content: page }],
+        [
+          {
+            kind: "text",
+            target: `app/page.tsx:${page.indexOf("<a")}`,
+            from: "https://example.com/us",
+            to,
+          },
+        ],
+      );
+    expect(edit("javascript:alert(1)").failed[0]?.reason).toMatch(/isn't one a site can use/);
+    expect(edit("https://example.com/them").applied).toBe(1);
+  });
+
+  it("fingerprints the draft, and the preview's script carries it", () => {
+    const files = [
+      { path: "b.ts", content: "b" },
+      { path: "a.ts", content: "a" },
+    ];
+    const print = draftFingerprint(files);
+    expect(draftFingerprint([...files].reverse())).toBe(print);
+    expect(draftFingerprint([{ path: "a.ts", content: "a" }])).not.toBe(print);
+    expect(visualEditsScript([], print)).toContain(`var DRAFT = "${print}"`);
+  });
+
   it("refuses a value from data that an attribute elsewhere also holds", () => {
     const page = `function Tag({ label }) { return <span>{label}</span>; }
 export default () => <Tag label="Contact" />;
@@ -493,7 +525,7 @@ describe("previewFiles", () => {
     expect(() => parses(layout)).not.toThrow();
     expect(out.find((f) => f.path === "app/page.tsx")?.content).toContain(SOURCE_ATTR);
     expect(out.find((f) => f.path === VISUAL_EDITS_SCRIPT_PATH)?.content).toBe(
-      visualEditsScript(["https://locus.test"]),
+      visualEditsScript(["https://locus.test"], draftFingerprint(draft)),
     );
     // The draft itself is untouched.
     expect(draft.find((f) => f.path === "app/page.tsx")?.content).not.toContain(SOURCE_ATTR);

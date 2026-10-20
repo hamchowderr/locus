@@ -36,6 +36,8 @@ export interface SaveResult {
   applied: number;
   failed: { index: number; reason: string }[];
   publishError?: string;
+  /** The draft's fingerprint after the save. */
+  draft: string;
 }
 
 /**
@@ -111,6 +113,8 @@ export function useVisualEdits({
   enabledRef.current = enabled;
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
+  /** The draft the preview's page was made from, as its script reported it. */
+  const draftRef = useRef("");
 
   const send = useCallback(
     (message: Record<string, unknown>) => {
@@ -159,6 +163,7 @@ export function useVisualEdits({
       } else if (data.type === "ready") {
         setReady(true);
         if (typeof data.path === "string") setPath(data.path);
+        if (typeof data.draft === "string") draftRef.current = data.draft.slice(0, 128);
         if (data.theme && typeof data.theme === "object") {
           setTheme(
             Object.fromEntries(
@@ -238,7 +243,7 @@ export function useVisualEdits({
       const response = await fetch(`/api/sites/${encodeURIComponent(siteId)}/visual-edits`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ edits }),
+        body: JSON.stringify({ edits, draft: draftRef.current }),
       });
       const body = (await response.json().catch(() => null)) as
         | (SaveResult & { error?: string })
@@ -248,9 +253,17 @@ export function useVisualEdits({
         return null;
       }
       setFailures(body.failed.map((f) => f.reason));
-      // What wasn't saved stays pending (still shown in the page), to fix or discard.
+      if (typeof body.draft === "string") draftRef.current = body.draft;
+      // What wasn't saved stays pending (still shown in the page), to fix or discard, and so
+      // does anything changed while the save was on its way.
       const failed = new Set(body.failed.map((f) => f.index));
-      setPending(new Map(sent.filter((_, i) => failed.has(i))));
+      setPending((current) => {
+        const next = new Map(current);
+        sent.forEach(([key, edit], i) => {
+          if (!failed.has(i) && next.get(key) === edit) next.delete(key);
+        });
+        return next;
+      });
       send({ type: "clear" });
       onSaved?.(body);
       return body;
