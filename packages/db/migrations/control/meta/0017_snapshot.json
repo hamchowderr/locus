@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8f1fe531-0e1e-47a0-bf3e-5061194ec75c",
+  "id": "e3dfe3cf-7483-453f-9c8c-1feb1dedd05a",
   "prevId": "4d61f604-1731-4563-98ee-cb18ae484836",
   "tables": {
     "account": {
@@ -1463,13 +1463,6 @@
           "autoincrement": false,
           "default": "'draft'"
         },
-        "folder_name": {
-          "name": "folder_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1514,6 +1507,94 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "site_backend": {
+      "name": "site_backend",
+      "columns": {
+        "site_id": {
+          "name": "site_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "turso_db_name": {
+          "name": "turso_db_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "turso_db_hostname": {
+          "name": "turso_db_hostname",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(cast(unixepoch('subsecond') * 1000 as integer))"
+        }
+      },
+      "indexes": {
+        "site_backend_turso_db_name_unique": {
+          "name": "site_backend_turso_db_name_unique",
+          "columns": [
+            "turso_db_name"
+          ],
+          "isUnique": true
+        },
+        "site_backend_location_idx": {
+          "name": "site_backend_location_idx",
+          "columns": [
+            "location_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "site_backend_site_id_site_id_fk": {
+          "name": "site_backend_site_id_site_id_fk",
+          "tableFrom": "site_backend",
+          "tableTo": "site",
+          "columnsFrom": [
+            "site_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "site_backend_location_id_location_id_fk": {
+          "name": "site_backend_location_id_location_id_fk",
+          "tableFrom": "site_backend",
+          "tableTo": "location",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
           "onUpdate": "no action"
         }
       },

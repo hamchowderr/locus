@@ -41,6 +41,7 @@ import {
   organization,
   session,
   site,
+  siteBackend,
   subscription,
   usageEvent,
   usageLimit,
@@ -984,9 +985,11 @@ describe("deleting a site", () => {
     }
     const before = await tenantCounts(client, kept.siteId);
 
+    await runtimes.open(`${clientA}/${siteId}`);
     await deleteClientSite(deps(), ctx("owner"), client, siteId);
 
     expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(runtimes.runtimes.has(`${clientA}/${siteId}`)).toBe(false);
     expect(await activeSiteIdForSession(db, ctx("owner"), client)).toBeNull();
     const after = await tenantCounts(client, siteId);
     expect(after).toMatchObject({ versions: 0, drafts: 0, briefs: 0, leadDays: 0 });
@@ -1047,6 +1050,21 @@ describe("deleting a site", () => {
     await db.update(site).set(live).where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
       /unlink its Vercel project first/,
+    );
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
+  });
+
+  it("refuses a site with its own database, and leaves it as it was", async () => {
+    const { client, siteId } = await draft();
+    await db.insert(siteBackend).values({
+      siteId,
+      locationId: client.location.id,
+      tursoDbName: `site-${siteId}`,
+      tursoDbHostname: `site-${siteId}.local`,
+    });
+    await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
+      /own database/,
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });

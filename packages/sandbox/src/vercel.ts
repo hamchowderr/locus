@@ -81,6 +81,8 @@ const INSTALL_STAMP = "node_modules/.locus-install-stamp";
 /** Written under the project root once `onCreate` has completed for a sandbox. */
 const SEED_MARKER = ".locus/seeded";
 const TIMEOUT_TOLERANCE_MS = 250;
+/** How long each step of deleting a site's sandbox may take; the delete waits on it. */
+const DESTROY_TIMEOUT_MS = 15_000;
 
 /**
  * Reads `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID` and uses
@@ -137,6 +139,39 @@ export class VercelRuntimeProvider implements RuntimeProvider {
     }
     return runtime;
   }
+
+  /**
+   * Deletes the site's sandbox and the snapshots only it used. A sandbox that's gone is fine
+   * (on 410 `snapshot_not_found` the named record may stay, with nothing left in it). A runtime
+   * this process still holds for the site is not stopped first (stopping would snapshot it) but
+   * marked deleted, so a call already under way can't recreate the sandbox.
+   */
+  async destroy(key: string): Promise<void> {
+    if (!key) throw new Error("destroy() needs a site key");
+    this.runtimes.get(key)?.markDestroyed();
+    this.runtimes.delete(key);
+    const { Sandbox } = await import("@vercel/sandbox");
+    try {
+      const sandbox = await Sandbox.get({
+        name: sandboxName(key, this.config.namePrefix),
+        ...vercelCredentials(this.config),
+        signal: AbortSignal.timeout(DESTROY_TIMEOUT_MS),
+      });
+      await sandbox.delete({
+        deleteOrphanSnapshots: true,
+        signal: AbortSignal.timeout(DESTROY_TIMEOUT_MS),
+      });
+    } catch (error) {
+      if (!isGone(error)) throw error;
+    }
+  }
+}
+
+/** The SDK's credentials argument. With OIDC none are passed: the SDK reads the token itself. */
+function vercelCredentials(config: VercelSandboxConfig) {
+  return "oidc" in config
+    ? {}
+    : { token: config.token, teamId: config.teamId, projectId: config.projectId };
 }
 
 /** The SDK's APIError, duck-typed so this module never loads the SDK eagerly. */
@@ -171,6 +206,8 @@ class VercelSiteRuntime implements SiteRuntime {
   private sandbox: Sandbox | null = null;
   private opening: Promise<Sandbox> | null = null;
   private previewStart: Promise<{ url: string }> | null = null;
+  /** Set when the site was deleted: this runtime never opens or recreates a sandbox again. */
+  private destroyed = false;
 
   constructor(
     key: string,
@@ -205,7 +242,14 @@ class VercelSiteRuntime implements SiteRuntime {
     await this.ensure();
   }
 
+  /** The site was deleted (`VercelRuntimeProvider.destroy`). */
+  markDestroyed(): void {
+    this.destroyed = true;
+    this.sandbox = null;
+  }
+
   private ensure(): Promise<Sandbox> {
+    if (this.destroyed) return Promise.reject(new Error("This site was deleted."));
     if (this.pinned) return Promise.resolve(this.pinned);
     if (this.sandbox) return Promise.resolve(this.sandbox);
     if (!this.opening) {
@@ -218,15 +262,7 @@ class VercelSiteRuntime implements SiteRuntime {
 
   private async connect(): Promise<Sandbox> {
     const { Sandbox } = await import("@vercel/sandbox");
-    // With OIDC no credentials are passed: the SDK reads the deployment's token itself.
-    const credentials =
-      "oidc" in this.config
-        ? {}
-        : {
-            token: this.config.token,
-            teamId: this.config.teamId,
-            projectId: this.config.projectId,
-          };
+    const credentials = vercelCredentials(this.config);
     let created = false;
     const image =
       this.config.image ??
@@ -250,6 +286,11 @@ class VercelSiteRuntime implements SiteRuntime {
       });
     }
     await this.seed(sandbox, created);
+    if (this.destroyed) {
+      // Opened (maybe recreated) while the site was being deleted: delete it again.
+      await sandbox.delete({ deleteOrphanSnapshots: true }).catch(() => {});
+      throw new Error("This site was deleted.");
+    }
     // Published only now, so nobody gets an unseeded sandbox through ensure().
     this.sandbox = sandbox;
     return sandbox;
