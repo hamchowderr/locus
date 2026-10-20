@@ -1,4 +1,6 @@
+import { siteFacts, sitePages } from "../seo.ts";
 import type { SiteFile } from "../workspace.ts";
+import { withSearchFiles } from "./search.ts";
 
 // How a generated site's forms reach the client's CRM, without a credential in the site:
 //
@@ -18,26 +20,82 @@ export function leadEndpoint(locusUrl: string, siteId: string): string {
   return new URL(`/api/sites/${encodeURIComponent(siteId)}/leads`, locusUrl).toString();
 }
 
-/** `lib/locus.ts`: null outside a published site. */
-export function locusSettingsFile(settings: { leadEndpoint: string | null }): SiteFile {
+/** What Locus writes into `lib/locus.ts`. */
+export interface LocusSettings {
+  /** Where the form route forwards; null outside a published site. */
+  leadEndpoint: string | null;
+  /** The site's main public address (`https://…`), when Locus knows it. */
+  siteUrl: string | null;
+  /** The name and description for the sitemap, llms.txt and search tools. */
+  site: { name: string; description: string };
+  /** The pages to list in the sitemap and llms.txt. */
+  pages: { path: string; title: string; description: string }[];
+}
+
+/** `lib/locus.ts`: null and empty outside a published site. */
+export function locusSettingsFile(settings: Partial<LocusSettings> = {}): SiteFile {
+  const s: LocusSettings = {
+    leadEndpoint: null,
+    siteUrl: null,
+    site: { name: "", description: "" },
+    pages: [],
+    ...settings,
+  };
+  const json = (value: unknown) => JSON.stringify(value, null, 2).replace(/\n/g, "\n  ");
   return {
     path: LOCUS_SETTINGS_PATH,
     content: `// Written by Locus each time the site is published. Not secret: it holds no key or token.
-// Don't edit it — Locus replaces it. Null in a draft or preview, where forms send nothing.
+// Don't edit it — Locus replaces it. Null in a draft or preview, where forms send nothing and
+// search engines are asked not to index the site.
 export const locus = {
-  leadEndpoint: ${JSON.stringify(settings.leadEndpoint)} as string | null,
+  leadEndpoint: ${JSON.stringify(s.leadEndpoint)} as string | null,
+  siteUrl: ${JSON.stringify(s.siteUrl)} as string | null,
+  site: ${json(s.site)},
+  pages: ${json(s.pages)} as { path: string; title: string; description: string }[],
 };
+
+/** Published by Locus, and not a host's preview build: search engines may index it. */
+export const published = locus.leadEndpoint !== null && process.env.VERCEL_ENV !== "preview";
+
+/**
+ * The site's public address, without a trailing slash: Locus's choice, else the host's own
+ * production address. Null in a draft or preview.
+ */
+export function siteUrl(): string | null {
+  if (!published) return null;
+  if (locus.siteUrl) return locus.siteUrl.replace(/[/]+$/, "");
+  const host = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  return host ? \`https://\${host}\` : null;
+}
 `,
   };
 }
 
-/** The files to publish: the version's, with Locus's settings for this site in place. */
+/**
+ * The files to publish: the version's, with Locus's settings for this site in place and
+ * Locus's search files (sitemap, robots.txt, llms.txt) added or refreshed.
+ */
 export function withLocusSettings(
   files: SiteFile[],
-  site: { siteId: string; locusUrl: string },
+  site: { siteId: string; locusUrl: string; siteUrl?: string | null; name?: string },
 ): SiteFile[] {
-  const settings = locusSettingsFile({ leadEndpoint: leadEndpoint(site.locusUrl, site.siteId) });
-  return [...files.filter((f) => f.path !== LOCUS_SETTINGS_PATH), settings];
+  const facts = siteFacts(files);
+  const name = facts.name || site.name || "Home";
+  const description = facts.description ?? "";
+  const pages = sitePages(files)
+    .filter((p) => !p.noindex)
+    .map((p) => ({
+      path: p.path,
+      title: p.title ?? (p.path === "/" ? name : p.path.slice(1)),
+      description: p.description ?? (p.path === "/" ? description : ""),
+    }));
+  const settings = locusSettingsFile({
+    leadEndpoint: leadEndpoint(site.locusUrl, site.siteId),
+    siteUrl: site.siteUrl ?? null,
+    site: { name, description },
+    pages,
+  });
+  return withSearchFiles([...files.filter((f) => f.path !== LOCUS_SETTINGS_PATH), settings]);
 }
 
 /** The site's own form route: checks the basics, then forwards to Locus server to server. */

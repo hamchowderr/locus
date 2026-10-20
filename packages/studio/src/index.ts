@@ -17,25 +17,41 @@ export {
   normalizeSitePath,
   WorkspaceError,
 } from "./paths.ts";
+export {
+  DESCRIPTION_MAX,
+  type PageSeo,
+  pageRoute,
+  type SeoIssue,
+  seoIssues,
+  siteFacts,
+  sitePages,
+  TITLE_MAX,
+} from "./seo.ts";
 export { startSite } from "./start.ts";
 export {
   baseFiles,
   DEFAULT_PALETTE,
   defaultTemplate,
   LEAD_ROUTE_PATH,
+  LLMS_PATH,
   LOCUS_SETTINGS_PATH,
+  type LocusSettings,
   leadEndpoint,
   leadRouteFile,
   locusSettingsFile,
   packageName,
+  ROBOTS_PATH,
   readableOn,
   renderTemplate,
   SHADCN_COMPONENTS,
   SITE_STACK,
+  SITEMAP_PATH,
   type SiteTemplate,
+  searchFiles,
   TEMPLATES,
   templateById,
   withLocusSettings,
+  withSearchFiles,
 } from "./templates/index.ts";
 export {
   type FileChanges,

@@ -20,8 +20,10 @@ import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locu
 import {
   activeSiteIdForSession,
   LEAD_TOTAL_DAYS,
+  type SiteSeo,
   siteLeadTotals,
   siteNames,
+  siteSeo,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-publish";
@@ -140,6 +142,9 @@ export default async function Sites({
   const published = sites.filter((s) => s.status !== "draft").map((s) => s.id);
   const leads = await softly(() => siteLeadTotals(siteBuilderDeps(), client, published));
   const leadTotals = isProblem(leads) ? undefined : leads;
+  // What search engines will see of each site started in Locus, from its latest version.
+  const seo = await softly(() => siteSeo(siteBuilderDeps(), client, [...briefNames.keys()]));
+  const seoChecks = isProblem(seo) ? new Map<string, SiteSeo>() : seo;
   // Publishing: a site started in Locus gets a repository, then a Vercel project that builds it.
   const needsRepo = (s: (typeof sites)[number]) => !s.repoFullName && !s.hostProjectId;
   const repos: InstallationRepo[] | { problem: string } =
@@ -243,6 +248,7 @@ export default async function Sites({
               <p className="text-sm text-neutral-600">No domain yet.</p>
             )}
             {s.status !== "draft" && leadTotals && <FormLeads totals={leadTotals.get(s.id)} />}
+            {seoChecks.has(s.id) && <SeoCheck check={seoChecks.get(s.id) as SiteSeo} />}
             {manager && needsRepo(s) && (
               <RepoForm
                 siteId={s.id}
@@ -547,5 +553,51 @@ function FormLeads({ totals }: { totals: { delivered: number; failed: number } |
       )}
       {failed === 0 && "."}
     </p>
+  );
+}
+
+/** Each page's search title and description in the latest version, and what to fix. */
+function SeoCheck({ check }: { check: SiteSeo }) {
+  const { issues, pages } = check;
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-neutral-600">
+        Search check (version {check.version}):{" "}
+        {issues.length === 0
+          ? "nothing to fix."
+          : `${issues.length} ${issues.length === 1 ? "thing" : "things"} to fix.`}
+      </summary>
+      <div className="space-y-3 pt-2">
+        {issues.length > 0 && (
+          <ul className="list-disc space-y-1 pl-5 text-red-700">
+            {issues.map((issue) => (
+              <li key={`${issue.page} ${issue.problem}`}>
+                {issue.page === "site" ? "Whole site" : issue.page}: {issue.problem}
+              </li>
+            ))}
+          </ul>
+        )}
+        <ul className="space-y-2">
+          {pages.map((page) => (
+            <li key={page.path}>
+              <span className="font-mono">{page.path}</span>
+              {page.noindex && <span className="text-neutral-600"> (kept out of search)</span>}
+              <br />
+              <span>{page.title ?? (page.hasTitle ? "Title set in code" : "No title")}</span>
+              {" · "}
+              <span className="text-neutral-600">
+                {page.description ??
+                  (page.hasDescription ? "Description set in code" : "No description")}
+              </span>
+              {page.schema && <span className="text-neutral-600"> · Structured data</span>}
+            </li>
+          ))}
+        </ul>
+        <p className="text-neutral-600">
+          Every published site also gets a sitemap, robots.txt, llms.txt and the business's
+          structured data. Ask the site builder in the chat to fix anything listed.
+        </p>
+      </div>
+    </details>
   );
 }

@@ -1,6 +1,7 @@
 import { type DesignBrief, FONTS } from "../brief.ts";
 import type { SiteFile } from "../workspace.ts";
 import { leadRouteFile, locusSettingsFile } from "./forms.ts";
+import { searchFiles } from "./search.ts";
 import { shadcnComponentFiles } from "./shadcn.ts";
 
 // The project every generated site starts as: Next.js App Router with TypeScript, Tailwind and
@@ -287,15 +288,30 @@ export { cn } from "cn";
 import { ${fontImports} } from "next/font/google";
 import { Footer } from "@/components/footer";
 import { Header } from "@/components/header";
+import { JsonLd, siteSchema } from "@/components/json-ld";
+import { published, siteUrl } from "@/lib/locus";
 import { site } from "@/lib/site";
 import "./globals.css";
 
 const headingFace = ${heading}({ subsets: ["latin"], variable: "--font-heading-face" });
 const bodyFace = ${body}({ subsets: ["latin"], variable: "--font-body-face" });
 
+const url = siteUrl();
+
+// Each page adds its own title, description and \`alternates: { canonical: "/its-path" }\`.
 export const metadata: Metadata = {
+  ...(url ? { metadataBase: new URL(url) } : {}),
   title: { default: site.name, template: \`%s · \${site.name}\` },
   description: site.description,
+  openGraph: {
+    type: "website",
+    siteName: site.name,
+    title: site.name,
+    description: site.description,
+  },
+  twitter: { card: "summary_large_image" },
+  // A draft or preview stays out of search results; the published site is indexed.
+  ...(published ? {} : { robots: { index: false, follow: false } }),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -313,6 +329,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {children}
         </main>
         <Footer />
+        <JsonLd data={siteSchema()} />
       </body>
     </html>
   );
@@ -330,6 +347,79 @@ export const site = {
   address: "",
   nav: [] as { href: string; label: string }[],
 };
+`,
+    },
+    {
+      path: "components/json-ld.tsx",
+      content: `import { siteUrl } from "@/lib/locus";
+import { site } from "@/lib/site";
+
+/**
+ * Structured data (schema.org JSON-LD) that search engines and AI assistants read. Pages add
+ * their own for what they show, e.g. FAQPage for questions and answers, Service or Product.
+ */
+export function JsonLd({ data }: { data: Record<string, unknown> }) {
+  // "<" escaped, so no text in the data can close the script tag.
+  const json = JSON.stringify(data).replace(/</g, "\\\\u003c");
+  return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: json }} />;
+}
+
+/** The business and its website, from lib/site.ts, for every page (in the layout). */
+export function siteSchema(): Record<string, unknown> {
+  const url = siteUrl();
+  const id = (part: string) => \`\${url ?? ""}/#\${part}\`;
+  const business: Record<string, unknown> = {
+    "@type": site.address ? "LocalBusiness" : "Organization",
+    "@id": id("organization"),
+    name: site.name,
+    description: site.description,
+  };
+  if (url) business.url = url;
+  if (site.phone) business.telephone = site.phone;
+  if (site.email) business.email = site.email;
+  if (site.address) business.address = site.address;
+  const website: Record<string, unknown> = {
+    "@type": "WebSite",
+    "@id": id("website"),
+    name: site.name,
+    publisher: { "@id": id("organization") },
+  };
+  if (url) website.url = url;
+  return { "@context": "https://schema.org", "@graph": [website, business] };
+}
+`,
+    },
+    {
+      path: "app/opengraph-image.tsx",
+      content: `import { ImageResponse } from "next/og";
+import { site } from "@/lib/site";
+
+// The picture shown when a page is shared on social media or in a message. A page can have
+// its own by adding opengraph-image.tsx next to its page.tsx.
+export const alt = site.name;
+export const size = { width: 1200, height: 630 };
+export const contentType = "image/png";
+
+export default function OpenGraphImage() {
+  return new ImageResponse(
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        width: "100%",
+        height: "100%",
+        padding: 80,
+        background: ${lit(palette.primary)},
+        color: ${lit(readableOn(palette.primary))},
+      }}
+    >
+      <div style={{ fontSize: 72, fontWeight: 700 }}>{site.name}</div>
+      <div style={{ fontSize: 34, marginTop: 24, opacity: 0.85 }}>{site.description}</div>
+    </div>,
+    size,
+  );
+}
 `,
     },
     {
@@ -457,7 +547,8 @@ key or token. Other settings the site reads at run time come from the host's env
 variables, never from files in this repository.
 `,
     },
-    locusSettingsFile({ leadEndpoint: null }),
+    locusSettingsFile({ site: { name: brief.name, description: "" } }),
     leadRouteFile(),
+    ...searchFiles(),
   ];
 }
