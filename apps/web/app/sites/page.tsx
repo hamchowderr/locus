@@ -1,4 +1,9 @@
-import { ClientAccessDenied, requireAgencyManager, resolveActiveClient } from "@locus/auth";
+import {
+  ClientAccessDenied,
+  listAccessibleClients,
+  requireAgencyManager,
+  resolveActiveClient,
+} from "@locus/auth";
 import {
   ConnectError,
   type DomainStatus,
@@ -9,6 +14,7 @@ import {
   listHostProjects,
   listInstallationRepos,
   listSites,
+  MAX_FOLDER_LENGTH,
   type SiteDeployment,
   siteDomainStatus,
 } from "@locus/connect";
@@ -28,9 +34,11 @@ import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-pu
 import {
   addSiteDomain,
   chooseSite,
+  copySite,
   createSite,
   deleteSite,
   deleteSiteDomain,
+  fileSite,
   giveSiteRepository,
   giveSiteVercelProject,
   linkSiteProject,
@@ -81,6 +89,7 @@ export default async function Sites({
     deleted?: string;
     published?: string;
     deploys?: string;
+    copied?: string;
   }>;
 }) {
   const current = await currentSession();
@@ -93,6 +102,7 @@ export default async function Sites({
     deleted,
     published: publishedVersion,
     deploys,
+    copied,
   } = await searchParams;
   const ctx = sessionContext(current);
   const client = await resolveActiveClient(locus().db, ctx).catch((e) => {
@@ -111,6 +121,20 @@ export default async function Sites({
     },
   );
   const sites = await listSites(locus().db, client);
+  // Where a copy can go: this client or any other this member works on.
+  const clients = await listAccessibleClients(locus().db, ctx);
+  // Filed sites first, by folder name, then the ones in no folder; each group oldest first.
+  const folders = [...new Set(sites.flatMap((s) => (s.folder ? [s.folder] : [])))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const order = sites
+    .map((s, i) => ({ s, i }))
+    .sort(
+      (a, b) =>
+        (a.s.folder ? folders.indexOf(a.s.folder) : folders.length) -
+          (b.s.folder ? folders.indexOf(b.s.folder) : folders.length) ||
+        a.s.createdAt.getTime() - b.s.createdAt.getTime(),
+    );
   const listing: HostProjectList | { problem: string } = manager
     ? await softly(() => listHostProjects(siteDeps(), ctx))
     : { projects: [], complete: false };
@@ -163,6 +187,18 @@ export default async function Sites({
       {error && <Notice tone="error">{error}</Notice>}
       {created && <Notice tone="info">Site created from its template as version 1.</Notice>}
       {deleted && <Notice tone="info">Site deleted.</Notice>}
+      {copied === "here" && (
+        <Notice tone="info">Site copied as a new draft. The site builder now works on it.</Notice>
+      )}
+      {copied === "elsewhere" && (
+        <Notice tone="info">
+          Site copied as a new draft. Switch to that client on the{" "}
+          <Link href="/clients" className="underline">
+            Clients
+          </Link>{" "}
+          page to see it.
+        </Notice>
+      )}
       {publishedVersion && /^\d{1,6}$/.test(publishedVersion) && (
         <Notice tone="info">
           Version {publishedVersion} sent to GitHub.
@@ -186,111 +222,136 @@ export default async function Sites({
         </p>
       )}
 
-      {sites.map((s, i) => {
+      {order.map(({ s, i }, n) => {
         const status = statuses[i];
+        const previous = order[n - 1]?.s.folder ?? null;
+        // A heading where a folder starts, and before the unfiled sites when there are folders.
+        const heading =
+          folders.length > 0 && (n === 0 || previous !== s.folder)
+            ? (s.folder ?? "No folder")
+            : null;
         return (
-          <section key={s.id} className="space-y-3 rounded-md border border-neutral-200 p-4">
-            {/* A site started in Locus keeps its own name once it has a Vercel project. */}
-            <h2 className="font-semibold">
-              {briefNames.get(s.id) ??
-                names.get(s.hostProjectId ?? "") ??
-                s.hostProjectId ??
-                "Untitled site"}
-            </h2>
-            {!briefNames.has(s.id) ? null : activeSite === s.id ? (
-              <p className="text-sm text-neutral-600">The site builder works on this site.</p>
-            ) : (
-              <form action={chooseSite} className="text-sm">
-                <input type="hidden" name="siteId" value={s.id} />
-                <button type="submit" className="underline">
-                  Build this site
-                </button>
-              </form>
+          <div key={s.id} className="space-y-3">
+            {heading && (
+              <h2 className="pt-2 text-sm font-semibold uppercase tracking-wide text-neutral-500">
+                {heading}
+              </h2>
             )}
-            {!s.hostProjectId && !s.customDomain ? (
-              <p className="text-sm text-neutral-600">
-                Draft{s.repoFullName ? `, saved to ${s.repoFullName}` : ""}. Not published yet.
-              </p>
-            ) : isProblem(status) ? (
-              <>
-                {s.customDomain && (
-                  <p>
-                    <strong>{s.customDomain}</strong>
-                  </p>
-                )}
-                <Notice tone="error">{status.problem}</Notice>
-                {manager && s.customDomain && <RemoveDomain siteId={s.id} />}
-              </>
-            ) : status ? (
-              <DomainPanel status={status} siteId={s.id} manager={manager} />
-            ) : manager ? (
-              <form action={addSiteDomain} className="space-y-2">
-                <input type="hidden" name="siteId" value={s.id} />
-                <Field
-                  label="Domain"
-                  name="domain"
-                  placeholder="www.example.com"
-                  required
-                  autoComplete="off"
-                />
-                <p className="text-sm text-neutral-600">
-                  The domain stays where it's registered. Locus tells you which DNS records to add
-                  there.
-                </p>
-                <Button>Connect domain</Button>
-              </form>
-            ) : (
-              <p className="text-sm text-neutral-600">No domain yet.</p>
-            )}
-            {s.status !== "draft" && leadTotals && <FormLeads totals={leadTotals.get(s.id)} />}
-            {manager && needsRepo(s) && (
-              <RepoForm
-                siteId={s.id}
-                suggested={suggestedRepoName(briefNames.get(s.id))}
-                repos={repos}
-                choices={repoChoices}
-              />
-            )}
-            {manager && s.repoFullName && briefNames.has(s.id) && (
-              <form action={publishSite} className="space-y-2">
-                <input type="hidden" name="siteId" value={s.id} />
-                {s.hostProjectId && <input type="hidden" name="deploys" value="yes" />}
-                <p className="text-sm text-neutral-600">
-                  Publishing sends the site's latest saved version to {s.repoFullName}
-                  {s.hostProjectId ? ", and Vercel deploys it" : ""}.
-                </p>
-                <Button>Publish the latest version</Button>
-              </form>
-            )}
-            {manager && s.repoFullName && !s.hostProjectId && (
-              <ProjectForm siteId={s.id} problem={isProblem(projects) ? projects.problem : null} />
-            )}
-            {deployments[i] !== undefined && <DeploymentLine deployment={deployments[i]} />}
-            {gone(s.hostProjectId) && (
-              <Notice tone="error">This project is no longer on your Vercel team.</Notice>
-            )}
-            {manager && s.hostProjectId && !s.customDomain && (
-              <form action={unlinkSiteProject} className="text-sm">
-                <input type="hidden" name="siteId" value={s.id} />
-                <button type="submit" className="underline">
-                  Unlink project
-                </button>
-              </form>
-            )}
-            {manager && !s.repoFullName && !s.hostProjectId && !s.customDomain && (
-              <details className="text-sm">
-                <summary className="cursor-pointer text-neutral-600">Delete this site</summary>
-                <form action={deleteSite} className="space-y-2 pt-2">
+            <section className="space-y-3 rounded-md border border-neutral-200 p-4">
+              {/* A site started in Locus keeps its own name once it has a Vercel project. */}
+              <h2 className="font-semibold">
+                {briefNames.get(s.id) ??
+                  names.get(s.hostProjectId ?? "") ??
+                  s.hostProjectId ??
+                  "Untitled site"}
+              </h2>
+              {!briefNames.has(s.id) ? null : activeSite === s.id ? (
+                <p className="text-sm text-neutral-600">The site builder works on this site.</p>
+              ) : (
+                <form action={chooseSite} className="text-sm">
                   <input type="hidden" name="siteId" value={s.id} />
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" name="confirm" value="yes" required />
-                    Delete this site and all its versions. This can't be undone.
-                  </label>
-                  <Button>Delete site</Button>
+                  <button type="submit" className="underline">
+                    Build this site
+                  </button>
                 </form>
-              </details>
-            )}
-          </section>
+              )}
+              {!s.hostProjectId && !s.customDomain ? (
+                <p className="text-sm text-neutral-600">
+                  Draft{s.repoFullName ? `, saved to ${s.repoFullName}` : ""}. Not published yet.
+                </p>
+              ) : isProblem(status) ? (
+                <>
+                  {s.customDomain && (
+                    <p>
+                      <strong>{s.customDomain}</strong>
+                    </p>
+                  )}
+                  <Notice tone="error">{status.problem}</Notice>
+                  {manager && s.customDomain && <RemoveDomain siteId={s.id} />}
+                </>
+              ) : status ? (
+                <DomainPanel status={status} siteId={s.id} manager={manager} />
+              ) : manager ? (
+                <form action={addSiteDomain} className="space-y-2">
+                  <input type="hidden" name="siteId" value={s.id} />
+                  <Field
+                    label="Domain"
+                    name="domain"
+                    placeholder="www.example.com"
+                    required
+                    autoComplete="off"
+                  />
+                  <p className="text-sm text-neutral-600">
+                    The domain stays where it's registered. Locus tells you which DNS records to add
+                    there.
+                  </p>
+                  <Button>Connect domain</Button>
+                </form>
+              ) : (
+                <p className="text-sm text-neutral-600">No domain yet.</p>
+              )}
+              {s.status !== "draft" && leadTotals && <FormLeads totals={leadTotals.get(s.id)} />}
+              {manager && needsRepo(s) && (
+                <RepoForm
+                  siteId={s.id}
+                  suggested={suggestedRepoName(briefNames.get(s.id))}
+                  repos={repos}
+                  choices={repoChoices}
+                />
+              )}
+              {manager && s.repoFullName && briefNames.has(s.id) && (
+                <form action={publishSite} className="space-y-2">
+                  <input type="hidden" name="siteId" value={s.id} />
+                  {s.hostProjectId && <input type="hidden" name="deploys" value="yes" />}
+                  <p className="text-sm text-neutral-600">
+                    Publishing sends the site's latest saved version to {s.repoFullName}
+                    {s.hostProjectId ? ", and Vercel deploys it" : ""}.
+                  </p>
+                  <Button>Publish the latest version</Button>
+                </form>
+              )}
+              {manager && s.repoFullName && !s.hostProjectId && (
+                <ProjectForm
+                  siteId={s.id}
+                  problem={isProblem(projects) ? projects.problem : null}
+                />
+              )}
+              {deployments[i] !== undefined && <DeploymentLine deployment={deployments[i]} />}
+              {gone(s.hostProjectId) && (
+                <Notice tone="error">This project is no longer on your Vercel team.</Notice>
+              )}
+              {manager && s.hostProjectId && !s.customDomain && (
+                <form action={unlinkSiteProject} className="text-sm">
+                  <input type="hidden" name="siteId" value={s.id} />
+                  <button type="submit" className="underline">
+                    Unlink project
+                  </button>
+                </form>
+              )}
+              <FolderForm siteId={s.id} folder={s.folder} folders={folders} />
+              {briefNames.has(s.id) && (
+                <CopyForm
+                  siteId={s.id}
+                  name={briefNames.get(s.id) ?? ""}
+                  clientId={client.location.id}
+                  clients={clients}
+                />
+              )}
+              {manager && !s.repoFullName && !s.hostProjectId && !s.customDomain && (
+                <details className="text-sm">
+                  <summary className="cursor-pointer text-neutral-600">Delete this site</summary>
+                  <form action={deleteSite} className="space-y-2 pt-2">
+                    <input type="hidden" name="siteId" value={s.id} />
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" name="confirm" value="yes" required />
+                      Delete this site and all its versions. This can't be undone.
+                    </label>
+                    <Button>Delete site</Button>
+                  </form>
+                </details>
+              )}
+            </section>
+          </div>
         );
       })}
 
@@ -360,6 +421,97 @@ export default async function Sites({
         </form>
       )}
     </Page>
+  );
+}
+
+/** Files the site under a folder: one already used, a new name, or none. */
+function FolderForm({
+  siteId,
+  folder,
+  folders,
+}: {
+  siteId: string;
+  folder: string | null;
+  folders: string[];
+}) {
+  const listId = `folders-${siteId}`;
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-neutral-600">
+        {folder ? `In the folder ${folder}. Move it` : "Put it in a folder"}
+      </summary>
+      <form action={fileSite} className="space-y-2 pt-2">
+        <input type="hidden" name="siteId" value={siteId} />
+        <label className="block">
+          <span className="text-neutral-700">Folder</span>
+          <input
+            name="folder"
+            list={listId}
+            defaultValue={folder ?? ""}
+            maxLength={MAX_FOLDER_LENGTH}
+            placeholder="A new or existing folder; empty for none"
+            autoComplete="off"
+            className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+          />
+          <datalist id={listId}>
+            {folders.map((f) => (
+              <option key={f} value={f} />
+            ))}
+          </datalist>
+        </label>
+        <Button>Save folder</Button>
+      </form>
+    </details>
+  );
+}
+
+/** Copies the site's latest saved version into a new draft, here or for another client. */
+function CopyForm({
+  siteId,
+  name,
+  clientId,
+  clients,
+}: {
+  siteId: string;
+  name: string;
+  clientId: string;
+  clients: { id: string; name: string }[];
+}) {
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-neutral-600">Copy this site</summary>
+      <form action={copySite} className="space-y-2 pt-2">
+        <input type="hidden" name="siteId" value={siteId} />
+        <Field
+          label="Name of the copy"
+          name="name"
+          defaultValue={`Copy of ${name}`.slice(0, 120)}
+          required
+          maxLength={120}
+        />
+        {clients.length > 1 && (
+          <label className="block">
+            <span className="text-neutral-700">For which client</span>
+            <select
+              name="targetClientId"
+              defaultValue={clientId}
+              className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
+            >
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.id === clientId ? `${c.name} (this client)` : c.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        <p className="text-neutral-600">
+          The copy starts from this site's latest saved version, as a new draft. It doesn't take the
+          version history, the repository, the Vercel project or the domain.
+        </p>
+        <Button>Copy site</Button>
+      </form>
+    </details>
   );
 }
 

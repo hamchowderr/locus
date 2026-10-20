@@ -403,6 +403,34 @@ export async function unlinkHostProject(
   });
 }
 
+/** The longest folder name the Sites page takes. */
+export const MAX_FOLDER_LENGTH = 60;
+
+/**
+ * Files one of the client's sites under a folder on the Sites page, or under none when `folder`
+ * is blank. A folder is just a name the client's sites share: it exists while a site is in it.
+ * Anyone who may work on the client may file its sites.
+ */
+export async function setSiteFolder(
+  db: ControlDb,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  input: { siteId: string; folder: string },
+): Promise<void> {
+  assertAuthorizedClient(client);
+  const folder = input.folder.trim().replace(/\s+/g, " ") || null;
+  if (folder && folder.length > MAX_FOLDER_LENGTH) {
+    throw new ConnectError(`Give the folder a name of up to ${MAX_FOLDER_LENGTH} characters.`);
+  }
+  const changed = await db
+    .update(site)
+    .set({ folder })
+    .where(and(eq(site.id, input.siteId), eq(site.locationId, client.location.id)))
+    .returning({ id: site.id });
+  if (changed.length === 0) throw new ConnectError("That site isn't one of this client's.");
+  await audit(db, ctx, client, "site.folder", { siteId: input.siteId, folder });
+}
+
 export async function audit(
   db: ControlDb,
   ctx: SessionContext,
