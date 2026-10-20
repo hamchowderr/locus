@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import {
   type AuthorizedClient,
   assertAuthorizedClient,
@@ -5,21 +6,26 @@ import {
   type SessionContext,
 } from "@locus/auth";
 import {
+  applySiteMigrations,
   type ControlDb,
   listSiteTables,
   listSiteUsers,
   openSiteDb,
   readSiteRows,
+  SITE_DATABASE_ENV,
+  SiteMigrationError,
   type SiteRows,
   type SiteTable,
   type SiteUser,
   siteDbName,
+  siteMigrationsIn,
   type TenantProvisioner,
 } from "@locus/db";
 import { site, siteBackend } from "@locus/db/control";
 import { and, eq } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { audit } from "./sites.ts";
+import { hostGrant, refused, type VercelCallDeps, vercel } from "./vercel-api.ts";
 
 // The backend of an app-style site: its own Turso database on Otaku's account, separate from
 // the client's database, for the records the site's app keeps (member logins, bookings, its
@@ -115,10 +121,12 @@ export async function enableSiteBackend(
 
 /**
  * Deletes the site's database and everything in it, then its registry row. Owners and admins
- * only. It cannot be undone, so callers confirm with the person first.
+ * only. It cannot be undone, so callers confirm with the person first. The site's project
+ * loses its database settings first: a database made again later under the same name gets
+ * new ones on the next publish instead of the dead token.
  */
 export async function removeSiteBackend(
-  deps: SiteBackendDeps,
+  deps: SiteBackendDeps & Partial<Pick<VercelCallDeps, "secrets" | "http">>,
   ctx: SessionContext,
   client: AuthorizedClient,
   input: { siteId: string },
@@ -127,6 +135,22 @@ export async function removeSiteBackend(
   await requireAgencyManager(deps.db, ctx);
   const row = await siteBackendOf(deps.db, client, input.siteId);
   if (!row) return;
+  const projectId = await siteProjectId(deps.db, client, row.siteId);
+  if (projectId) {
+    if (!deps.secrets) throw new ConnectError("Vercel isn't set up on this deployment yet.");
+    const env = await projectEnv({ ...deps, secrets: deps.secrets }, client, projectId);
+    for (const variable of env.ours) {
+      const gone = await vercel(
+        env.deps,
+        env.grant,
+        "DELETE",
+        `/v9/projects/${encodeURIComponent(projectId)}/env/${encodeURIComponent(variable.id)}`,
+      );
+      if (!gone.ok && gone.status !== 404) {
+        throw refused(gone, "Vercel didn't remove the site's database settings. Try again.");
+      }
+    }
+  }
   await deps.provisioner.destroy(row.tursoDbName);
   await deps.db.delete(siteBackend).where(eq(siteBackend.siteId, row.siteId));
   await audit(deps.db, ctx, client, "site.backend.remove", {
@@ -190,4 +214,128 @@ export function siteBackendRows(
       throw error;
     }
   });
+}
+
+/** What publishing an app-style site needs: its database, and the agency's Vercel team. */
+export interface SiteReleaseDeps extends VercelCallDeps {
+  /** Absent where Locus has no database host set up; a site with a database is then refused. */
+  provisioner?: TenantProvisioner;
+}
+
+/** How long the token that applies a publish's database changes lives. */
+const MIGRATE_TTL = "10m";
+
+const NO_PROVISIONER = "This site's database isn't set up on this deployment yet.";
+
+/**
+ * Applies the version's new database changes (its `db/migrations/` files) to the site's own
+ * database, before the version is sent to GitHub: a change that fails stops the publish, so
+ * the live site never runs code that expects tables its database lacks. Does nothing for a
+ * plain website. Anyone who may work on the client may publish; the token is minted after
+ * that check, names only the site's database and lives ten minutes.
+ */
+export async function migrateSiteBackend(
+  deps: SiteReleaseDeps,
+  client: AuthorizedClient,
+  input: { siteId: string; files: { path: string; content: string | Uint8Array }[] },
+): Promise<{ applied: string[] } | null> {
+  const row = await siteBackendOf(deps.db, client, input.siteId);
+  if (!row) return null;
+  if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
+  const token = await deps.provisioner.mintToken(row.tursoDbName, { ttl: MIGRATE_TTL });
+  const db = openSiteDb(deps.provisioner.url(row.tursoDbHostname), token);
+  try {
+    return await applySiteMigrations(db, siteMigrationsIn(input.files));
+  } catch (error) {
+    if (error instanceof SiteMigrationError) {
+      throw new ConnectError(
+        `The site's database change didn't apply: ${error.message.replace(/\.?$/, ".")} Changes that already ran stay as they are, even if their publish failed; fix this with a new migration file, and keep changes additive so the live site's current code still works.`,
+      );
+    }
+    throw error;
+  } finally {
+    db.close();
+  }
+}
+
+type EnvVar = { id?: string; key?: string; target?: string[] | string; gitBranch?: string | null };
+
+const OUR_KEYS = new Set<string>(Object.values(SITE_DATABASE_ENV));
+
+async function siteProjectId(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<string | null> {
+  const [row] = await db
+    .select({ hostProjectId: site.hostProjectId })
+    .from(site)
+    .where(and(eq(site.id, siteId), eq(site.locationId, client.location.id)));
+  return row?.hostProjectId ?? null;
+}
+
+/** The project's variables, and which of them are the site database's. */
+async function projectEnv(deps: VercelCallDeps, client: AuthorizedClient, projectId: string) {
+  const grant = await hostGrant(deps, client.location.organizationId);
+  const path = `/v10/projects/${encodeURIComponent(projectId)}/env`;
+  const listed = await vercel<{ envs?: EnvVar[] }>(deps, grant, "GET", path);
+  if (!listed.ok) throw refused(listed, "Vercel didn't show the site's settings. Try again.");
+  const ours = (listed.body.envs ?? []).filter(
+    (env): env is EnvVar & { id: string; key: string } =>
+      !!env.id && !!env.key && OUR_KEYS.has(env.key),
+  );
+  return { deps, grant, path, ours };
+}
+
+/** A variable the live site reads: one for production on every branch. */
+const servesProduction = (env: EnvVar) =>
+  !env.gitBranch && [env.target ?? []].flat().includes("production");
+
+/**
+ * Puts the site's database address, its token and the site's own login secret on its Vercel
+ * project's production environment, as sensitive variables, once each: one already there is
+ * left alone. Previews get none, so a preview build never touches the live site's members.
+ * Does nothing for a plain website or a site without a project yet. Locus keeps none of them;
+ * the token names only the site's database and is revoked by rotating that database's tokens,
+ * which leaves every other database's untouched (checked against Turso, 2026-10-20).
+ */
+export async function ensureSiteBackendEnv(
+  deps: SiteReleaseDeps,
+  client: AuthorizedClient,
+  input: { siteId: string },
+): Promise<string[]> {
+  const row = await siteBackendOf(deps.db, client, input.siteId);
+  if (!row) return [];
+  const projectId = await siteProjectId(deps.db, client, row.siteId);
+  if (!projectId) return [];
+  if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
+  const provisioner = deps.provisioner;
+
+  const env = await projectEnv(deps, client, projectId);
+  const present = new Set(env.ours.filter(servesProduction).map((v) => v.key));
+  const values: Record<string, () => Promise<string>> = {
+    [SITE_DATABASE_ENV.url]: async () => provisioner.url(row.tursoDbHostname),
+    [SITE_DATABASE_ENV.token]: () => provisioner.mintToken(row.tursoDbName, { ttl: "never" }),
+    [SITE_DATABASE_ENV.authSecret]: async () => randomBytes(32).toString("base64url"),
+  };
+  const missing = Object.keys(values).filter((key) => !present.has(key));
+  if (missing.length === 0) return [];
+  const body = [];
+  for (const key of missing) {
+    body.push({
+      key,
+      value: await (values[key] as () => Promise<string>)(),
+      type: "sensitive",
+      target: ["production"],
+    });
+  }
+  const added = await vercel<{ failed?: unknown[] }>(deps, env.grant, "POST", env.path, {
+    body,
+  });
+  // Vercel answers a batch with 2xx and lists the ones it refused (a concurrent publish that
+  // added the same key first, say); the next publish fills in whatever is still missing.
+  if (!added.ok || (added.body.failed?.length ?? 0) > 0) {
+    throw refused(added, "Vercel didn't take the site's database settings. Try again.");
+  }
+  return missing;
 }
