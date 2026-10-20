@@ -1,9 +1,10 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
+import { SITE_BUILDER_MODE_ID } from "@locus/builder";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { SitePreview } from "@/components/site-preview/site-preview";
+import { EditablePreview } from "@/components/visual-edits/editable-preview";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { siteNames, siteOfClient } from "@/lib/site-builder";
+import { buildRefusal, siteNames, siteOfClient } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { previewSite } from "../actions";
 
@@ -38,6 +39,8 @@ export default async function Preview({
   const { version: asked } = await searchParams;
   const version = asked && /^\d{1,6}$/.test(asked) ? Number(asked) : null;
   const name = (await siteNames(siteBuilderDeps(), client, [siteId])).get(siteId) ?? "Site";
+  // Clicking to edit needs the right to build the site; view-only members just look.
+  const canEdit = (await buildRefusal(locus().db, client, siteId)) === null;
 
   return (
     <main className="mx-auto flex h-dvh max-w-6xl flex-col px-6 py-6">
@@ -53,7 +56,10 @@ export default async function Preview({
         Preview of <strong>{name}</strong>
         {version ? `, version ${version}` : ""}
       </p>
-      <SitePreview
+      <EditablePreview
+        siteId={siteId}
+        chatMode={SITE_BUILDER_MODE_ID}
+        canEdit={canEdit}
         className="mt-4 min-h-0 flex-1"
         version={version}
         start={previewSite.bind(null, siteId, version)}

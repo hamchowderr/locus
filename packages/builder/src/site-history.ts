@@ -8,6 +8,7 @@ import {
 } from "@locus/studio";
 import {
   buildRefusal,
+  editorOrigins,
   leaseClientDb,
   SITE_BUILDER_OFF,
   type SiteBuilderDeps,
@@ -158,7 +159,7 @@ const INSTALL_MS = 180_000;
  * Sandbox time is checked against and counted in the client's credits, as in the chat.
  */
 export async function startSitePreview(
-  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "runtimes" | "openRuntime">,
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "runtimes" | "openRuntime" | "locusUrl">,
   ctx: SessionContext,
   client: AuthorizedClient,
   siteId: string,
@@ -183,7 +184,10 @@ export async function startSitePreview(
       : deps.openRuntime
         ? deps.openRuntime(client, siteId)
         : deps.runtimes().open(siteRuntimeKey(client, siteId)));
-    await syncRuntime(runtime, files);
+    // Only the current files can be edited by clicking; an older version's preview can't.
+    await syncRuntime(runtime, files, {
+      editorOrigins: version === null ? editorOrigins(deps.locusUrl) : [],
+    });
     const installed = await runtime.install({ timeoutMs: INSTALL_MS });
     if (installed.exitCode !== 0) {
       throw new SiteInputError(
