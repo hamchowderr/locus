@@ -1,4 +1,9 @@
-import { SITE_MIGRATIONS_DIR, SITE_MIGRATIONS_TABLE, STATEMENT_BREAKPOINT } from "@locus/db";
+import {
+  SITE_DATABASE_ENV,
+  SITE_MIGRATIONS_DIR,
+  SITE_MIGRATIONS_TABLE,
+  STATEMENT_BREAKPOINT,
+} from "@locus/db";
 import type { SiteFile } from "../workspace.ts";
 
 // What an app-style site adds to the base project: its own database and logins.
@@ -18,13 +23,7 @@ export const BACKEND_STACK = {
   "drizzle-orm": "0.45.4",
 } as const;
 
-/** The env vars a published site reads; Locus sets them on its host, never in the repo. */
-export const SITE_DATABASE_ENV = {
-  url: "SITE_DATABASE_URL",
-  token: "SITE_DATABASE_TOKEN",
-  /** The site's own login secret: one per site, never Locus's own `BETTER_AUTH_SECRET`. */
-  authSecret: "SITE_AUTH_SECRET",
-} as const;
+export { SITE_DATABASE_ENV };
 
 export const SITE_SCHEMA_PATH = "db/schema.ts";
 export const FIRST_MIGRATION_PATH = `${SITE_MIGRATIONS_DIR}/0000_logins.sql`;

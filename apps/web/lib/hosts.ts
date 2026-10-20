@@ -12,7 +12,8 @@ import {
   STUB_VERCEL_TEAM,
   type VercelConnectDeps,
 } from "@locus/connect";
-import { baseUrl, required, secretStore, serviceMode } from "./connect.ts";
+import { provisionerFromEnv } from "@locus/db";
+import { baseUrl, configured, required, secretStore, serviceMode } from "./connect.ts";
 import { liveGithubApp, stubGithubApp } from "./github-app.ts";
 import { locus } from "./locus.ts";
 
@@ -90,7 +91,12 @@ export function siteDeps(): SiteDeps {
 const installationTokens = new InstallationTokenCache();
 
 export function publishDeps(): PublishDeps {
-  const site = { ...siteDeps(), tokens: installationTokens };
+  const site = {
+    ...siteDeps(),
+    tokens: installationTokens,
+    // App-style sites' own databases, on Otaku's Turso account like the clients'.
+    provisioner: configured(() => provisionerFromEnv(".data/tenants")),
+  };
   if (serviceMode("GITHUB_MODE") === "stub") {
     stubGithub ??= createStubGithub();
     return {
