@@ -492,6 +492,8 @@ describe("restoring a site's database", () => {
     // Its hold isn't released for it, and its copy waits to be deleted safely.
     expect(left?.busyUntil).not.toBeNull();
     expect(left?.keptDbName).toBeNull();
+    // The settings already name the copy; the next publish puts them back.
+    expect(left?.envStale).toBe(true);
     expect(left?.retired.map((r) => r.dbName)).toEqual([
       `${siteDbName(SITE)}-r${clock.toString(36)}`,
     ]);
