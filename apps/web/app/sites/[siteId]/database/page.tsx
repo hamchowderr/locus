@@ -5,12 +5,11 @@ import {
   type SiteBackendOverview,
   siteBackendOf,
   siteBackendOverview,
-  siteBackendRows,
 } from "@locus/connect";
-import type { SiteRows } from "@locus/db";
+import { provisionerFromEnv } from "@locus/db";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { connectDeps } from "@/lib/connect";
+import { configured } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
@@ -61,20 +60,22 @@ export default async function SiteDatabase({
   const backend = await siteBackendOf(locus().db, client, siteId);
   let problem: string | null = null;
   let overview: SiteBackendOverview | null = null;
-  let rows: SiteRows | null = null;
-  const pageNumber = page && /^\d{1,5}$/.test(page) ? Math.max(Number(page), 1) : 1;
+  const asked = page && /^\d{1,5}$/.test(page) ? Math.max(Number(page), 1) : 1;
   if (backend) {
     try {
-      const deps = connectDeps();
-      overview = await siteBackendOverview(deps, client, siteId);
-      if (table && !LOGIN_SECRET_TABLES.has(table)) {
-        rows = await siteBackendRows(deps, client, {
-          siteId,
-          table,
-          limit: PAGE_SIZE,
-          offset: (pageNumber - 1) * PAGE_SIZE,
-        });
-      }
+      // Only the site's database is needed here: its registry row and Turso.
+      const deps = {
+        db: locus().db,
+        provisioner: configured(() => provisionerFromEnv(".data/tenants")),
+      };
+      overview = await siteBackendOverview(
+        deps,
+        client,
+        siteId,
+        table && !LOGIN_SECRET_TABLES.has(table)
+          ? { table, limit: PAGE_SIZE, offset: (asked - 1) * PAGE_SIZE }
+          : undefined,
+      );
     } catch (error) {
       if (error instanceof NotConfigured) {
         problem = "The site's database can't be reached on this deployment yet.";
@@ -86,8 +87,11 @@ export default async function SiteDatabase({
       }
     }
   }
+  const rows = overview?.rows ?? null;
   const shown = table && overview?.tables.some((t) => t.name === table) ? table : null;
   const pages = rows ? Math.max(Math.ceil(rows.total / PAGE_SIZE), 1) : 1;
+  // A page past the end (an old link) still leads back to the last one.
+  const pageNumber = Math.min(asked, pages);
   const link = (params: { table?: string; page?: number }) => {
     const query = new URLSearchParams();
     if (params.table) query.set("table", params.table);
@@ -217,8 +221,7 @@ export default async function SiteDatabase({
                   </Link>
                 )}
                 <span className="text-neutral-500">
-                  Page {Math.min(pageNumber, pages)} of {pages} · {rows.total}{" "}
-                  {rows.total === 1 ? "row" : "rows"}
+                  Page {pageNumber} of {pages} · {rows.total} {rows.total === 1 ? "row" : "rows"}
                 </span>
                 {pageNumber < pages && (
                   <Link href={link({ table: shown, page: pageNumber + 1 })} className="underline">
