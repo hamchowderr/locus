@@ -392,6 +392,46 @@ describe("generate_image", () => {
   });
 });
 
+describe("view_reference", () => {
+  it("shows the model a screenshot the brief lists, as a picture", async () => {
+    const { tools, call } = await setup();
+    await startSite(t.session.workspace, {
+      brief: {
+        name: "Acme",
+        references: [{ kind: "screenshot", path: "design/references/screenshot-1.png" }],
+      },
+      templateId: "blank",
+      files: [{ path: "design/references/screenshot-1.png", content: PNG }],
+    });
+    const output = await call("view_reference", { path: "./design/references/screenshot-1.png" });
+    expect(output).toEqual({
+      path: "design/references/screenshot-1.png",
+      mediaType: "image/png",
+      data: Buffer.from(PNG).toString("base64"),
+    });
+    expect(tools.view_reference.toModelOutput?.(output)).toEqual({
+      type: "content",
+      value: [
+        { type: "text", text: "Reference screenshot design/references/screenshot-1.png:" },
+        {
+          type: "file",
+          mediaType: "image/png",
+          data: { type: "data", data: Buffer.from(PNG).toString("base64") },
+        },
+      ],
+    });
+  });
+
+  it("refuses files the brief doesn't list as screenshots", async () => {
+    const { tools, call } = await setup();
+    await startSite(t.session.workspace, { brief: { name: "Acme" }, templateId: "blank" });
+    await t.session.workspace.writeFile("public/a.png", PNG);
+    const output = await call("view_reference", { path: "public/a.png" });
+    expect(output).toEqual({ error: expect.stringContaining("isn't a screenshot in the brief") });
+    expect(tools.view_reference.toModelOutput?.(output)).toEqual({ type: "json", value: output });
+  });
+});
+
 describe("versions and brief", () => {
   it("saves a version and records the commit it was published as", async () => {
     const { call } = await setup();
