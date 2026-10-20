@@ -17,6 +17,8 @@ export const SITE_DATABASE_ENV = {
   token: "SITE_DATABASE_TOKEN",
   /** The site's own login secret: one per site, never Locus's own `BETTER_AUTH_SECRET`. */
   authSecret: "SITE_AUTH_SECRET",
+  /** Proves the site's routes are the site when they ask Locus for its files. */
+  filesKey: "SITE_FILES_KEY",
 } as const;
 
 const FILE = /^db\/migrations\/(\d{4}_[a-z0-9_]+)\.sql$/;

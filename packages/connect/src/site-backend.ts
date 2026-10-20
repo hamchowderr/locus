@@ -25,6 +25,7 @@ import {
 import { auditLog, site, siteBackend } from "@locus/db/control";
 import { and, eq, sql } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
+import { deleteAllSiteFiles, type SiteFileStore } from "./site-files.ts";
 import { audit } from "./sites.ts";
 import { hostGrant, refused, type VercelCallDeps, vercel } from "./vercel-api.ts";
 
@@ -160,7 +161,11 @@ async function provisionSiteBackend(
  * new ones on the next publish instead of the dead token.
  */
 export async function removeSiteBackend(
-  deps: SiteBackendDeps & Partial<Pick<VercelCallDeps, "secrets" | "http">>,
+  deps: SiteBackendDeps &
+    Partial<Pick<VercelCallDeps, "secrets" | "http">> & {
+      /** The site's uploaded files go too, when Locus has file storage set up. */
+      files?: SiteFileStore;
+    },
   ctx: SessionContext,
   client: AuthorizedClient,
   input: { siteId: string },
@@ -185,6 +190,7 @@ export async function removeSiteBackend(
       }
     }
   }
+  if (deps.files) await deleteAllSiteFiles(deps.files, row.siteId);
   await deps.provisioner.destroy(row.tursoDbName);
   await deps.db.delete(siteBackend).where(eq(siteBackend.siteId, row.siteId));
   await audit(deps.db, ctx, client, "site.backend.remove", {
@@ -302,6 +308,12 @@ export function siteBackendRows(
 export interface SiteReleaseDeps extends VercelCallDeps {
   /** Absent where Locus has no database host set up; a site with a database is then refused. */
   provisioner?: TenantProvisioner;
+  /**
+   * The site's files key (`siteFilesKey`), set on its host so its routes can reach its files.
+   * Absent where Locus has no file storage set up: the site then gets no key and can't keep
+   * files until a later publish.
+   */
+  siteFilesKey?: (siteId: string) => string;
 }
 
 /** How long the token that applies a publish's database changes lives. */
@@ -469,6 +481,8 @@ export async function ensureSiteBackendEnv(
     [SITE_DATABASE_ENV.token]: () => provisioner.mintToken(row.tursoDbName, { ttl: "never" }),
     [SITE_DATABASE_ENV.authSecret]: async () => randomBytes(32).toString("base64url"),
   };
+  const filesKey = deps.siteFilesKey;
+  if (filesKey) values[SITE_DATABASE_ENV.filesKey] = async () => filesKey(row.siteId);
   const missing = Object.keys(values).filter((key) => !present.has(key));
   if (missing.length === 0) return [];
   const body = [];

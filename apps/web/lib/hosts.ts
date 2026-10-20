@@ -16,6 +16,7 @@ import { provisionerFromEnv } from "@locus/db";
 import { baseUrl, configured, required, secretStore, serviceMode } from "./connect.ts";
 import { liveGithubApp, stubGithubApp } from "./github-app.ts";
 import { locus } from "./locus.ts";
+import { siteFilesConfigured, siteFilesKeyFor } from "./site-files.ts";
 
 export const GITHUB_STATE_COOKIE = "locus_github_state";
 export const VERCEL_STATE_COOKIE = "locus_vercel_state";
@@ -96,6 +97,7 @@ export function publishDeps(): PublishDeps {
     tokens: installationTokens,
     // App-style sites' own databases, on Otaku's Turso account like the clients'.
     provisioner: configured(() => provisionerFromEnv(".data/tenants")),
+    ...(siteFilesConfigured() ? { siteFilesKey: siteFilesKeyFor } : {}),
   };
   if (serviceMode("GITHUB_MODE") === "stub") {
     stubGithub ??= createStubGithub();
