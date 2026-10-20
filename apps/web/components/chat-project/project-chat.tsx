@@ -40,6 +40,7 @@ export function ProjectChat({
   modes,
   placeholder = 'Ask anything…',
   emptyText = 'Ask for anything. Bigger pieces of work get a thread of their own.',
+  onWorkDone,
 }: {
   className?: string;
   /** What approval cards say, per tool name (components/chat/approval-view.tsx). */
@@ -51,6 +52,8 @@ export function ProjectChat({
   modes?: ReadonlyArray<{ id: string; name: string }> | undefined;
   placeholder?: string;
   emptyText?: string;
+  /** Called when a turn in the main chat or an open thread ends, or a thread's status changes. */
+  onWorkDone?: (() => void) | undefined;
 }) {
   const main = useAgentControllerChat();
   const thread = useAgentControllerChat();
@@ -122,6 +125,22 @@ export function ProjectChat({
     }
     if (openId && !threadBusy) void open(openId);
   }, [statuses, mainId, mainBusy, openInMain, openId, threadBusy, open]);
+  const workDone = useRef(onWorkDone);
+  workDone.current = onWorkDone;
+  const wasBusy = useRef(false);
+  const busy = mainBusy || threadBusy;
+  useEffect(() => {
+    if (wasBusy.current && !busy) workDone.current?.();
+    wasBusy.current = busy;
+  }, [busy]);
+  const seenStatuses = useRef(statuses);
+  useEffect(() => {
+    if (seenStatuses.current === statuses) return;
+    // The first list of threads after the page loads is not work finishing.
+    const loaded = seenStatuses.current !== '';
+    seenStatuses.current = statuses;
+    if (loaded) workDone.current?.();
+  }, [statuses]);
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => {
