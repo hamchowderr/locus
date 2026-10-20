@@ -59,7 +59,12 @@ export async function connectApp(form: FormData) {
 export async function connectAppLink(
   toolkit: string,
 ): Promise<{ url: string } | { error: string }> {
-  const { ctx, connections } = await signedIn();
+  // Called from the chat too, so it answers with an error instead of redirecting that page.
+  const current = await currentSession();
+  if (!current) return { error: "You're signed out. Sign in again, then connect the app." };
+  const connections = appConnectionsFromEnv();
+  if (!connections) return { error: "Connected apps aren't set up here yet." };
+  const ctx = sessionContext(current);
   try {
     const url = await connectClientApp(
       locus().db,
