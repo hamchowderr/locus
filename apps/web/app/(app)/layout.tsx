@@ -23,12 +23,17 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
 
   const ctx = sessionContext(current);
   const db = locus().db;
-  const [client, clients, operator] = await Promise.all([
-    resolveActiveClient(db, ctx).catch((e) => {
-      if (e instanceof ClientAccessDenied) return null;
+  // Someone removed from the agency keeps their session for a while: they get an empty
+  // menu with Sign out, not an error.
+  const denied =
+    <T,>(fallback: T) =>
+    (e: unknown) => {
+      if (e instanceof ClientAccessDenied) return fallback;
       throw e;
-    }),
-    listAccessibleClients(db, ctx),
+    };
+  const [client, clients, operator] = await Promise.all([
+    resolveActiveClient(db, ctx).catch(denied(null)),
+    listAccessibleClients(db, ctx).catch(denied([])),
     isOperator(db, ctx, operatorsFromEnv()),
   ]);
 

@@ -20,7 +20,11 @@ export default async function Clients({
   if (!current.session.activeOrganizationId) redirect("/onboarding");
   const { error, builder, changed } = await searchParams;
   const ctx = sessionContext(current);
-  const clients = await listAccessibleClients(locus().db, ctx);
+  const clients = await listAccessibleClients(locus().db, ctx).catch((e) => {
+    // Removed from the agency: nothing to choose, rather than an error page.
+    if (e instanceof ClientAccessDenied) return [];
+    throw e;
+  });
   const manager = await requireAgencyManager(locus().db, ctx).then(
     () => true,
     (e) => {
