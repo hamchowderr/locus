@@ -42,6 +42,7 @@ import {
   session,
   site,
   siteBackend,
+  siteFolder,
   subscription,
   usageEvent,
   usageLimit,
@@ -74,6 +75,7 @@ import {
   chooseActiveSite,
   closeClientDbs,
   cookieValue,
+  copyClientSite,
   createClientSite,
   createSiteBuilder,
   deleteClientSite,
@@ -850,6 +852,135 @@ describe("publishing saved versions", () => {
       expect(saved.publishError).toMatch(/couldn't be published/);
       expect(saved.commitUrl).toBeUndefined();
     });
+  });
+});
+
+describe("copying a site", () => {
+  async function built(userId = "owner") {
+    const client = await authorized(userId, clientA);
+    const { siteId } = await createClientSite(deps(), ctx(userId), client, {
+      name: "Bright Smiles",
+      kind: "website",
+      templateId: "blank",
+    });
+    const builder = createSiteBuilder(deps(), { client });
+    const rc = context({ [SITE_ID_KEY]: siteId });
+    await call(builder.tools, "files", { action: "write", path: "extra.txt", content: "v2" }, rc);
+    await call(builder.tools, "versions", { action: "save", message: "Add extra" }, rc);
+    // Unsaved work isn't copied: only the latest saved version is.
+    await call(builder.tools, "files", { action: "write", path: "draft.txt", content: "x" }, rc);
+    await db.update(site).set({ repoFullName: "agency/smiles" }).where(eq(site.id, siteId));
+    await db.insert(siteFolder).values({ siteId, name: "Dental" });
+    return { client, siteId };
+  }
+
+  async function contents(client: AuthorizedClient, siteId: string) {
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      const ws = new SiteWorkspace(tenant, siteId);
+      const latest = await ws.latestVersion();
+      const files = latest ? await ws.versionFiles(latest.id) : [];
+      return {
+        brief: await readBrief(tenant, siteId),
+        latest,
+        files: Object.fromEntries(files.map((f) => [f.path, f.content])),
+      };
+    } finally {
+      tenant.$client.close();
+    }
+  }
+
+  it("makes a new draft for another client from the latest saved version only", async () => {
+    const { client, siteId } = await built();
+    const to = await authorized("owner", clientB);
+    const copy = await copyClientSite(deps(), ctx("owner"), client, siteId, to, {
+      name: " Smiles Two ",
+    });
+    expect(copy.version).toMatchObject({ number: 1, source: "copy", parentId: null });
+
+    const [row] = await db.select().from(site).where(eq(site.id, copy.siteId));
+    // A fresh draft: nothing published, and folders stay with their own client.
+    expect(row).toMatchObject({
+      locationId: clientB,
+      status: "draft",
+      repoFullName: null,
+      hostProjectId: null,
+      customDomain: null,
+    });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual(
+      [],
+    );
+    const original = await contents(client, siteId);
+    const copied = await contents(to, copy.siteId);
+    expect(copied.files).toEqual(original.files);
+    expect(copied.files["extra.txt"]).toBe("v2");
+    expect(copied.files).not.toHaveProperty("draft.txt");
+    expect(copied.brief).toEqual({ ...original.brief, name: "Smiles Two" });
+    expect(copied.latest?.message).toBe("Copied from Bright Smiles, version 2");
+    // The original is untouched.
+    expect(original.latest?.number).toBe(2);
+    expect(original.brief?.name).toBe("Bright Smiles");
+
+    const audits = await db.select().from(auditLog).where(eq(auditLog.action, "site.create"));
+    expect(audits.at(-1)).toMatchObject({
+      locationId: clientB,
+      actorUserId: "owner",
+      detail: {
+        siteId: copy.siteId,
+        copiedFrom: { locationId: clientA, siteId, version: 2 },
+      },
+    });
+  });
+
+  it("keeps the folder when copying within the same client", async () => {
+    const { client, siteId } = await built();
+    const copy = await copyClientSite(deps(), ctx("owner"), client, siteId, client, {
+      name: "Again",
+    });
+    const [row] = await db.select().from(site).where(eq(site.id, copy.siteId));
+    expect(row).toMatchObject({ locationId: clientA, repoFullName: null });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual([
+      { siteId: copy.siteId, name: "Dental" },
+    ]);
+  });
+
+  it("only copies between clients the member passed the staff check for", async () => {
+    const { client, siteId } = await built("staff");
+    await expect(authorized("staff", clientB)).rejects.toBeInstanceOf(ClientAccessDenied);
+    const forged = {
+      location: { id: clientB, organizationId: "agency-a" },
+      memberId: "staff@agency-a",
+    } as AuthorizedClient;
+    await expect(
+      copyClientSite(deps(), ctx("staff"), client, siteId, forged, { name: "X" }),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    // And a site of another client can't be named as the source.
+    const b = await authorized("owner", clientB);
+    await expect(
+      copyClientSite(deps(), ctx("owner"), b, siteId, b, { name: "X" }),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(await db.select().from(site)).toHaveLength(1);
+  });
+
+  it("refuses a site not built in Locus, and a blank name, leaving nothing behind", async () => {
+    const client = await authorized("owner", clientA);
+    await db.insert(site).values({ id: "linked", locationId: clientA, hostProjectId: "prj_1" });
+    await expect(
+      copyClientSite(deps(), ctx("owner"), client, "linked", client, { name: "X" }),
+    ).rejects.toThrow(/built in Locus/);
+    const { siteId } = await built();
+    await expect(
+      copyClientSite(deps(), ctx("owner"), client, siteId, client, { name: "  " }),
+    ).rejects.toBeInstanceOf(SiteInputError);
+    expect(await db.select().from(site)).toHaveLength(2);
+  });
+
+  it("counts against the plan's new sites a month", async () => {
+    const { client, siteId } = await built();
+    await expect(
+      copyClientSite(deps({ billing: true }), ctx("owner"), client, siteId, client, { name: "X" }),
+    ).rejects.toThrow(/Choose a Locus plan/);
+    expect(await db.select().from(site)).toHaveLength(1);
   });
 });
 

@@ -26,7 +26,7 @@ import {
   siteDomainStatus,
 } from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
-import { auditLog, member, session, site, siteBackend } from "@locus/db/control";
+import { auditLog, member, session, site, siteBackend, siteFolder } from "@locus/db/control";
 import {
   generationRun,
   siteBlob,
@@ -59,6 +59,7 @@ import {
   type VersionInfo,
   WorkspaceError,
   withLocusSettings,
+  writeBrief,
 } from "@locus/studio";
 import { and, count, eq, gte, inArray, isNull, notExists, notInArray, sum } from "drizzle-orm";
 import { ZodError } from "zod";
@@ -965,6 +966,112 @@ export async function createClientSite(
     await deps.db.batch([
       deps.db.delete(auditLog).where(eq(auditLog.id, auditId)),
       deps.db.delete(site).where(eq(site.id, siteId)),
+    ]);
+    if (error instanceof WorkspaceError) throw new SiteInputError(error.message);
+    throw error;
+  } finally {
+    release?.();
+  }
+}
+
+/**
+ * Copies a site's latest saved version into a new draft site of `to`, which may be the same
+ * client or another one of the agency's. Both clients passed the staff check for this member,
+ * so a member restricted to some clients can only copy between those. The copy gets its own
+ * row, brief (renamed) and version 1, and nothing else: no history, repository, Vercel project,
+ * domain or form leads. It counts as a new site against the agency's plan. The site's folder
+ * comes along only within the same client.
+ */
+export async function copyClientSite(
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "billing">,
+  ctx: SessionContext,
+  from: AuthorizedClient,
+  siteId: string,
+  to: AuthorizedClient,
+  input: { name: string },
+): Promise<{ siteId: string; version: VersionInfo }> {
+  assertAuthorizedClient(from);
+  assertAuthorizedClient(to);
+  if (from.location.organizationId !== to.location.organizationId) {
+    throw new ClientAccessDenied("clients are in different agencies");
+  }
+  const name = input.name.trim();
+  if (!name || name.length > 120) {
+    throw new SiteInputError("Give the copy a name of up to 120 characters.");
+  }
+  const source = await clientSite(deps.db, from, siteId);
+  if (deps.billing) {
+    const refusal = await newSiteRefusal(deps.db, to.location.organizationId);
+    if (refusal) throw new SiteInputError(refusal);
+  }
+
+  // Read everything first and let the connection go, so the copy never holds two at once.
+  const read = await leaseClientDb(deps.openClientDb, from);
+  let files: Awaited<ReturnType<SiteWorkspace["versionFiles"]>>;
+  let brief: Awaited<ReturnType<typeof readBrief>>;
+  let fromVersion: VersionInfo | null;
+  try {
+    const workspace = new SiteWorkspace(read.db, source.id);
+    brief = await readBrief(read.db, source.id);
+    fromVersion = await workspace.latestVersion();
+    files = fromVersion ? await workspace.versionFiles(fromVersion.id) : [];
+  } finally {
+    read.release();
+  }
+  if (!brief || !fromVersion) {
+    throw new SiteInputError("Only a site built in Locus, with a saved version, can be copied.");
+  }
+
+  const newId = randomUUID();
+  const auditId = randomUUID();
+  await deps.db.batch([
+    deps.db.insert(site).values({
+      id: newId,
+      locationId: to.location.id,
+    }),
+    deps.db.insert(auditLog).values({
+      id: auditId,
+      organizationId: to.location.organizationId,
+      actorUserId: ctx.userId,
+      locationId: to.location.id,
+      action: "site.create",
+      detail: {
+        siteId: newId,
+        copiedFrom: {
+          locationId: from.location.id,
+          siteId: source.id,
+          version: fromVersion.number,
+        },
+      },
+    }),
+  ]);
+  // A copy for the same client stays in the original's folder.
+  if (to.location.id === from.location.id) {
+    const [folder] = await deps.db
+      .select({ name: siteFolder.name })
+      .from(siteFolder)
+      .where(eq(siteFolder.siteId, source.id));
+    if (folder) await deps.db.insert(siteFolder).values({ siteId: newId, name: folder.name });
+  }
+  let tenant: TenantDb | undefined;
+  let release: (() => void) | undefined;
+  try {
+    ({ db: tenant, release } = await leaseClientDb(deps.openClientDb, to));
+    const workspace = new SiteWorkspace(tenant, newId);
+    await workspace.writeFiles(files);
+    const version = await workspace.saveVersion({
+      message: `Copied from ${brief.name}, version ${fromVersion.number}`,
+      source: "copy",
+      userId: ctx.userId,
+    });
+    if (!version) throw new SiteInputError("That site's latest version has no files to copy.");
+    await writeBrief(tenant, newId, { ...brief, name });
+    return { siteId: newId, version };
+  } catch (error) {
+    if (tenant) await forgetSiteFiles(tenant, newId);
+    await deps.db.batch([
+      deps.db.delete(auditLog).where(eq(auditLog.id, auditId)),
+      deps.db.delete(site).where(eq(site.id, newId)),
     ]);
     if (error instanceof WorkspaceError) throw new SiteInputError(error.message);
     throw error;
