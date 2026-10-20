@@ -24,6 +24,17 @@ export {
   normalizeSitePath,
   WorkspaceError,
 } from "./paths.ts";
+export {
+  DESCRIPTION_MAX,
+  imagesWithoutAlt,
+  type PageSeo,
+  pageRoute,
+  pageSeo,
+  type SeoIssue,
+  seoIssues,
+  siteFacts,
+  TITLE_MAX,
+} from "./seo.ts";
 export { startSite } from "./start.ts";
 export {
   BACKEND_STACK,
@@ -34,23 +45,29 @@ export {
   FIRST_MIGRATION_PATH,
   hasBackendFiles,
   LEAD_ROUTE_PATH,
+  LLMS_PATH,
   LOCUS_SETTINGS_PATH,
   LOGINS_MIGRATION,
+  type LocusSettings,
   leadEndpoint,
   leadRouteFile,
   locusSettingsFile,
   packageName,
+  ROBOTS_PATH,
   readableOn,
   renderTemplate,
   SHADCN_COMPONENTS,
   SITE_DATABASE_ENV,
   SITE_SCHEMA_PATH,
   SITE_STACK,
+  SITEMAP_PATH,
   type SiteTemplate,
+  searchFiles,
   TEMPLATES,
   templateById,
   withBackend,
   withLocusSettings,
+  withSearchFiles,
 } from "./templates/index.ts";
 export {
   annotateSource,

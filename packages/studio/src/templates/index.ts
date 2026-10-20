@@ -16,11 +16,19 @@ export { baseFiles, DEFAULT_PALETTE, packageName, readableOn, SITE_STACK } from 
 export {
   LEAD_ROUTE_PATH,
   LOCUS_SETTINGS_PATH,
+  type LocusSettings,
   leadEndpoint,
   leadRouteFile,
   locusSettingsFile,
   withLocusSettings,
 } from "./forms.ts";
+export {
+  LLMS_PATH,
+  ROBOTS_PATH,
+  SITEMAP_PATH,
+  searchFiles,
+  withSearchFiles,
+} from "./search.ts";
 export { SHADCN_COMPONENTS } from "./shadcn.ts";
 
 export interface SiteTemplate {
@@ -191,7 +199,10 @@ export const TEMPLATES: SiteTemplate[] = [
     files: (brief) => [
       {
         path: "app/page.tsx",
-        content: `import { site } from "@/lib/site";
+        content: `import type { Metadata } from "next";
+import { site } from "@/lib/site";
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default function Home() {
   return (
@@ -216,7 +227,8 @@ export default function Home() {
       ...leadForm("Get started"),
       {
         path: "app/page.tsx",
-        content: `import { LeadForm } from "@/components/lead-form";
+        content: `import type { Metadata } from "next";
+import { LeadForm } from "@/components/lead-form";
 ${ACCORDION_IMPORT}
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -228,6 +240,8 @@ const benefits = [
   { title: "Trusted", text: "Show why people can rely on you." },
   { title: "Simple", text: "Explain how easy it is to get started." },
 ];
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default function Home() {
   return (
@@ -294,13 +308,16 @@ export const services = [
       },
       {
         path: "app/page.tsx",
-        content: `import Link from "next/link";
+        content: `import type { Metadata } from "next";
+import Link from "next/link";
 ${ACCORDION_IMPORT}
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { services } from "@/lib/services";
 import { site } from "@/lib/site";
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default function Home() {
   return (
@@ -345,6 +362,7 @@ import { services } from "@/lib/services";
 export const metadata: Metadata = {
   title: "Services",
   description: "The services we offer and who they're for.",
+  alternates: { canonical: "/services" },
 };
 
 export default function Services() {
@@ -380,6 +398,7 @@ import { site } from "@/lib/site";
 export const metadata: Metadata = {
   title: "About",
   description: \`The story of \${site.name} and the people behind it.\`,
+  alternates: { canonical: "/about" },
 };
 
 export default function About() {
@@ -404,6 +423,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 export const metadata: Metadata = {
   title: "Contact",
   description: "Send us a message and we'll get back to you.",
+  alternates: { canonical: "/contact" },
 };
 
 export default function Contact() {
@@ -437,13 +457,16 @@ export default function Contact() {
       ...leadForm("Claim it now"),
       {
         path: "app/page.tsx",
-        content: `import { CheckIcon } from "lucide-react";
+        content: `import type { Metadata } from "next";
+import { CheckIcon } from "lucide-react";
 import { LeadForm } from "@/components/lead-form";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { site } from "@/lib/site";
 
 const points = ["The first thing they get", "The second thing they get", "Why it's worth it"];
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default function OptIn() {
   return (
@@ -519,7 +542,8 @@ export default function ThankYou() {
       ...leadForm("Start a project"),
       {
         path: "app/page.tsx",
-        content: `import { LeadForm } from "@/components/lead-form";
+        content: `import type { Metadata } from "next";
+import { LeadForm } from "@/components/lead-form";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -531,6 +555,8 @@ const work = [
   { title: "Project three", tag: "Photography", text: "One line on the brief and the result." },
   { title: "Project four", tag: "Campaign", text: "One line on the brief and the result." },
 ];
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
 
 export default function Home() {
   return (
