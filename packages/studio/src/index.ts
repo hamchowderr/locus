@@ -26,11 +26,16 @@ export {
 } from "./paths.ts";
 export { startSite } from "./start.ts";
 export {
+  BACKEND_STACK,
+  backendFiles,
   baseFiles,
   DEFAULT_PALETTE,
   defaultTemplate,
+  FIRST_MIGRATION_PATH,
+  hasBackendFiles,
   LEAD_ROUTE_PATH,
   LOCUS_SETTINGS_PATH,
+  LOGINS_MIGRATION,
   leadEndpoint,
   leadRouteFile,
   locusSettingsFile,
@@ -38,10 +43,13 @@ export {
   readableOn,
   renderTemplate,
   SHADCN_COMPONENTS,
+  SITE_DATABASE_ENV,
+  SITE_SCHEMA_PATH,
   SITE_STACK,
   type SiteTemplate,
   TEMPLATES,
   templateById,
+  withBackend,
   withLocusSettings,
 } from "./templates/index.ts";
 export {
