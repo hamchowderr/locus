@@ -35,6 +35,7 @@ export function SitePreview({
   actions,
   onFrameLoad,
   onPageChange,
+  refreshSignal,
 }: {
   start: () => Promise<Started | { problem: string }>;
   version: number | null;
@@ -48,6 +49,8 @@ export function SitePreview({
    * against), the page's full address and its route. Null until a preview has started.
    */
   onPageChange?: (page: { origin: string; url: string; route: string } | null) => void;
+  /** Refreshes the preview (pages and frame) each time this number changes. */
+  refreshSignal?: number;
 }) {
   const [preview, setPreview] = useState<Started | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -81,6 +84,13 @@ export function SitePreview({
     started.current = version;
     run();
   }, [run, version]);
+
+  const refreshed = useRef(refreshSignal);
+  useEffect(() => {
+    if (refreshed.current === refreshSignal) return;
+    refreshed.current = refreshSignal;
+    run();
+  }, [run, refreshSignal]);
 
   const src = preview ? pageUrl(preview.url, route) : null;
   const pageChanged = useRef(onPageChange);
