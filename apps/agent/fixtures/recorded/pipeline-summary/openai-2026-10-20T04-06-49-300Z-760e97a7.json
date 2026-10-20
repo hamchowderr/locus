@@ -1,0 +1,73 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Which stage of the Sales pipeline has the most open opportunities, and what are they worth in total?",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 1,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\":\"p\",\"operation\":\"opportunities.get-pipelines\",\"rowsField\":\"pipelines\"}], \"sql\": \"SELECT p.id, p.name, json_extract(s.value,'$.id') sid, json_extract(s.value,'$.name') sname FROM p, json_each(p.stages) s\"}",
+            "id": "toolu_014Kw4Hfsm7XHswqotDzkZoE"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 5575,
+          "completion_tokens": 165,
+          "total_tokens": 5740,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.0256,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.0256
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1877,
+        "interChunkDelaysMs": [
+          0,
+          327,
+          2,
+          0,
+          0,
+          0,
+          0,
+          152,
+          46,
+          50,
+          51,
+          49,
+          58,
+          55,
+          47,
+          51,
+          78,
+          3,
+          1
+        ],
+        "totalDurationMs": 2847
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

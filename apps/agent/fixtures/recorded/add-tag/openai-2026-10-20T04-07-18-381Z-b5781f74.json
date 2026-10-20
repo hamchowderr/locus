@@ -1,0 +1,70 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Add the tag follow-up to Jordan Sample.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 4,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "Exactly one Jordan Sample (fake-contact-02).",
+        "toolCalls": [
+          {
+            "name": "perform_action",
+            "arguments": "{\"operation\": \"contacts.add-tags\", \"params\": {\"path\": {\"contactId\": \"fake-contact-02\"}, \"body\": {\"tags\": [\"follow-up\"]}}}",
+            "id": "toolu_01KEx58o3aDatgELqecX93aA"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 7739,
+          "completion_tokens": 137,
+          "total_tokens": 7876,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.033696,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.033696
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 4296,
+        "interChunkDelaysMs": [
+          0,
+          0,
+          0,
+          0,
+          31,
+          50,
+          191,
+          11,
+          49,
+          51,
+          49,
+          73,
+          73,
+          0,
+          1
+        ],
+        "totalDurationMs": 4875
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

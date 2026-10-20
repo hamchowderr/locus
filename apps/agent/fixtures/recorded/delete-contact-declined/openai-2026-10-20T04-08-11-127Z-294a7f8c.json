@@ -1,0 +1,70 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the contact Casey Placeholder.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 2,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\": \"c\", \"operation\": \"contacts.search-contacts-advanced\", \"params\": {\"body\": {\"query\": \"Casey Placeholder\"}}}], \"sql\": \"SELECT id, firstName, lastName, email, phone, dateAdded FROM c\"}",
+            "id": "toolu_01LULND3ywuS6oLJEK5Uo55w"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 6856,
+          "completion_tokens": 148,
+          "total_tokens": 7004,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.030384,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.030384
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1751,
+        "interChunkDelaysMs": [
+          0,
+          91,
+          66,
+          36,
+          42,
+          50,
+          48,
+          51,
+          145,
+          51,
+          52,
+          54,
+          56,
+          64,
+          3,
+          0
+        ],
+        "totalDurationMs": 2560
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

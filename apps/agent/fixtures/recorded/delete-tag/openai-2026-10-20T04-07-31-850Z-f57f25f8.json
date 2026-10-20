@@ -1,0 +1,92 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the old-promo tag. Nobody uses it any more.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 1,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "Let me find the tag and check whether any contacts still use it.",
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\":\"tags\",\"operation\":\"locations.get-location-tags\"},{\"as\":\"c\",\"operation\":\"contacts.search-contacts-advanced\",\"params\":{\"body\":{\"pageLimit\":100,\"filters\":[{\"field\":\"tags\",\"operator\":\"contains\",\"value\":\"old-promo\"}]}}}], \"sql\": \"SELECT 'tag' k, id, name, NULL n FROM tags WHERE lower(name) LIKE '%old-promo%' OR lower(name) LIKE '%old promo%' UNION ALL SELECT 'contacts', NULL, NULL, count(*) FROM c\"}",
+            "id": "toolu_01VAfrHB1WF5cBTFxXJc7KrB"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 9118,
+          "completion_tokens": 282,
+          "total_tokens": 9400,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.042112,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.042112
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1581,
+        "interChunkDelaysMs": [
+          0,
+          0,
+          0,
+          0,
+          76,
+          57,
+          52,
+          42,
+          62,
+          35,
+          50,
+          50,
+          53,
+          46,
+          51,
+          57,
+          43,
+          152,
+          51,
+          58,
+          36,
+          49,
+          50,
+          72,
+          46,
+          35,
+          48,
+          49,
+          49,
+          74,
+          27,
+          50,
+          48,
+          52,
+          145,
+          1,
+          0
+        ],
+        "totalDurationMs": 3347
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

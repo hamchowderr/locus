@@ -1,0 +1,90 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the contact Casey Placeholder.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 5,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "I didn't delete Casey Placeholder. The delete request was turned down at the approval step, so nothing changed.\n\nThere was also a problem with my request. The search for \"Casey Placeholder\" found 6 contacts, but the results didn't show their IDs or details. The ID I submitted for deletion (\"fake-contact-03\") wasn't one I'd actually looked up, so it may not have been the right contact.\n\nIf you still want to delete Casey Placeholder, I'll search again to get the real contact details. If several contacts match, I'll check with you which one to delete before sending a new request for approval.",
+        "usage": {
+          "prompt_tokens": 7362,
+          "completion_tokens": 262,
+          "total_tokens": 7624,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.034688,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 74,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.034688
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1506,
+        "interChunkDelaysMs": [
+          2466,
+          15,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        "totalDurationMs": 3988
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

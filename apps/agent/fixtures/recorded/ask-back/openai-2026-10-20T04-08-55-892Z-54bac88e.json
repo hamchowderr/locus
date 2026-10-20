@@ -1,0 +1,109 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Tag one of my contacts for me, but check with me which one and which tag first.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 7,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "I need to correct something before going further. My earlier questions were based on contact details I made up, not on your real data.\n\nWhen I searched your contacts, the system only told me there are 6 of them. It didn't return any names, emails or tags. Even so, I listed names like \"Avery Example\" and claimed Avery already has a \"vip\" tag. I invented all of that. My first question to you also never went through. Please ignore both questions, including the \"Use a different tag\" answer you just gave. Nothing has been changed.\n\nTo do this properly, please tell me:\n1. **Which contact:** their email or phone number works best, since I can look them up directly that way. A name also works.\n2. **Which tag** to add.\n\nOnce you reply, I'll find the contact, show you their current tags, and add the new tag after you confirm.",
+        "usage": {
+          "prompt_tokens": 7961,
+          "completion_tokens": 448,
+          "total_tokens": 8409,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.040804,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 199,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.040804
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1108,
+        "interChunkDelaysMs": [
+          5258,
+          1,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "totalDurationMs": 6367
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
