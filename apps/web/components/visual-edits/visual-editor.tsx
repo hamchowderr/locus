@@ -3,11 +3,11 @@
 import { MousePointerClick, Save, Sparkles, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { chooseSiteForChat } from "@/app/(app)/sites/[siteId]/visual-edits-actions";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useAgentControllerChat } from "@/lib/agent-controller/use-agent-controller-chat";
 import { cn } from "@/lib/utils";
-import { chooseSiteForChat } from "../../app/sites/[siteId]/visual-edits-actions";
 import { currentOf, groupsFor, type StyleGroup, setGroup } from "./classes";
 import {
   type PendingEdit,

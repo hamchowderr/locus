@@ -1,10 +1,10 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { Notice, Page } from "@/app/ui";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { type SiteHistory, siteHistory, siteNames, VERSIONS_SHOWN } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { Notice, Page } from "../../../ui";
 import { bookmarkVersion, restoreVersion } from "../actions";
 
 const SOURCE: Record<SiteHistory["versions"][number]["source"], string> = {

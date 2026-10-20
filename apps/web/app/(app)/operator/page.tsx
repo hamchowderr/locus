@@ -1,8 +1,8 @@
 import { listAgencies, NotOperator, operatorsFromEnv } from "@locus/auth";
 import { notFound, redirect } from "next/navigation";
+import { setAgencyComped } from "@/app/actions";
+import { Notice, Page } from "@/app/ui";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { setAgencyComped } from "../actions";
-import { Notice, Page } from "../ui";
 
 /** The deployment's operator view: every agency, account-level only. Others get a 404. */
 export default async function Operator({

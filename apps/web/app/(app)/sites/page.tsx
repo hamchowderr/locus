@@ -35,18 +35,6 @@ import {
 } from "@locus/studio";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { publishDeps, siteDeps } from "@/lib/hosts";
-import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
-import {
-  activeSiteIdForSession,
-  LEAD_TOTAL_DAYS,
-  type SiteSeo,
-  siteLeadTotals,
-  siteNames,
-  siteSeo,
-} from "@/lib/site-builder";
-import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-publish";
 import {
   addSiteDomain,
   chooseSite,
@@ -61,8 +49,20 @@ import {
   publishSite,
   saveSiteAccess,
   unlinkSiteProject,
-} from "../actions";
-import { Button, Field, Notice, Page } from "../ui";
+} from "@/app/actions";
+import { Button, Field, Notice, Page } from "@/app/ui";
+import { publishDeps, siteDeps } from "@/lib/hosts";
+import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
+import {
+  activeSiteIdForSession,
+  LEAD_TOTAL_DAYS,
+  type SiteSeo,
+  siteLeadTotals,
+  siteNames,
+  siteSeo,
+} from "@/lib/site-builder";
+import { siteBuilderDeps } from "@/lib/site-builder-host";
+import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-publish";
 
 const STATE: Record<DomainStatus["state"], string> = {
   verify: "Waiting for Vercel to verify the domain. Add this record, then check again.",
@@ -221,7 +221,7 @@ export default async function Sites({
   );
 
   return (
-    <Page title={`Sites · ${client.location.name}`}>
+    <Page title="Sites" width="wide">
       {error && <Notice tone="error">{error}</Notice>}
       {!builderOn && (
         <Notice tone="info">
@@ -264,15 +264,15 @@ export default async function Sites({
         <Notice tone="error">
           {projects.problem}{" "}
           <Link href="/connect" className="underline">
-            Connections
+            Integrations
           </Link>
         </Notice>
       )}
 
       {sites.length === 0 && (
         <p className="text-neutral-600">
-          This client has no site yet. Create one below, or link the Vercel project it already runs
-          on to connect its domain.
+          This sub-account has no site yet. Create one below, or link the Vercel project it already
+          runs on to connect its domain.
         </p>
       )}
 
@@ -746,7 +746,7 @@ function ConnectFirst({ problem }: { problem: string }) {
     <Notice tone="error">
       {problem}{" "}
       <Link href="/connect" className="underline">
-        Connections
+        Integrations
       </Link>
     </Notice>
   );

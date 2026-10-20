@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { currentSession } from "@/lib/locus";
 import { acceptInvite } from "../../actions";
-import { Button, Notice, Page } from "../../ui";
+import { AuthPage, Button, Notice } from "../../ui";
 
 export default async function Invite({
   params,
@@ -16,7 +16,7 @@ export default async function Invite({
   const here = `/invite/${encodeURIComponent(id)}`;
   if (!current) {
     return (
-      <Page title="You're invited to Locus">
+      <AuthPage title="You're invited to Locus">
         <p className="text-neutral-600">
           Sign in, or create an account with the address the invitation was sent to.
         </p>
@@ -28,17 +28,17 @@ export default async function Invite({
             Create an account
           </Link>
         </div>
-      </Page>
+      </AuthPage>
     );
   }
   return (
-    <Page title="Join the agency">
+    <AuthPage title="Join the agency">
       <p className="text-neutral-600">You're signed in as {current.user.email}.</p>
       {error && <Notice tone="error">{error}</Notice>}
       <form action={acceptInvite}>
         <input type="hidden" name="invitationId" value={id} />
         <Button>Accept invitation</Button>
       </form>
-    </Page>
+    </AuthPage>
   );
 }
