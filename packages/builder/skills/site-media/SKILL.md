@@ -14,6 +14,7 @@ images whenever they fit: a business looks like itself with its own logo and pho
   gif or ico). Pass `search` to match names ("logo", "team", "storefront").
 - Names are the client's own; judge by them, and ask the person when it's unclear which is the
   current logo.
+- If you found the image with `search`, pass the same `search` to `use_media`.
 
 ## Use it
 `crm` with action `use_media`, the image's `id` and `as`:
@@ -21,7 +22,9 @@ images whenever they fit: a business looks like itself with its own logo and pho
   becomes `app/icon.png` (or `.jpg`, or `app/favicon.ico`) and replaces any earlier icon.
 - `share`: the image shown when the site's link is shared (Open Graph). Landscape, about
   1200×630, with the business's name or a strong photo; png, jpg or gif. It becomes
-  `app/opengraph-image.*` and replaces any earlier one. Next adds the meta tags itself.
+  `app/opengraph-image.*` and replaces any earlier one. Next adds the meta tags itself; make
+  sure `metadata` in `app/layout.tsx` has `metadataBase: new URL("https://<the site's domain>")`
+  once the site has its own domain, so the preview's address points there.
 - `image`: any other picture, copied under `public/` (by default
   `public/images/<name>.<format>`, or `path` with the same extension). Reference it as
   `/images/<name>.<format>` with `next/image` or `<img>`, and real alt text.
