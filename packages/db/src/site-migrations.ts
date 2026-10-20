@@ -11,6 +11,14 @@ export const SITE_MIGRATIONS_TABLE = "_locus_migrations";
 /** Separates statements in one file, as drizzle-kit writes them. */
 export const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
 
+/** The env vars a published site reads; Locus sets them on its host, never in the repo. */
+export const SITE_DATABASE_ENV = {
+  url: "SITE_DATABASE_URL",
+  token: "SITE_DATABASE_TOKEN",
+  /** The site's own login secret: one per site, never Locus's own `BETTER_AUTH_SECRET`. */
+  authSecret: "SITE_AUTH_SECRET",
+} as const;
+
 const FILE = /^db\/migrations\/(\d{4}_[a-z0-9_]+)\.sql$/;
 
 export interface SiteMigration {
@@ -111,10 +119,31 @@ export async function applySiteMigrations(
     try {
       await db.migrate(statements);
     } catch (error) {
+      // Two publishes at once: the other one applied it first, so there is nothing left to do.
+      if (await ranAlready(db, migration)) continue;
+      // Only the database's verdict on the SQL is the migration's fault; a lost connection or
+      // a refused token is not, and stays an ordinary error.
+      if (!isSqlError(error)) throw error;
       const reason = error instanceof Error ? error.message : String(error);
       throw new SiteMigrationError(`${migration.name} failed: ${reason}`);
     }
     applied.push(migration.name);
   }
   return { applied };
+}
+
+async function ranAlready(db: Client, migration: SiteMigration): Promise<boolean> {
+  const result = await db
+    .execute({
+      sql: `select hash from ${SITE_MIGRATIONS_TABLE} where name = ?`,
+      args: [migration.name],
+    })
+    .catch(() => null);
+  return result?.rows[0]?.hash === hash(migration.sql);
+}
+
+/** SQLite's own error codes, as libSQL reports them locally and from Turso. */
+function isSqlError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" && /^SQLITE_|^SQL_/.test(code);
 }
