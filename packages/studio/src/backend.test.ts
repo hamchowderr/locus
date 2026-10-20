@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { createClient } from "@libsql/client";
 import {
   applySiteMigrations,
@@ -12,7 +12,7 @@ import {
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { drizzle } from "drizzle-orm/libsql";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesignBrief } from "./brief.ts";
 import {
   BACKEND_STACK,
@@ -129,5 +129,86 @@ describe("an app-style site's files", () => {
     } finally {
       client.close();
     }
+  });
+});
+
+/**
+ * Writes the site's server files to a folder next to this test (so their imports resolve to
+ * the workspace's packages), with the `@/` alias turned into relative paths.
+ */
+async function writeSite(files: SiteFile[], root: string) {
+  for (const file of files) {
+    if (!/\.(ts|sql)$/.test(file.path) || file.path.startsWith("app/")) continue;
+    const target = join(root, file.path);
+    await mkdir(dirname(target), { recursive: true });
+    const content = String(file.content).replace(/from "@\/([^"]+)"/g, (_, path: string) => {
+      const to = relative(dirname(target), join(root, path)).replaceAll("\\", "/");
+      return `from "${to.startsWith(".") ? to : `./${to}`}.ts"`;
+    });
+    await writeFile(target, content);
+  }
+}
+
+describe("the generated preview database", () => {
+  let root: string;
+  let cwd: string;
+
+  beforeEach(async () => {
+    root = join(import.meta.dirname, `.site-${Date.now()}`);
+    cwd = process.cwd();
+    await writeSite(withBackend(site()), root);
+    process.chdir(root);
+    vi.resetModules();
+  });
+
+  afterEach(async () => {
+    process.chdir(cwd);
+    vi.unstubAllEnvs();
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("starts on a fresh sandbox, applies migrations once, and keeps rows through a rebuild", async () => {
+    const { applyLocalMigrations } = await import(join(root, "lib/local-migrations.ts"));
+    const { client } = await import(join(root, "lib/db.ts"));
+    try {
+      expect(await applyLocalMigrations()).toEqual({ applied: ["0000_logins"] });
+      expect(await applyLocalMigrations()).toEqual({ applied: [] });
+      await client.execute(
+        `insert into "user" (id, name, email) values ('u1', 'Ann', 'ann@example.test')`,
+      );
+      await client.execute(
+        `insert into "session" (id, expires_at, token, user_id) values ('s1', 1, 't', 'u1')`,
+      );
+
+      // A drizzle-kit style table rebuild of "user", which "session" refers to.
+      await writeFile(
+        "db/migrations/0001_rebuild_user.sql",
+        [
+          "PRAGMA foreign_keys=OFF;",
+          "CREATE TABLE `__new_user` (`id` text PRIMARY KEY NOT NULL, `name` text NOT NULL, `email` text NOT NULL, `email_verified` integer DEFAULT false NOT NULL, `image` text, `nickname` text, `created_at` integer DEFAULT 0 NOT NULL, `updated_at` integer DEFAULT 0 NOT NULL);",
+          "INSERT INTO `__new_user`(`id`, `name`, `email`) SELECT `id`, `name`, `email` FROM `user`;",
+          "DROP TABLE `user`;",
+          "ALTER TABLE `__new_user` RENAME TO `user`;",
+          "PRAGMA foreign_keys=ON;",
+        ].join(`\n${STATEMENT_BREAKPOINT}\n`),
+      );
+      expect(await applyLocalMigrations()).toEqual({ applied: ["0001_rebuild_user"] });
+      const sessions = await client.execute(`select count(*) as n from "session"`);
+      expect(Number(sessions.rows[0]?.n)).toBe(1);
+
+      await writeFile("db/migrations/0001_again.sql", "select 1;");
+      await expect(applyLocalMigrations()).rejects.toThrow(/numbered 0001/);
+      await rm("db/migrations/0001_again.sql");
+      await writeFile("db/migrations/2_bad.sql", "select 1;");
+      await expect(applyLocalMigrations()).rejects.toThrow(/isn't named like/);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("refuses to start a production build without its database", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("SITE_DATABASE_URL", "");
+    await expect(import(join(root, "lib/db.ts"))).rejects.toThrow(/SITE_DATABASE_URL is not set/);
   });
 });
