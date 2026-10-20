@@ -50,7 +50,7 @@ import { FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
 import { annotateSource, readBrief, SiteWorkspace, SOURCE_ATTR } from "@locus/studio";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   GITHUB_APP_KEY_SECRET,
   GithubAppKeyError,
@@ -87,6 +87,7 @@ import {
   toMeasurement,
   usageMeter,
 } from "./site-builder.ts";
+import { giveSiteRepoAndPublish } from "./site-publish.ts";
 
 let dir: string;
 let db: ControlDb;
@@ -513,6 +514,87 @@ describe("publishing saved versions", () => {
     expect(github.repoFiles(repoFullName as string)?.["app/about/page.tsx"]).toBe("about");
   });
 
+  it("sends the latest version as soon as the site gets its repository", async () => {
+    const { client, siteId } = await startedSite();
+    const { row, version } = await giveSiteRepoAndPublish(
+      publishDeps(),
+      () => deps(),
+      ctx("owner"),
+      client,
+      { siteId, repo: "", name: "a-site" },
+    );
+    expect(version).toBe(1);
+    const pushed = github.repoFiles(row.repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain(`"https://locus.test/api/sites/${siteId}/leads"`);
+    const [saved] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(saved).toMatchObject({ repoFullName: row.repoFullName, status: "pushed" });
+  });
+
+  it("keeps the repository linked when the first publish is refused", async () => {
+    const { client, siteId } = await startedSite();
+    const giving = giveSiteRepoAndPublish(
+      publishDeps(),
+      () => deps({ publish: null }),
+      ctx("owner"),
+      client,
+      { siteId, repo: "", name: "a-site" },
+    );
+    await expect(giving).rejects.toBeInstanceOf(ConnectError);
+    await expect(giving).rejects.toThrow(/is linked, but the site wasn't sent to it yet/);
+    const [saved] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(saved).toMatchObject({ status: "draft" });
+    expect(saved?.repoFullName).toBeTruthy();
+  });
+
+  it("tells the page the repository is linked when the first publish fails unexpectedly", async () => {
+    const { client, siteId } = await startedSite();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const giving = giveSiteRepoAndPublish(
+        publishDeps(),
+        () =>
+          deps({
+            publish: () => {
+              throw new Error("network unreachable");
+            },
+          }),
+        ctx("owner"),
+        client,
+        { siteId, repo: "", name: "a-site" },
+      );
+      await expect(giving).rejects.toBeInstanceOf(ConnectError);
+      // The cause is logged, not shown.
+      await expect(giving).rejects.not.toThrow(/unreachable/);
+      const [saved] = await db.select().from(site).where(eq(site.id, siteId));
+      expect(saved?.repoFullName).toBeTruthy();
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it("doesn't publish again when the repository form is sent twice", async () => {
+    const { client, siteId } = await startedSite();
+    let publishes = 0;
+    const builder = () =>
+      deps({
+        publish: () => {
+          publishes++;
+          return publishDeps();
+        },
+      });
+    const choice = { siteId, repo: "", name: "a-site" };
+    await giveSiteRepoAndPublish(publishDeps(), builder, ctx("owner"), client, choice);
+    const again = await giveSiteRepoAndPublish(
+      publishDeps(),
+      builder,
+      ctx("owner"),
+      client,
+      choice,
+    );
+    expect(again.version).toBeNull();
+    expect(publishes).toBe(1);
+  });
+
   it("refuses to publish another client's site from the Sites page", async () => {
     const { siteId } = await startedSite();
     const other = await authorized("owner", clientB);
@@ -822,15 +904,23 @@ describe("deleting a site", () => {
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
   });
 
-  it.each([
-    { repoFullName: "agency/a-site" },
-    { hostProjectId: "prj_1" },
-    { customDomain: "www.example.com" },
-  ])("refuses a published site (%o), and leaves it as it was", async (published) => {
+  it("deletes a site saved to GitHub from Locus only", async () => {
     const { client, siteId } = await draft();
-    await db.update(site).set(published).where(eq(site.id, siteId));
+    await db.update(site).set({ repoFullName: "agency/a-site" }).where(eq(site.id, siteId));
+    await deleteClientSite(deps(), ctx("owner"), client, siteId);
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 0, briefs: 0 });
+  });
+
+  it.each([
+    { repoFullName: "agency/a-site", hostProjectId: "prj_1" },
+    { hostProjectId: "prj_1" },
+    { hostProjectId: "prj_1", customDomain: "www.example.com" },
+  ])("refuses a site that may be live on Vercel (%o), and leaves it as it was", async (live) => {
+    const { client, siteId } = await draft();
+    await db.update(site).set(live).where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
-      /can't be deleted here/,
+      /unlink its Vercel project first/,
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
