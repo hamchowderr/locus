@@ -23,6 +23,7 @@ import {
   MAX_FOLDER_LENGTH,
   type SiteDeployment,
   siteDomainStatus,
+  sitesWithBackend,
 } from "@locus/connect";
 import {
   DESIGN_QUESTIONS,
@@ -139,6 +140,7 @@ export default async function Sites({
   const sites = await listSites(locus().db, client);
   const builderOn = client.location.siteBuilder;
   const viewOnly = await viewOnlySites(locus().db, client);
+  const withDatabase = await sitesWithBackend(locus().db, client);
   const canBuild = (siteId: string) => builderOn && !viewOnly.has(siteId);
   // Members restricted to some clients, this one included, and their access to each site.
   const siteMembers = manager
@@ -305,6 +307,11 @@ export default async function Sites({
                   <Link href={`/sites/${s.id}/versions`} className="underline">
                     Versions
                   </Link>
+                  {withDatabase.has(s.id) && (
+                    <Link href={`/sites/${s.id}/database`} className="underline">
+                      Database
+                    </Link>
+                  )}
                 </p>
               )}
               {!briefNames.has(s.id) ? null : viewOnly.has(s.id) ? (

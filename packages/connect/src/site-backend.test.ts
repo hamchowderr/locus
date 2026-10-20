@@ -36,6 +36,7 @@ import {
   siteBackendOf,
   siteBackendOverview,
   siteBackendRows,
+  sitesWithBackend,
 } from "./site-backend.ts";
 import { vercelSecretRef } from "./vercel.ts";
 
@@ -146,22 +147,41 @@ describe("site backend", () => {
       `insert into "user" values ('u1', 'Ann', 'ann@example.test', 1, 1760000000000)`,
       `create table notes (id integer primary key, body text)`,
       `insert into notes (body) values ('one'), ('two')`,
+      `create table api_tokens (id integer primary key, label text, token text, big integer)`,
+      `insert into api_tokens values (1, 'shop', 'sk_live_x', 9007199254740993)`,
     ]);
     site.close();
 
     const staff = await authorizeClient(db, ctx("staff"), "client-1");
     const overview = await siteBackendOverview(deps, staff, SITE);
     expect(overview.tables.map((t) => [t.name, t.rows])).toEqual([
+      ["api_tokens", 1],
       ["notes", 2],
       ["user", 1],
+    ]);
+    // One read for the overview and a page: secret-looking columns stay hidden, and a number
+    // too big for JavaScript comes back whole.
+    const both = await siteBackendOverview(deps, staff, SITE, { table: "api_tokens" });
+    expect(both.rows?.rows).toEqual([
+      { id: 1n, label: "shop", token: "(hidden)", big: 9007199254740993n },
     ]);
     expect(overview.users.map((u) => u.email)).toEqual(["ann@example.test"]);
 
     const page = await siteBackendRows(deps, staff, { siteId: SITE, table: "notes", limit: 1 });
-    expect(page).toMatchObject({ total: 2, rows: [{ id: 1, body: "one" }] });
+    expect(page).toMatchObject({ total: 2, rows: [{ id: 1n, body: "one" }] });
     await expect(
       siteBackendRows(deps, staff, { siteId: SITE, table: "sqlite_master" }),
     ).rejects.toBeInstanceOf(ConnectError);
+    // Password hashes and session tokens never reach the dashboard.
+    for (const table of ["account", "session", "verification", "twoFactor", "jwks"]) {
+      await expect(siteBackendRows(deps, staff, { siteId: SITE, table })).rejects.toThrow(
+        "That table holds login secrets, so Locus doesn't show its rows.",
+      );
+    }
+    expect(await sitesWithBackend(db, staff)).toEqual(new Set([SITE]));
+    expect(await sitesWithBackend(db, await authorizeClient(db, ctx("owner"), "client-2"))).toEqual(
+      new Set(),
+    );
   });
 
   it("deletes the database and its row, for owners and admins only", async () => {

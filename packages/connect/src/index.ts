@@ -56,6 +56,7 @@ export {
 export {
   enableSiteBackend,
   ensureSiteBackendEnv,
+  LOGIN_SECRET_TABLES,
   migrateSiteBackend,
   removeSiteBackend,
   type SiteBackendDeps,
@@ -65,6 +66,7 @@ export {
   siteBackendOf,
   siteBackendOverview,
   siteBackendRows,
+  sitesWithBackend,
 } from "./site-backend.ts";
 export {
   BOOKING_LIMITS,
