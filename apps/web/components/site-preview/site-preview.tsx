@@ -2,7 +2,7 @@
 
 import type { SitePage } from "@locus/studio";
 import { ExternalLink, Monitor, RotateCw, Smartphone, Tablet } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { cn } from "@/lib/utils";
@@ -32,10 +32,22 @@ export function SitePreview({
   start,
   version,
   className,
+  actions,
+  onFrameLoad,
+  onPageChange,
 }: {
   start: () => Promise<Started | { problem: string }>;
   version: number | null;
   className?: string;
+  /** More controls for the toolbar, after the built-in ones (e.g. an editing toggle). */
+  actions?: ReactNode;
+  /** Called with the frame each time a page finishes loading in it. */
+  onFrameLoad?: (frame: HTMLIFrameElement) => void;
+  /**
+   * Called with what the frame shows: the preview's origin (to check `postMessage` senders
+   * against), the page's full address and its route. Null until a preview has started.
+   */
+  onPageChange?: (page: { origin: string; url: string; route: string } | null) => void;
 }) {
   const [preview, setPreview] = useState<Started | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -70,8 +82,14 @@ export function SitePreview({
     run();
   }, [run, version]);
 
-  const size = DEVICES.find((d) => d.id === device) ?? DEVICES[0];
   const src = preview ? pageUrl(preview.url, route) : null;
+  const pageChanged = useRef(onPageChange);
+  pageChanged.current = onPageChange;
+  useEffect(() => {
+    pageChanged.current?.(src ? { origin: new URL(src).origin, url: src, route } : null);
+  }, [src, route]);
+
+  const size = DEVICES.find((d) => d.id === device) ?? DEVICES[0];
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
@@ -91,6 +109,7 @@ export function SitePreview({
             </Button>
           ))}
         </ButtonGroup>
+        {actions}
         <label className="flex items-center gap-2 text-sm">
           <span className="text-neutral-600">Page</span>
           <select
@@ -141,6 +160,7 @@ export function SitePreview({
             // The site's code is untrusted: it may run, but never steer the Locus page around it.
             sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
             referrerPolicy="no-referrer"
+            onLoad={(e) => onFrameLoad?.(e.currentTarget)}
             className="shrink-0 rounded-md border border-neutral-300 bg-white shadow-sm"
             style={{
               width: size.width ? `${size.width}px` : "100%",
