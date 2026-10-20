@@ -1,5 +1,7 @@
 import {
+  MAX_SITE_FILE_BYTES,
   SITE_DATABASE_ENV,
+  SITE_FILE_TYPES,
   SITE_MIGRATIONS_DIR,
   SITE_MIGRATIONS_TABLE,
   STATEMENT_BREAKPOINT,
@@ -19,6 +21,7 @@ import type { SiteFile } from "../workspace.ts";
 /** Exact versions, matching what Locus itself runs. */
 export const BACKEND_STACK = {
   "@libsql/client": "0.18.0",
+  "@vercel/blob": "2.8.1",
   "better-auth": "1.7.7",
   "drizzle-orm": "0.45.4",
 } as const;
@@ -340,6 +343,262 @@ export const authClient = createAuthClient();
 `,
 });
 
+// Files the site's members upload. The published site keeps them in Locus's file storage and
+// holds no storage credential: its routes ask Locus, proving they are the site with
+// SITE_FILES_KEY (set on its host when it is published), and the browser sends the file
+// straight to storage with a one-file token Locus hands out. The preview keeps them in
+// .data/files, and nothing leaves the sandbox.
+const LOCAL_FILES = ".data/files";
+
+const filesFile = (): SiteFile => ({
+  path: "lib/files.ts",
+  content: `import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { locus } from "@/lib/locus";
+
+// Server code only: never import this from a "use client" file. The app's own routes and
+// server actions call these after checking the signed-in member; to keep a file, store its
+// pathname in the app's own table with the member's user_id.
+
+const api = locus.siteApi ? \`\${locus.siteApi}/files\` : null;
+const key = process.env.${SITE_DATABASE_ENV.filesKey};
+/** True in the preview (and a draft): files stay in ${LOCAL_FILES} and go nowhere. */
+export const previewFiles = api === null;
+
+export class FilesError extends Error {}
+
+async function ask(path: string, init: RequestInit = {}): Promise<Response> {
+  if (!api || !key) throw new FilesError("File uploads aren't set up for this site yet.");
+  const res = await fetch(\`\${api}/\${path}\`, {
+    ...init,
+    headers: { ...init.headers, authorization: \`Bearer \${key}\` },
+    cache: "no-store",
+  });
+  if (!res.ok && res.status !== 404) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new FilesError(body.error ?? "The file couldn't be handled just now.");
+  }
+  return res;
+}
+
+const localPath = (pathname: string) => {
+  if (!/^sites\\/preview\\/[0-9a-f-]{36}\\/[\\w-][\\w.-]{0,79}$/.test(pathname)) return null;
+  return join(${JSON.stringify(LOCAL_FILES)}, pathname);
+};
+
+/** What members may upload: the same in the preview as on the published site. */
+export const FILE_TYPES: readonly string[] = ${JSON.stringify(SITE_FILE_TYPES)};
+export const MAX_FILE_BYTES = ${MAX_SITE_FILE_BYTES};
+
+/** The headers a file is sent with: never sniffed, never run as a page. */
+function fileHeaders(contentType: string): Record<string, string> {
+  const pdf = contentType === "application/pdf";
+  const shown = pdf || contentType.startsWith("image/");
+  return {
+    "content-type": contentType,
+    "x-content-type-options": "nosniff",
+    "cache-control": "private, no-store",
+    ...(pdf ? {} : { "content-security-policy": "sandbox; default-src 'none'" }),
+    ...(shown ? {} : { "content-disposition": "attachment" }),
+  };
+}
+
+/** Starts an upload: where the file will be, and the token the browser sends it with. */
+export async function startUpload(file: { name: string; contentType: string; size: number }) {
+  if (previewFiles) {
+    const contentType = file.contentType.toLowerCase();
+    if (!FILE_TYPES.includes(contentType)) {
+      throw new FilesError("That kind of file can't be uploaded here.");
+    }
+    if (!Number.isInteger(file.size) || file.size < 1 || file.size > MAX_FILE_BYTES) {
+      throw new FilesError(\`Files can be up to \${MAX_FILE_BYTES / 1024 / 1024} MB.\`);
+    }
+    const name =
+      file.name.split(/[\\\\/]/).pop()?.replace(/[^\\w.-]+/g, "-").slice(-80).replace(/^[.-]+/, "") ||
+      "file";
+    return { pathname: \`sites/preview/\${randomUUID()}/\${name}\`, token: null, contentType };
+  }
+  const res = await ask("upload", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(file),
+  });
+  return (await res.json()) as { pathname: string; token: string; contentType: string };
+}
+
+/**
+ * The preview's stand-in for storage: keeps one new file in ${LOCAL_FILES}, with its type next
+ * to it. Refuses a file that is too big, of a kind members can't upload, or already there.
+ */
+export async function savePreviewFile(pathname: string, request: Request) {
+  const path = previewFiles ? localPath(pathname) : null;
+  if (!path) throw new FilesError("That isn't a file this preview can keep.");
+  const contentType = (request.headers.get("content-type") ?? "").toLowerCase();
+  if (!FILE_TYPES.includes(contentType)) {
+    throw new FilesError("That kind of file can't be uploaded here.");
+  }
+  if (Number(request.headers.get("content-length") ?? 0) > MAX_FILE_BYTES) {
+    throw new FilesError("That file is too big.");
+  }
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (bytes.byteLength < 1 || bytes.byteLength > MAX_FILE_BYTES) {
+    throw new FilesError("That file is too big.");
+  }
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, bytes, { flag: "wx" }).catch(() => {
+    throw new FilesError("That file is already there.");
+  });
+  await writeFile(\`\${path}.type\`, contentType);
+}
+
+/** A file, as a response to send the member, or null when there is none. */
+export async function fileResponse(pathname: string): Promise<Response | null> {
+  if (previewFiles) {
+    const path = localPath(pathname);
+    const bytes = path ? await readFile(path).catch(() => null) : null;
+    if (!path || !bytes) return null;
+    const contentType = await readFile(\`\${path}.type\`, "utf8").catch(() => "");
+    if (!FILE_TYPES.includes(contentType)) return null;
+    return new Response(new Uint8Array(bytes), { headers: fileHeaders(contentType) });
+  }
+  const res = await ask(\`read?pathname=\${encodeURIComponent(pathname)}\`);
+  if (res.status === 404) return null;
+  return new Response(res.body, {
+    headers: fileHeaders(res.headers.get("content-type") ?? "application/octet-stream"),
+  });
+}
+
+/** Deletes files the app checked the member may delete. */
+export async function deleteFiles(pathnames: string[]) {
+  if (pathnames.length === 0) return;
+  if (previewFiles) {
+    for (const pathname of pathnames) {
+      const path = localPath(pathname);
+      if (path) await rm(path, { force: true });
+      if (path) await rm(\`\${path}.type\`, { force: true });
+    }
+    return;
+  }
+  await ask("delete", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ pathnames }),
+  });
+}
+`,
+});
+
+const filesRouteFile = (): SiteFile => ({
+  path: "app/api/files/[action]/route.ts",
+  content: `import { headers } from "next/headers";
+import { auth } from "@/lib/auth";
+import { FilesError, fileResponse, savePreviewFile, startUpload } from "@/lib/files";
+
+// Signed-in members only. POST upload { name, contentType, size } → { pathname, token };
+// PUT preview?pathname=… (the preview only) keeps the file; GET read?pathname=… sends it.
+// Anyone signed in who knows a file's pathname can read it: pathnames are random, but show a
+// file only to whoever the app's own records say may see it.
+
+type Params = { params: Promise<{ action: string }> };
+
+async function member() {
+  return auth.api.getSession({ headers: await headers() });
+}
+
+const refused = (error: string, status: number) => Response.json({ error }, { status });
+
+export async function POST(request: Request, { params }: Params) {
+  if ((await params).action !== "upload") return refused("Not found.", 404);
+  if (!(await member())) return refused("Sign in to upload files.", 401);
+  const file = (await request.json().catch(() => null)) as {
+    name?: unknown;
+    contentType?: unknown;
+    size?: unknown;
+  } | null;
+  if (typeof file?.name !== "string" || typeof file.contentType !== "string" || typeof file.size !== "number") {
+    return refused("Give the file's name, type and size.", 400);
+  }
+  try {
+    return Response.json(
+      await startUpload({ name: file.name, contentType: file.contentType, size: file.size }),
+    );
+  } catch (error) {
+    if (error instanceof FilesError) return refused(error.message, 400);
+    throw error;
+  }
+}
+
+export async function PUT(request: Request, { params }: Params) {
+  if ((await params).action !== "preview") return refused("Not found.", 404);
+  if (!(await member())) return refused("Sign in to upload files.", 401);
+  const pathname = new URL(request.url).searchParams.get("pathname") ?? "";
+  try {
+    await savePreviewFile(pathname, request);
+    return Response.json({ pathname });
+  } catch (error) {
+    if (error instanceof FilesError) return refused(error.message, 400);
+    throw error;
+  }
+}
+
+export async function GET(request: Request, { params }: Params) {
+  if ((await params).action !== "read") return refused("Not found.", 404);
+  if (!(await member())) return refused("Sign in to see this file.", 401);
+  const pathname = new URL(request.url).searchParams.get("pathname") ?? "";
+  try {
+    return (await fileResponse(pathname)) ?? refused("There's no such file.", 404);
+  } catch (error) {
+    if (error instanceof FilesError) return refused(error.message, 400);
+    throw error;
+  }
+}
+`,
+});
+
+const filesClientFile = (): SiteFile => ({
+  path: "lib/files-client.ts",
+  content: `import { put } from "@vercel/blob/client";
+
+// For "use client" components. uploadFile sends a file the member picked and resolves to its
+// pathname; save that with the app's own record. fileUrl is where the page shows it from.
+
+export async function uploadFile(file: File): Promise<{ pathname: string }> {
+  const res = await fetch("/api/files/upload", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: file.name, contentType: file.type, size: file.size }),
+  });
+  const start = (await res.json()) as {
+    pathname?: string;
+    token?: string | null;
+    contentType?: string;
+    error?: string;
+  };
+  if (!res.ok || !start.pathname) throw new Error(start.error ?? "The file couldn't be uploaded.");
+  if (start.token) {
+    await put(start.pathname, file, {
+      access: "private",
+      token: start.token,
+      contentType: start.contentType ?? file.type,
+      multipart: file.size > 5 * 1024 * 1024,
+    });
+  } else {
+    const saved = await fetch(\`/api/files/preview?pathname=\${encodeURIComponent(start.pathname)}\`, {
+      method: "PUT",
+      headers: { "content-type": start.contentType ?? file.type },
+      body: file,
+    });
+    if (!saved.ok) throw new Error("The file couldn't be uploaded.");
+  }
+  return { pathname: start.pathname };
+}
+
+export const fileUrl = (pathname: string) =>
+  \`/api/files/read?pathname=\${encodeURIComponent(pathname)}\`;
+`,
+});
+
 /** The files an app-style site adds. */
 export function backendFiles(): SiteFile[] {
   return [
@@ -352,6 +611,9 @@ export function backendFiles(): SiteFile[] {
     authFile(),
     authRouteFile(),
     authClientFile(),
+    filesFile(),
+    filesRouteFile(),
+    filesClientFile(),
   ];
 }
 
