@@ -959,9 +959,17 @@ describe("crm media", () => {
     const paths = (await t.session.workspace.listFiles()).map((f) => f.path);
     expect(paths).toContain("app/icon.png");
     expect(paths).not.toContain("app/favicon.ico");
+    for (const rival of ["app/twitter-image.jpg", "app/opengraph-image.alt.txt", "app/icon1.png"]) {
+      await t.session.workspace.writeFile(rival, "old");
+    }
     expect(await call("crm", { action: "use_media", id: "m1", as: "share" })).toMatchObject({
       saved: "app/opengraph-image.png",
     });
+    const after = (await t.session.workspace.listFiles()).map((f) => f.path);
+    expect(after).not.toContain("app/twitter-image.jpg");
+    expect(after).not.toContain("app/opengraph-image.alt.txt");
+    // Only the share image's rivals go; a numbered icon is the favicon's business.
+    expect(after).toContain("app/icon1.png");
     expect(await call("crm", { action: "use_media", id: "m2", as: "image" })).toMatchObject({
       saved: "public/images/team.webp",
       src: "/images/team.webp",

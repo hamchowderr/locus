@@ -124,10 +124,13 @@ const MEDIA_TARGETS: Record<"favicon" | "share", Partial<Record<MediaFormat, str
     gif: "app/opengraph-image.gif",
   },
 };
-/** Files that would compete with a new icon or link-preview image. */
+/**
+ * Files that would compete with a new icon or link-preview image (numbered variants, the
+ * preview's alt text, and X's own image, which X shows instead of the Open Graph one).
+ */
 const MEDIA_RIVALS = {
-  favicon: /^app\/(icon\.[a-z]+|favicon\.ico)$/,
-  share: /^app\/opengraph-image\.[a-z]+$/,
+  favicon: /^app\/(icon\d*\.[a-z]+|favicon\.ico)$/,
+  share: /^app\/(opengraph|twitter)-image\d*(\.alt)?\.[a-z]+$/,
 };
 const VERSION_ACTIONS = ["save", "list", "restore"] as const;
 
@@ -862,12 +865,17 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
   /** Copies a Media Library image into the site where its use needs it. */
   const useMedia = async (
     session: BuilderSession,
-    input: { id: string; as: (typeof MEDIA_USES)[number]; path?: string | undefined },
+    input: {
+      id: string;
+      as: (typeof MEDIA_USES)[number];
+      path?: string | undefined;
+      search?: string | undefined;
+    },
   ) => {
     if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
     let file: Awaited<ReturnType<NonNullable<BuilderSession["crm"]>["mediaFile"]>>;
     try {
-      file = await session.crm.mediaFile(input.id);
+      file = await session.crm.mediaFile(input.id, input.search);
     } catch (error) {
       if (error instanceof CrmMediaError) throw new BuilderError(error.message);
       throw error;
@@ -896,7 +904,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         );
       }
       path = target;
-      // One icon (or preview image) only: Next would refuse two.
+      // One icon (or preview image) only, so the new one is the one browsers and apps show.
       const rivals = (await session.workspace.listFiles())
         .map((f) => f.path)
         .filter((p) => MEDIA_RIVALS[input.as as "favicon" | "share"].test(p) && p !== path);
@@ -921,7 +929,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "site-booking skill first. media: the client's Media Library images (id, name, format), " +
       "newest first; `search` matches names. use_media: copy image `id` into the site `as` " +
       "favicon (the site's icon), share (the link-preview image) or image (under public/, at " +
-      "`path` if given).",
+      "`path` if given); pass the same `search` it was found with.",
     requireApproval: noApproval,
     inputSchema: z.object({
       action: z.enum(CRM_ACTIONS),
@@ -1002,6 +1010,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
               id: need(input.id, "use_media needs the image's id from media"),
               as: need(input.as, "use_media needs `as`: favicon, share or image"),
               path: input.path,
+              search: input.search,
             });
         }
       },

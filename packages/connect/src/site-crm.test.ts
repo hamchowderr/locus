@@ -71,7 +71,7 @@ describe("the builder's Media Library reads", () => {
   });
 
   it("downloads an image only from the address GHL lists for it, and only an image", async () => {
-    const png = new Uint8Array([137, 80, 78, 71]);
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1]);
     const download = vi.fn(async (url: string | URL | Request) =>
       String(url).endsWith("m1.png")
         ? new Response(png, { headers: { "content-type": "image/png" } })
@@ -80,6 +80,8 @@ describe("the builder's Media Library reads", () => {
     const file = await downloadMedia(session, media(), "m1", download);
     expect(file).toEqual({ name: "Logo.png", format: "png", bytes: png });
     expect(vi.mocked(download).mock.calls[0]?.[0]).toBe(`${STORE}/m1.png`);
+    // A redirect could lead anywhere: it's an error, not followed.
+    expect(vi.mocked(download).mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
     // Not listed as an image on GHL's storage: never fetched.
     for (const id of ["m3", "m4", "m2", "nope"]) {
       await expect(downloadMedia(session, media(), id, download)).rejects.toThrow(CrmMediaError);
@@ -96,12 +98,72 @@ describe("the builder's Media Library reads", () => {
         headers: { "content-type": "image/png" },
       })) as typeof fetch;
     await expect(downloadMedia(session, media(), "m1", huge)).rejects.toThrow(/larger than 4 MB/);
+    // No length given, arriving in pieces: still stopped once past the limit.
+    const piece = new Uint8Array(1024 * 1024);
+    let sent = 0;
+    const chunked = (async () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            sent += 1;
+            if (sent > 10) controller.close();
+            else controller.enqueue(piece);
+          },
+        }),
+        { headers: { "content-type": "image/png" } },
+      )) as typeof fetch;
+    await expect(downloadMedia(session, media(), "m1", chunked)).rejects.toThrow(
+      /larger than 4 MB/,
+    );
+    expect(sent).toBeLessThanOrEqual(6);
+  });
+
+  it("trusts the file's bytes over its content type, and never names it in an error", async () => {
+    const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0]);
+    const as = (bytes: Uint8Array<ArrayBuffer>, type: string) =>
+      (async () => new Response(bytes, { headers: { "content-type": type } })) as typeof fetch;
+    // Storage's generic type is fine when the bytes are a PNG.
+    await expect(
+      downloadMedia(session, media(), "m1", as(PNG, "application/octet-stream")),
+    ).resolves.toMatchObject({ format: "png" });
+    // Labelled a PNG, but isn't one.
+    const fake = new Uint8Array([71, 73, 70, 56, 57, 97]);
+    const error = await downloadMedia(session, media(), "m1", as(fake, "image/png")).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(CrmMediaError);
+    expect(String((error as Error).message)).toMatch(/isn't the png/);
+    expect(String((error as Error).message)).not.toContain("Logo");
+  });
+
+  it("finds an image by the search it was listed with, and tidies names onto one line", async () => {
+    const options = http({
+      "GET /medias/files": {
+        body: {
+          files: [{ _id: "m9", name: "Old\nlogo | v1.png", url: `${STORE}/m9.png`, type: "file" }],
+        },
+      },
+    });
+    expect(await listMedia(session, options, "logo")).toEqual([
+      { id: "m9", name: "Old logo v1.png", format: "png" },
+    ]);
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const download = (async () =>
+      new Response(png, { headers: { "content-type": "image/png" } })) as typeof fetch;
+    await downloadMedia(session, options, "m9", download, "logo");
+    expect(fake.requests.at(-1)?.url.searchParams.get("query")).toBe("logo");
   });
 
   it("knows GHL's storage hosts from look-alikes", () => {
     expect(isGhlStorageUrl(`${STORE}/x.png`)).toBe(true);
     expect(isGhlStorageUrl("https://assets.cdn.filesafe.space/loc/media/x.png")).toBe(true);
     expect(isGhlStorageUrl("https://storage.googleapis.com/other-bucket/x.png")).toBe(false);
+    // The shared bucket: only this sub-account's own folder.
+    expect(isGhlStorageUrl(`${STORE}/x.png`, GHL_LOCATION)).toBe(true);
+    expect(
+      isGhlStorageUrl("https://storage.googleapis.com/msgsndr/other-loc/x.png", GHL_LOCATION),
+    ).toBe(false);
+    expect(isGhlStorageUrl("https://app.leadconnectorhq.com/x.png")).toBe(false);
     expect(isGhlStorageUrl("http://assets.cdn.filesafe.space/x.png")).toBe(false);
     expect(isGhlStorageUrl("https://filesafe.space.evil.test/x.png")).toBe(false);
     expect(isGhlStorageUrl("https://user@assets.cdn.filesafe.space/x.png")).toBe(false);

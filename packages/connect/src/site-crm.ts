@@ -45,8 +45,8 @@ export interface SiteCrm {
   calendars(): Promise<CrmCalendar[]>;
   /** Images, newest first; `search` matches names. */
   media(search?: string): Promise<CrmMedia[]>;
-  /** One image from `media`, by id, downloaded. */
-  mediaFile(id: string): Promise<CrmMediaFile>;
+  /** One image from `media`, by id, downloaded; pass the `search` it was found with. */
+  mediaFile(id: string, search?: string): Promise<CrmMediaFile>;
 }
 
 /** A Media Library read the builder can explain to the person. */
@@ -60,14 +60,20 @@ export class CrmMediaError extends Error {
 export const MEDIA_FORMATS = ["png", "jpg", "webp", "gif", "ico"] as const;
 export type MediaFormat = (typeof MEDIA_FORMATS)[number];
 
-/** Content types each format may arrive as. */
-const MEDIA_TYPES: Record<MediaFormat, string[]> = {
-  png: ["image/png"],
-  jpg: ["image/jpeg", "image/jpg"],
-  webp: ["image/webp"],
-  gif: ["image/gif"],
-  ico: ["image/x-icon", "image/vnd.microsoft.icon", "image/ico"],
-};
+/** Content types a download may arrive as: an image, or storage's generic binary type. */
+const IMAGE_TYPE = /^(image\/[a-z0-9.+-]+|application\/octet-stream|binary\/octet-stream)$/;
+
+/** The image format a file's first bytes show, whatever its name or content type says. */
+export function sniffFormat(bytes: Uint8Array): MediaFormat | null {
+  const at = (offset: number, ...values: number[]) =>
+    values.every((v, i) => bytes[offset + i] === v);
+  if (at(0, 0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "png";
+  if (at(0, 0xff, 0xd8, 0xff)) return "jpg";
+  if (at(0, 0x47, 0x49, 0x46, 0x38)) return "gif";
+  if (at(0, 0x52, 0x49, 0x46, 0x46) && at(8, 0x57, 0x45, 0x42, 0x50)) return "webp";
+  if (at(0, 0x00, 0x00, 0x01, 0x00)) return "ico";
+  return null;
+}
 
 /** The largest image copied into a site: a site file's limit. */
 export const MAX_MEDIA_BYTES = 4 * 1024 * 1024;
@@ -77,9 +83,10 @@ const MEDIA_PAGE = 100;
 
 /**
  * GHL's own file storage. A listed file's address must be on one of these, over https; any
- * other address is refused, so a planted address can't make Locus fetch something else.
+ * other address is refused, so a planted address can't make Locus fetch something else. On the
+ * bucket every sub-account shares, only this sub-account's own folder counts.
  */
-export function isGhlStorageUrl(value: string): boolean {
+export function isGhlStorageUrl(value: string, locationId?: string): boolean {
   let url: URL;
   try {
     url = new URL(value);
@@ -88,14 +95,11 @@ export function isGhlStorageUrl(value: string): boolean {
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
   const host = url.hostname.toLowerCase();
-  if (host === "storage.googleapis.com") return url.pathname.startsWith("/msgsndr/");
-  return (
-    host === "assets.cdn.filesafe.space" ||
-    host === "images.leadconnectorhq.com" ||
-    host.endsWith(".filesafe.space") ||
-    host.endsWith(".leadconnectorhq.com") ||
-    host.endsWith(".msgsndr.com")
-  );
+  if (host === "storage.googleapis.com") {
+    const folder = locationId ? `/msgsndr/${locationId}/` : "/msgsndr/";
+    return url.pathname.startsWith(folder);
+  }
+  return host === "assets.cdn.filesafe.space" || host === "images.leadconnectorhq.com";
 }
 
 /** The image format a file name says, or null for anything else. */
@@ -114,13 +118,20 @@ interface ListedMedia {
 }
 
 /** GHL's file objects are undocumented beyond "File Objects"; read them defensively. */
-function listedMedia(raw: unknown): ListedMedia | null {
+function listedMedia(raw: unknown, locationId: string): ListedMedia | null {
   if (!raw || typeof raw !== "object") return null;
   const f = raw as Record<string, unknown>;
   const id = typeof f._id === "string" ? f._id : typeof f.id === "string" ? f.id : "";
-  const name = typeof f.name === "string" ? f.name.slice(0, 200) : "";
+  // One line per image for the model: no line breaks or column bars inside a name.
+  const name =
+    typeof f.name === "string"
+      ? f.name
+          .replace(/[\s|]+/g, " ")
+          .trim()
+          .slice(0, 200)
+      : "";
   const url = typeof f.url === "string" ? f.url : "";
-  if (!/^[A-Za-z0-9]{1,64}$/.test(id) || !isGhlStorageUrl(url)) return null;
+  if (!/^[A-Za-z0-9]{1,64}$/.test(id) || !isGhlStorageUrl(url, locationId)) return null;
   if (f.type !== undefined && f.type !== "file") return null;
   const format = mediaFormat(name) ?? mediaFormat(new URL(url).pathname);
   if (!format) return null;
@@ -152,7 +163,9 @@ async function listMediaPage(
   );
   const raw = Array.isArray(found.files) ? found.files : [];
   return {
-    files: raw.map(listedMedia).filter((f): f is ListedMedia => f !== null),
+    files: raw
+      .map((f) => listedMedia(f, session.locationId ?? "-"))
+      .filter((f): f is ListedMedia => f !== null),
     more: raw.length >= MEDIA_PAGE,
   };
 }
@@ -176,28 +189,33 @@ export async function downloadMedia(
   options: GhlRequestOptions,
   id: string,
   download: typeof fetch = fetch,
+  search?: string,
 ): Promise<CrmMediaFile> {
   if (!/^[A-Za-z0-9]{1,64}$/.test(id)) throw new CrmMediaError("That isn't a media id.");
   let file: ListedMedia | undefined;
   for (let offset = 0; offset < MEDIA_SCAN && !file; offset += MEDIA_PAGE) {
-    const page = await listMediaPage(session, options, offset);
+    const page = await listMediaPage(session, options, offset, search);
     file = page.files.find((f) => f.id === id);
     if (!page.more) break;
   }
   if (!file) {
-    throw new CrmMediaError(`There's no image with id ${id} in the client's Media Library.`);
+    throw new CrmMediaError(
+      search
+        ? `There's no image with id ${id} among those matching that search.`
+        : `There's no image with id ${id} in the newest ${MEDIA_SCAN}; find it with a search first.`,
+    );
   }
   const response = await download(file.url, {
     redirect: "error",
     signal: AbortSignal.timeout(30_000),
   }).catch(() => null);
   if (!response?.ok || !response.body) {
-    throw new CrmMediaError(`${file.name} couldn't be downloaded from the Media Library.`);
+    throw new CrmMediaError("That image couldn't be downloaded from the Media Library.");
   }
   const type = (response.headers.get("content-type") ?? "").split(";")[0]?.trim().toLowerCase();
-  if (!type || !MEDIA_TYPES[file.format].includes(type)) {
+  if (!type || !IMAGE_TYPE.test(type)) {
     await response.body.cancel().catch(() => {});
-    throw new CrmMediaError(`${file.name} isn't the ${file.format} image its name says.`);
+    throw new CrmMediaError(`That file isn't the ${file.format} image its name says.`);
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -208,11 +226,16 @@ export async function downloadMedia(
     size += value.byteLength;
     if (size > MAX_MEDIA_BYTES) {
       await reader.cancel().catch(() => {});
-      throw new CrmMediaError(`${file.name} is larger than 4 MB; pick a smaller image.`);
+      throw new CrmMediaError("That image is larger than 4 MB; pick a smaller one.");
     }
     chunks.push(value);
   }
-  return { name: file.name, format: file.format, bytes: new Uint8Array(Buffer.concat(chunks)) };
+  const bytes = new Uint8Array(Buffer.concat(chunks));
+  // The bytes decide: a file named .png must be a PNG, whatever the storage said it was.
+  if (sniffFormat(bytes) !== file.format) {
+    throw new CrmMediaError(`That file isn't the ${file.format} image its name says.`);
+  }
+  return { name: file.name, format: file.format, bytes };
 }
 
 /** GHL's hosted booking widget for one calendar (its "permanent link"). */
@@ -268,9 +291,9 @@ export function siteCrm(
       const { session, options } = await opened();
       return listMedia(session, options, search);
     },
-    mediaFile: async (id) => {
+    mediaFile: async (id, search) => {
       const { session, options } = await opened();
-      return downloadMedia(session, options, id, download);
+      return downloadMedia(session, options, id, download, search);
     },
   };
 }
