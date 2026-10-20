@@ -24,6 +24,7 @@ import {
   siteHistory,
   siteRuntimeKey,
   startSitePreview,
+  versionPreviewKey,
 } from "./site-builder.ts";
 
 let dir: string;
@@ -196,7 +197,10 @@ describe("the site preview", () => {
     const { client, siteId, tenant } = await siteWithTwoVersions();
     const preview = await startSitePreview(deps(), ctx("staff"), client, siteId, { version: 1 });
     expect(preview.version).toBe(1);
-    const runtime = runtimes.runtimes.get(siteRuntimeKey(client, siteId));
+    // Its own sandbox: the builder's is never touched.
+    expect(runtimes.runtimes.has(siteRuntimeKey(client, siteId))).toBe(false);
+    const runtime = runtimes.runtimes.get(versionPreviewKey(client, siteId));
+    expect(preview.url).toBe(runtime?.previewUrl);
     expect(runtime?.readText("app/page.tsx")).not.toContain("Two");
     await expect(
       startSitePreview(deps(), ctx("staff"), client, siteId, { version: 7 }),
