@@ -1,3 +1,4 @@
+import { CrmMediaError, type SiteCrm } from "@locus/connect";
 import { startSite } from "@locus/studio";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ImageGenerator } from "./images.ts";
@@ -847,10 +848,20 @@ describe("add_dependency with a component", () => {
   });
 });
 
+/** A CRM with nothing in it, with whatever a test overrides. */
+const fakeCrm = (over: Partial<SiteCrm> = {}): SiteCrm => ({
+  calendars: async () => [],
+  media: async () => [],
+  mediaFile: async (id) => {
+    throw new CrmMediaError(`There's no image with id ${id} in the client's Media Library.`);
+  },
+  ...over,
+});
+
 describe("crm tool", () => {
   it("lists the client's calendars as one line each, for the model to pick from", async () => {
     const { call } = await setup();
-    t.session.crm = {
+    t.session.crm = fakeCrm({
       calendars: async () => [
         {
           id: "cal1",
@@ -859,7 +870,7 @@ describe("crm tool", () => {
           embedUrl: "https://api.leadconnectorhq.com/widget/booking/cal1",
         },
       ],
-    };
+    });
     expect(await call("crm", { action: "calendars" })).toEqual({
       calendars:
         "id: cal1 | name: Consultation | type: event | embedUrl: https://api.leadconnectorhq.com/widget/booking/cal1",
@@ -871,7 +882,7 @@ describe("crm tool", () => {
     expect(await call("crm", { action: "calendars" })).toEqual({
       error: "The CRM isn't reachable from here.",
     });
-    t.session.crm = { calendars: async () => [] };
+    t.session.crm = fakeCrm();
     expect(await call("crm", { action: "calendars" })).toMatchObject({
       note: expect.stringContaining("no active calendars"),
     });
@@ -905,6 +916,78 @@ describe("crm tool", () => {
     });
     expect(await call("crm", { action: "add_calendar_embed" })).toEqual({
       written: "components/calendar-embed.tsx",
+    });
+  });
+});
+
+describe("crm media", () => {
+  const LOGO = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
+  const withMedia = () =>
+    fakeCrm({
+      media: async (search) =>
+        [
+          { id: "m1", name: "Logo Final.png", format: "png" as const },
+          { id: "m2", name: "team.webp", format: "webp" as const },
+        ].filter((m) => !search || m.name.toLowerCase().includes(search)),
+      mediaFile: async (id) => {
+        if (id === "m1") return { name: "Logo Final.png", format: "png", bytes: LOGO };
+        if (id === "m2") return { name: "team.webp", format: "webp", bytes: LOGO };
+        throw new CrmMediaError(`There's no image with id ${id} in the client's Media Library.`);
+      },
+    });
+
+  it("lists the client's images as one line each, and searches by name", async () => {
+    const { call } = await setup();
+    t.session.crm = withMedia();
+    expect(await call("crm", { action: "media" })).toEqual({
+      media: "id: m1 | name: Logo Final.png | format: png\nid: m2 | name: team.webp | format: webp",
+    });
+    expect(await call("crm", { action: "media", search: "zzz" })).toEqual({
+      media: "",
+      note: "No images match that name.",
+    });
+  });
+
+  it("makes a logo the site's only icon, and a photo its link preview or a public image", async () => {
+    const { call } = await setup();
+    t.session.crm = withMedia();
+    await t.session.workspace.writeFile("app/favicon.ico", new Uint8Array([0, 0, 1, 0]));
+    expect(await call("crm", { action: "use_media", id: "m1", as: "favicon" })).toEqual({
+      saved: "app/icon.png",
+      bytes: LOGO.byteLength,
+    });
+    const paths = (await t.session.workspace.listFiles()).map((f) => f.path);
+    expect(paths).toContain("app/icon.png");
+    expect(paths).not.toContain("app/favicon.ico");
+    expect(await call("crm", { action: "use_media", id: "m1", as: "share" })).toMatchObject({
+      saved: "app/opengraph-image.png",
+    });
+    expect(await call("crm", { action: "use_media", id: "m2", as: "image" })).toMatchObject({
+      saved: "public/images/team.webp",
+      src: "/images/team.webp",
+    });
+    expect(await call("crm", { action: "use_media", id: "m1", as: "image" })).toMatchObject({
+      saved: "public/images/logo-final.png",
+    });
+  });
+
+  it("refuses what Next can't use, a path outside public/, and an unknown id", async () => {
+    const { call } = await setup();
+    t.session.crm = withMedia();
+    expect(await call("crm", { action: "use_media", id: "m2", as: "favicon" })).toEqual({
+      error: "A webp image can't be the site's icon; pick a png, jpg or ico image.",
+    });
+    expect(
+      await call("crm", { action: "use_media", id: "m1", as: "image", path: "app/logo.png" }),
+    ).toEqual({ error: "Save it under public/ with a .png name." });
+    expect(
+      await call("crm", { action: "use_media", id: "m1", as: "image", path: "public/x.jpg" }),
+    ).toEqual({ error: "Save it under public/ with a .png name." });
+    expect(await call("crm", { action: "use_media", id: "nope", as: "image" })).toEqual({
+      error: "There's no image with id nope in the client's Media Library.",
+    });
+    expect(await call("crm", { action: "use_media", as: "image" })).toEqual({
+      error: "use_media needs the image's id from media.",
     });
   });
 });
