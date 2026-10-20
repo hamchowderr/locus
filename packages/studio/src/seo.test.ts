@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DesignBrief } from "./brief.ts";
-import { pageRoute, seoIssues, siteFacts, sitePages } from "./seo.ts";
+import { pageRoute, pageSeo, seoIssues, siteFacts } from "./seo.ts";
 import {
   LLMS_PATH,
   LOCUS_SETTINGS_PATH,
@@ -45,9 +45,9 @@ describe("pageRoute", () => {
   });
 });
 
-describe("sitePages", () => {
+describe("pageSeo", () => {
   it("reads each page's title, description, canonical and flags from its metadata", () => {
-    const pages = sitePages([
+    const pages = pageSeo([
       { path: "lib/site.ts", content: siteTs },
       { path: "app/page.tsx", content: "export default function Home() {}" },
       {
@@ -81,7 +81,7 @@ describe("sitePages", () => {
 });
 
 describe("reading metadata like a person writes it", () => {
-  const one = (content: string) => sitePages([{ path: "app/m/page.tsx", content }])[0];
+  const one = (content: string) => pageSeo([{ path: "app/m/page.tsx", content }])[0];
 
   it("isn't thrown by quotes or braces in comments", () => {
     expect(
@@ -151,6 +151,28 @@ describe("seoIssues", () => {
     ]);
     expect(by("/e")).toEqual([]);
     expect(by("/b, /c")).toEqual(['These pages share the title "Same".']);
+  });
+
+  it("lists images without alt text, file by file", () => {
+    const issues = seoIssues([
+      { path: "lib/site.ts", content: siteTs },
+      {
+        path: "components/hero.tsx",
+        content: `<Image src="/a.png" width={1} height={1} />
+<img src="/b.png" alt="" />
+<img src="/c.png" alt={photo.caption} />
+<img {...props} />
+{/* <img src="/old.png"> */}
+<img src="/d.png">`,
+      },
+      { path: "components/ui/avatar.tsx", content: "<img src={src} />" },
+    ]);
+    expect(issues).toEqual([
+      expect.objectContaining({
+        page: "components/hero.tsx",
+        problem: expect.stringMatching(/^2 images have no alt text/),
+      }),
+    ]);
   });
 
   it.each(TEMPLATES.map((t) => [t.id, t] as const))("finds nothing to fix in %s", (_, t) => {

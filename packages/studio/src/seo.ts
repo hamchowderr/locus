@@ -214,7 +214,7 @@ function isNoindex(block: string): boolean {
 }
 
 /** The site's pages and what each declares, home first then by address. */
-export function sitePages(files: SiteFile[]): PageSeo[] {
+export function pageSeo(files: SiteFile[]): PageSeo[] {
   const facts = siteFacts(files);
   const vars: Vars = { "site.name": facts.name, "site.description": facts.description };
   const pages: PageSeo[] = [];
@@ -269,7 +269,7 @@ function pathOf(address: string): string {
 /** What a search engine or person would want fixed, page by page. */
 export function seoIssues(files: SiteFile[]): SeoIssue[] {
   const issues: SeoIssue[] = [];
-  const pages = sitePages(files);
+  const pages = pageSeo(files);
   const facts = siteFacts(files);
   if (!facts.description) {
     issues.push({ page: "site", problem: "lib/site.ts has no description for the whole site." });
@@ -314,5 +314,30 @@ export function seoIssues(files: SiteFile[]): SeoIssue[] {
       issues.push({ page: paths.join(", "), problem: `These pages share the title "${title}".` });
     }
   }
+  for (const { file, count } of imagesWithoutAlt(files)) {
+    issues.push({
+      page: file,
+      problem: `${count} ${count === 1 ? "image has" : "images have"} no alt text. Describe each one, or use alt="" for a purely decorative image.`,
+    });
+  }
   return issues;
+}
+
+/**
+ * Images (`<img>` or next/image's `<Image>`) with no `alt` at all, per source file. Screen
+ * readers and search engines read the alt text; `alt=""` marks a decorative image and counts.
+ */
+export function imagesWithoutAlt(files: SiteFile[]): { file: string; count: number }[] {
+  const found: { file: string; count: number }[] = [];
+  for (const file of files) {
+    if (!/\.(?:tsx|jsx|mdx)$/.test(file.path) || file.path.startsWith("components/ui/")) continue;
+    const source = withoutComments(textOf(file));
+    let count = 0;
+    for (const [tag] of source.matchAll(/<(?:img|Image)\b[^>]*>/g)) {
+      // A spread could carry the alt; only a tag that plainly lacks one counts.
+      if (!/\balt\s*=/.test(tag) && !/\{\s*\.\.\./.test(tag)) count++;
+    }
+    if (count) found.push({ file: file.path, count });
+  }
+  return found;
 }
