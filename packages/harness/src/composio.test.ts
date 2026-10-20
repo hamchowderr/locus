@@ -251,6 +251,20 @@ describe("Composio catalog", () => {
     routes[`GET ${TOOLKITS}`] = () => catalogBody(CATALOG);
     expect(await offered.offers("gmail")).toBe(true);
   });
+
+  test("while a refresh fails, the last catalog read is still served", async () => {
+    let now = 1_000;
+    const offered = catalog(() => now);
+    const before = await offered.apps();
+    routes[`GET ${TOOLKITS}`] = () => ({ error: { message: "down" } });
+    now += CATALOG_TTL_MS;
+    expect(await offered.apps()).toEqual(before);
+    expect(await offered.offers("gmail")).toBe(true);
+    // The failure itself isn't kept: once Composio is back, the next call reads afresh.
+    routes[`GET ${TOOLKITS}`] = () => catalogBody(CATALOG);
+    await offered.apps();
+    expect(catalogReads()).toHaveLength(4);
+  });
 });
 
 describe("Composio connector", () => {
