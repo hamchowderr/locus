@@ -11,6 +11,14 @@ export const SITE_MIGRATIONS_TABLE = "_locus_migrations";
 /** Separates statements in one file, as drizzle-kit writes them. */
 export const STATEMENT_BREAKPOINT = "--> statement-breakpoint";
 
+/** The env vars a published site reads; Locus sets them on its host, never in the repo. */
+export const SITE_DATABASE_ENV = {
+  url: "SITE_DATABASE_URL",
+  token: "SITE_DATABASE_TOKEN",
+  /** The site's own login secret: one per site, never Locus's own `BETTER_AUTH_SECRET`. */
+  authSecret: "SITE_AUTH_SECRET",
+} as const;
+
 const FILE = /^db\/migrations\/(\d{4}_[a-z0-9_]+)\.sql$/;
 
 export interface SiteMigration {

@@ -15,7 +15,13 @@ import {
   type SessionContext,
   type UsageMeasurement,
 } from "@locus/auth";
-import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
+import {
+  ConnectError,
+  commitSiteVersion,
+  ensureSiteBackendEnv,
+  migrateSiteBackend,
+  type PublishDeps,
+} from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
 import { auditLog, member, session, site, siteBackend } from "@locus/db/control";
 import {
@@ -240,6 +246,11 @@ const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^Locus won't publish the file "[^"\n]{1,300}": the path isn't allowed\.$/,
   /^Locus won't publish "[^"\n]{1,300}": environment files can hold secrets and never go in the repository\.$/,
   /^"[^"\n]{1,300}" is in the version twice\.$/,
+  // An app-style site's own database: the reason is the database's, for SQL the agent wrote.
+  /^The site's database change didn't apply: [^\n]{1,1000}$/,
+  /^This site's database isn't set up on this deployment yet\.$/,
+  /^Vercel didn't (show|take) the site's (database )?settings\. Try again\.$/,
+  /^Vercel refused\. Reconnect Vercel on the Connections page and allow access to all projects\.$/,
 ];
 
 const GENERIC_PUBLISH_ERROR =
@@ -281,7 +292,12 @@ export function publishHook(
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
     try {
-      const { commitSha, url } = await commitSiteVersion(publish(), client, {
+      const deps = publish();
+      // An app-style site's database gets the version's changes first, and its project the
+      // database's settings, so the build this push starts runs against a ready database.
+      await migrateSiteBackend(deps, client, { siteId, files });
+      await ensureSiteBackendEnv(deps, client, { siteId });
+      const { commitSha, url } = await commitSiteVersion(deps, client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
         // The version's files, with this site's form endpoint in `lib/locus.ts`.
