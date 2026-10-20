@@ -37,6 +37,7 @@ export {
   applySiteMigrations,
   migrationStatements,
   pendingSiteMigrations,
+  SITE_DATABASE_ENV,
   SITE_MIGRATIONS_DIR,
   SITE_MIGRATIONS_TABLE,
   type SiteMigration,
