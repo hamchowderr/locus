@@ -147,6 +147,8 @@ export interface OverageReport {
 
 /** Events read per page, per agency. */
 const PAGE = 200;
+/** Sent events marked per database write. */
+const MARK_BATCH = 20;
 
 /**
  * Sends extra usage that is not yet on Stripe's meter, agency by agency, oldest first, and marks
@@ -192,18 +194,35 @@ export async function reportOverage(
     if (!billed) continue;
     try {
       await ensureOverageItem(stripe, billed.subscription, price.id);
-      while (!opts.deadline || Date.now() < opts.deadline.getTime()) {
-        const page = await db
-          .select({ id: usageEvent.id, overageCredits: usageEvent.overageCredits })
-          .from(usageEvent)
-          .where(and(waiting, eq(usageEvent.organizationId, organizationId)))
-          .orderBy(asc(usageEvent.createdAt))
-          .limit(PAGE);
-        // Marked a page at a time, one write instead of one per event; whatever reached Stripe
-        // before a failure is still marked.
-        const sent: string[] = [];
-        try {
+      const pastDeadline = () => !!opts.deadline && Date.now() >= opts.deadline.getTime();
+      // Sent events are marked in small batches: one write per batch instead of one per event,
+      // and a run killed mid-page leaves at most a batch sent but unmarked (Stripe drops a repeat
+      // identifier for about a day, and the next run may come later than that).
+      const sent: string[] = [];
+      const mark = async () => {
+        if (sent.length === 0) return;
+        const ids = sent.splice(0);
+        await db
+          .update(usageEvent)
+          .set({ overageReportedAt: now })
+          .where(inArray(usageEvent.id, ids));
+        reported += ids.length;
+      };
+      let more = true;
+      try {
+        while (more && !pastDeadline()) {
+          const page = await db
+            .select({ id: usageEvent.id, overageCredits: usageEvent.overageCredits })
+            .from(usageEvent)
+            .where(and(waiting, eq(usageEvent.organizationId, organizationId)))
+            .orderBy(asc(usageEvent.createdAt))
+            .limit(PAGE);
+          more = page.length === PAGE;
           for (const e of page) {
+            if (pastDeadline()) {
+              more = false;
+              break;
+            }
             await stripe.billing.meterEvents
               .create({
                 event_name: OVERAGE_METER_EVENT,
@@ -216,17 +235,13 @@ export async function reportOverage(
                 if (!alreadySent(error)) throw error;
               });
             sent.push(e.id);
+            if (sent.length >= MARK_BATCH) await mark();
           }
-        } finally {
-          if (sent.length > 0) {
-            await db
-              .update(usageEvent)
-              .set({ overageReportedAt: now })
-              .where(inArray(usageEvent.id, sent));
-            reported += sent.length;
-          }
+          await mark();
         }
-        if (page.length < PAGE) break;
+      } finally {
+        // Whatever reached Stripe before a failure is still marked.
+        await mark();
       }
     } catch (error) {
       console.error("[locus] extra usage for agency %s not sent to Stripe:", organizationId, error);
