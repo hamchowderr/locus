@@ -8,6 +8,7 @@ import {
   GhlError,
   type GhlOperation,
   type GhlRateLimiter,
+  type GhlRequestOptions,
   type GhlSession,
   ghlRequest,
   sharedRateLimiter,
@@ -156,7 +157,7 @@ export interface SiteLeadInput {
   visitorIp: string | null;
 }
 
-interface Lead {
+export interface Lead {
   fields: Partial<Record<KnownField, string>>;
   extras: [string, string][];
 }
@@ -185,96 +186,160 @@ export async function submitSiteLead(
   const { lead, honeypot, elapsedMs } = parsed;
 
   // The site, and through it the client. Unknown, unpublished and suspended look the same.
-  if (!/^[A-Za-z0-9-]{1,64}$/.test(input.siteId)) return refuse(404, NOT_CONNECTED);
-  const [row] = await deps.db
-    .select({ site, location })
-    .from(site)
-    .innerJoin(location, eq(site.locationId, location.id))
-    .where(eq(site.id, input.siteId));
-  if (!row || row.site.status === "draft" || row.location.status !== "active") {
-    return refuse(404, NOT_CONNECTED);
-  }
+  const row = await publishedSite(deps.db, input.siteId);
+  if (!row) return refuse(404, NOT_CONNECTED);
 
   // A bot: say it went, send nothing, so it learns nothing. Before any limit, so junk never uses
   // up a real visitor's or the site's allowance.
   if (honeypot || elapsedMs === null || elapsedMs < limits.minFillMs) return ACCEPTED;
 
   const now = deps.now?.() ?? Date.now();
-  const tooMany = (retryAfterSeconds: number): SiteLeadResult => ({
-    status: 429,
-    body: { error: "Too many messages from here. Please try again later." },
-    retryAfterSeconds,
-  });
-  const ip = input.visitorIp?.trim();
-  if (ip && isIP(ip)) {
-    // The IP header is a hint, trusted only for this limit. Kept as a keyed hash: the counter
-    // only needs to tell visitors apart.
-    const who = hashVisitorIp(deps.ipHashKey, ip);
-    const perIp = await consumeAttempt(
-      deps.db,
-      `site-lead|ip|${row.site.id}|${who}`,
-      limits.perIp,
-      now,
-    );
-    if (!perIp.allowed) return tooMany(perIp.retryAfterSeconds);
-  }
-  const burst = await consumeAttempt(
-    deps.db,
-    `site-lead|burst|${row.site.id}`,
-    limits.perSiteBurst,
-    now,
-  );
-  if (!burst.allowed) return tooMany(burst.retryAfterSeconds);
-  const perSite = await consumeAttempt(
-    deps.db,
-    `site-lead|site|${row.site.id}`,
-    limits.perSite,
-    now,
-  );
-  if (!perSite.allowed) {
-    console.warn(`Site ${row.site.id} reached its hourly lead ceiling (${limits.perSite.max})`);
-    return tooMany(perSite.retryAfterSeconds);
+  const limited = await consumeSiteLimits(deps, row.site.id, input.visitorIp, limits, now);
+  if (limited !== null) {
+    return {
+      status: 429,
+      body: { error: "Too many messages from here. Please try again later." },
+      retryAfterSeconds: limited,
+    };
   }
 
   let outcome: SiteLeadOutcome = "delivered";
   try {
-    await sendToGhl(deps, row.location, lead);
+    await sendToGhl(await siteGhl(deps, row.location), lead);
   } catch (error) {
     outcome = "failed";
-    // Logged without the visitor's details or GHL's text, which may echo them.
-    const { name, status, operationId } = error as {
-      name?: string;
-      status?: number;
-      operationId?: string;
-    };
-    console.error(
-      `Site lead for site ${row.site.id} failed: ${name ?? "Error"}${operationId ? ` ${operationId}` : ""}${status ? ` ${status}` : ""}`,
-    );
+    logGhlFailure(`Site lead for site ${row.site.id}`, error);
   }
-  if (deps.provisioner) {
-    // The visitor waits for the count, so it gets a short deadline; a slow token service or
-    // database costs the count, never the visitor's answer.
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      await Promise.race([
-        recordOutcome(deps.provisioner, row.location, row.site.id, outcome, now),
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => {
-            const late = new Error("took too long");
-            late.name = "Timeout";
-            reject(late);
-          }, deps.countTimeoutMs ?? COUNT_TIMEOUT_MS);
-        }),
-      ]);
-    } catch (error) {
-      console.error(
-        `Counting a lead for site ${row.site.id} failed: ${(error as Error)?.name ?? "Error"}`,
-      );
-    } finally {
-      clearTimeout(timer);
-    }
-  }
+  await countWithDeadline(deps, row, outcome, now);
   return outcome === "delivered" ? ACCEPTED : refuse(502, NOT_SENT);
+}
+
+/** A site and its client, as the registry has them. */
+export interface PublishedSite {
+  site: typeof site.$inferSelect;
+  location: typeof location.$inferSelect;
+}
+
+/**
+ * The site a public request names, and through it the client, only when the site is published
+ * and the client active; null otherwise, so unknown, unpublished and suspended look the same.
+ */
+export async function publishedSite(db: SiteLeadDeps["db"], siteId: string) {
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(siteId)) return null;
+  const [row] = await db
+    .select({ site, location })
+    .from(site)
+    .innerJoin(location, eq(site.locationId, location.id))
+    .where(eq(site.id, siteId));
+  if (!row || row.site.status === "draft" || row.location.status !== "active") return null;
+  return row as PublishedSite;
+}
+
+/**
+ * Counts one request against a site's limits: per visitor IP when the hint is a real address,
+ * then the site's burst guard and its hourly ceiling. Null when it may go ahead, else the
+ * seconds to wait. `kind` (lead, booking, …) keeps each public path's counters apart.
+ */
+export async function consumeSiteLimits(
+  deps: Pick<SiteLeadDeps, "db" | "ipHashKey">,
+  siteId: string,
+  visitorIp: string | null,
+  limits: Pick<SiteLeadLimits, "perIp" | "perSiteBurst" | "perSite">,
+  now: number,
+  kind = "lead",
+): Promise<number | null> {
+  const prefix = `site-${kind}`;
+  const ip = visitorIp?.trim();
+  if (ip && isIP(ip)) {
+    // The IP header is a hint, trusted only for this limit. Kept as a keyed hash: the counter
+    // only needs to tell visitors apart.
+    const who = hashVisitorIp(deps.ipHashKey, ip);
+    const perIp = await consumeAttempt(deps.db, `${prefix}|ip|${siteId}|${who}`, limits.perIp, now);
+    if (!perIp.allowed) return perIp.retryAfterSeconds;
+  }
+  const burst = await consumeAttempt(
+    deps.db,
+    `${prefix}|burst|${siteId}`,
+    limits.perSiteBurst,
+    now,
+  );
+  if (!burst.allowed) return burst.retryAfterSeconds;
+  const perSite = await consumeAttempt(deps.db, `${prefix}|site|${siteId}`, limits.perSite, now);
+  if (!perSite.allowed) {
+    console.warn(`Site ${siteId} reached its hourly ${kind} ceiling (${limits.perSite.max})`);
+    return perSite.retryAfterSeconds;
+  }
+  return null;
+}
+
+/** Logs a failed GHL step without the visitor's details or GHL's text, which may echo them. */
+export function logGhlFailure(what: string, error: unknown): void {
+  const { name, status, operationId } = error as {
+    name?: string;
+    status?: number;
+    operationId?: string;
+  };
+  console.error(
+    `${what} failed: ${name ?? "Error"}${operationId ? ` ${operationId}` : ""}${status ? ` ${status}` : ""}`,
+  );
+}
+
+/**
+ * Counts a lead in the client's database. The visitor waits for the count, so it gets a short
+ * deadline; a slow token service or database costs the count, never the visitor's answer.
+ */
+export async function countWithDeadline(
+  deps: Pick<SiteLeadDeps, "provisioner" | "countTimeoutMs">,
+  row: PublishedSite,
+  outcome: SiteLeadOutcome,
+  now: number,
+): Promise<void> {
+  if (!deps.provisioner) return;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([
+      recordOutcome(deps.provisioner, row.location, row.site.id, outcome, now),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const late = new Error("took too long");
+          late.name = "Timeout";
+          reject(late);
+        }, deps.countTimeoutMs ?? COUNT_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.error(
+      `Counting a lead for site ${row.site.id} failed: ${(error as Error)?.name ?? "Error"}`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** A GHL session for the client a site's registry row names, and the options to call with. */
+export interface SiteGhl {
+  session: GhlSession;
+  options: GhlRequestOptions;
+}
+
+/**
+ * The client's sub-account, from the site's registry row; the session is for this request
+ * only and never leaves the server.
+ */
+export async function siteGhl(
+  deps: Pick<SiteLeadDeps, "db" | "secrets" | "ghl" | "http" | "now" | "rateLimiter">,
+  client: typeof location.$inferSelect,
+): Promise<SiteGhl> {
+  const agency = await agencyToken(deps, client.organizationId);
+  return {
+    session: {
+      token: await mintLocationToken(agency, client.ghlLocationId, deps.http),
+      tokenKind: "location",
+      locationId: client.ghlLocationId,
+      companyId: agency.companyId,
+    },
+    options: { ...deps.http, rateLimiter: deps.rateLimiter ?? sharedRateLimiter },
+  };
 }
 
 /**
@@ -472,20 +537,17 @@ const NOTE_LABELS = {
 } as const;
 const FILLABLE = Object.keys(NOTE_LABELS) as (keyof typeof NOTE_LABELS)[];
 
-async function sendToGhl(
-  deps: SiteLeadDeps,
-  client: typeof location.$inferSelect,
+/**
+ * Puts one lead in the client's CRM and returns its contact's id: the contact is found or
+ * created, tagged, its blank fields filled, and the rest of what the visitor typed noted.
+ * `beforeNote` runs once the contact exists, before the note is written; the lines it returns
+ * (Locus's own text, e.g. what happened to a booking) go at the end of the note.
+ */
+export async function sendToGhl(
+  { session, options }: SiteGhl,
   lead: Lead,
-): Promise<void> {
-  // The sub-account comes from the site's registry row; the session is for this request only.
-  const agency = await agencyToken(deps, client.organizationId);
-  const session: GhlSession = {
-    token: await mintLocationToken(agency, client.ghlLocationId, deps.http),
-    tokenKind: "location",
-    locationId: client.ghlLocationId,
-    companyId: agency.companyId,
-  };
-  const options = { ...deps.http, rateLimiter: deps.rateLimiter ?? sharedRateLimiter };
+  beforeNote?: (contactId: string) => Promise<string[]>,
+): Promise<string> {
   const { fields, extras } = lead;
   const form = fields.form ?? "contact";
 
@@ -584,6 +646,7 @@ async function sendToGhl(
   }
   for (const [key, value] of extras) lines.push(`${key}: ${value}`);
   if (fields.page) lines.push(`Page: ${fields.page}`);
+  if (beforeNote) lines.push(...(await beforeNote(contactId)));
   if (lines.length > 0) {
     await ghlRequest(
       operation("contacts.create-note"),
@@ -595,4 +658,5 @@ async function sendToGhl(
       options,
     );
   }
+  return contactId;
 }

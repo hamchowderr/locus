@@ -1,3 +1,4 @@
+import { CrmMediaError, type SiteCrm } from "@locus/connect";
 import { startSite } from "@locus/studio";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ImageGenerator } from "./images.ts";
@@ -844,5 +845,228 @@ describe("add_dependency with a component", () => {
       error: expect.stringContaining("more than 12 components"),
     });
     expect((await t.session.workspace.listFiles()).map((f) => f.path)).toEqual(["package.json"]);
+  });
+});
+
+/** A CRM with nothing in it, with whatever a test overrides. */
+const fakeCrm = (over: Partial<SiteCrm> = {}): SiteCrm => ({
+  calendars: async () => [],
+  media: async () => [],
+  mediaFile: async (id) => {
+    throw new CrmMediaError(`There's no image with id ${id} in the client's Media Library.`);
+  },
+  ...over,
+});
+
+describe("crm tool", () => {
+  it("lists the client's calendars as one line each, for the model to pick from", async () => {
+    const { call } = await setup();
+    t.session.crm = fakeCrm({
+      calendars: async () => [
+        {
+          id: "cal1",
+          name: "Consultation",
+          type: "event",
+          embedUrl: "https://api.leadconnectorhq.com/widget/booking/cal1",
+        },
+      ],
+    });
+    expect(await call("crm", { action: "calendars" })).toEqual({
+      calendars:
+        "id: cal1 | name: Consultation | type: event | embedUrl: https://api.leadconnectorhq.com/widget/booking/cal1",
+    });
+  });
+
+  it("says when there are no calendars, or no CRM to ask", async () => {
+    const { call } = await setup();
+    expect(await call("crm", { action: "calendars" })).toEqual({
+      error: "The CRM isn't reachable from here.",
+    });
+    t.session.crm = fakeCrm();
+    expect(await call("crm", { action: "calendars" })).toMatchObject({
+      note: expect.stringContaining("no active calendars"),
+    });
+  });
+
+  it("writes Locus's booking pieces, keeping a site's own copy unless told to replace it", async () => {
+    const { call } = await setup();
+    // A site made before booking: no Locus route, and settings without siteApi.
+    await t.session.workspace.writeFile(
+      "lib/locus.ts",
+      "export const locus = { leadEndpoint: null };",
+    );
+    expect(await call("crm", { action: "add_booking" })).toMatchObject({
+      written: "components/booking.tsx",
+      note: expect.stringContaining("calendarId"),
+    });
+    expect(String(await t.session.workspace.readFile("components/booking.tsx"))).toContain(
+      'fetch("/api/locus/booking"',
+    );
+    expect(
+      String(await t.session.workspace.readFile("app/api/locus/[...path]/route.ts")),
+    ).toContain('"POST booking"');
+    expect(String(await t.session.workspace.readFile("lib/locus.ts"))).toContain("siteApi");
+    await t.session.workspace.writeFile("components/booking.tsx", "mine");
+    expect(await call("crm", { action: "add_booking" })).toMatchObject({
+      kept: "components/booking.tsx",
+    });
+    expect(await t.session.workspace.readFile("components/booking.tsx")).toBe("mine");
+    expect(await call("crm", { action: "add_booking", overwrite: true })).toMatchObject({
+      written: "components/booking.tsx",
+    });
+    expect(await call("crm", { action: "add_calendar_embed" })).toEqual({
+      written: "components/calendar-embed.tsx",
+    });
+  });
+});
+
+describe("crm media", () => {
+  const LOGO = new Uint8Array([137, 80, 78, 71, 1, 2, 3]);
+  const withMedia = () =>
+    fakeCrm({
+      media: async (search) =>
+        [
+          { id: "m1", name: "Logo Final.png", format: "png" as const },
+          { id: "m2", name: "team.webp", format: "webp" as const },
+        ].filter((m) => !search || m.name.toLowerCase().includes(search)),
+      mediaFile: async (id) => {
+        if (id === "m1") return { name: "Logo Final.png", format: "png", bytes: LOGO };
+        if (id === "m2") return { name: "team.webp", format: "webp", bytes: LOGO };
+        throw new CrmMediaError(`There's no image with id ${id} in the client's Media Library.`);
+      },
+    });
+
+  it("lists the client's images as one line each, and searches by name", async () => {
+    const { call } = await setup();
+    t.session.crm = withMedia();
+    expect(await call("crm", { action: "media" })).toEqual({
+      media: "id: m1 | name: Logo Final.png | format: png\nid: m2 | name: team.webp | format: webp",
+    });
+    expect(await call("crm", { action: "media", search: "zzz" })).toEqual({
+      media: "",
+      note: "No images match that name.",
+    });
+  });
+
+  it("makes a logo the site's only icon, and a photo its link preview or a public image", async () => {
+    const { call } = await setup();
+    t.session.crm = withMedia();
+    await t.session.workspace.writeFile("app/favicon.ico", new Uint8Array([0, 0, 1, 0]));
+    expect(await call("crm", { action: "use_media", id: "m1", as: "favicon" })).toEqual({
+      saved: "app/icon.png",
+      bytes: LOGO.byteLength,
+    });
+    const paths = (await t.session.workspace.listFiles()).map((f) => f.path);
+    expect(paths).toContain("app/icon.png");
+    expect(paths).not.toContain("app/favicon.ico");
+    for (const rival of ["app/twitter-image.jpg", "app/opengraph-image.alt.txt", "app/icon1.png"]) {
+      await t.session.workspace.writeFile(rival, "old");
+    }
+    expect(await call("crm", { action: "use_media", id: "m1", as: "share" })).toMatchObject({
+      saved: "app/opengraph-image.png",
+    });
+    const after = (await t.session.workspace.listFiles()).map((f) => f.path);
+    expect(after).not.toContain("app/twitter-image.jpg");
+    expect(after).not.toContain("app/opengraph-image.alt.txt");
+    // Only the share image's rivals go; a numbered icon is the favicon's business.
+    expect(after).toContain("app/icon1.png");
+    expect(await call("crm", { action: "use_media", id: "m2", as: "image" })).toMatchObject({
+      saved: "public/images/team.webp",
+      src: "/images/team.webp",
+    });
+    expect(await call("crm", { action: "use_media", id: "m1", as: "image" })).toMatchObject({
+      saved: "public/images/logo-final.png",
+    });
+  });
+
+  it("refuses what Next can't use, a path outside public/, and an unknown id", async () => {
+    const { call } = await setup();
+    t.session.crm = withMedia();
+    expect(await call("crm", { action: "use_media", id: "m2", as: "favicon" })).toEqual({
+      error: "A webp image can't be the site's icon; pick a png, jpg or ico image.",
+    });
+    expect(
+      await call("crm", { action: "use_media", id: "m1", as: "image", path: "app/logo.png" }),
+    ).toEqual({ error: "Save it under public/ with a .png name." });
+    expect(
+      await call("crm", { action: "use_media", id: "m1", as: "image", path: "public/x.jpg" }),
+    ).toEqual({ error: "Save it under public/ with a .png name." });
+    expect(await call("crm", { action: "use_media", id: "nope", as: "image" })).toEqual({
+      error: "There's no image with id nope in the client's Media Library.",
+    });
+    expect(await call("crm", { action: "use_media", as: "image" })).toEqual({
+      error: "use_media needs the image's id from media.",
+    });
+  });
+});
+
+describe("crm tracking", () => {
+  const SNIPPET =
+    '<script src="https://link.msgsndr.com/js/external-tracking.js" data-tracking-id="tk_abc12345def"></script>';
+  const LAYOUT = `import type { Metadata } from "next";
+import "./globals.css";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+      </body>
+    </html>
+  );
+}
+`;
+
+  it("writes the script component and renders it once in the layout", async () => {
+    const { call } = await setup();
+    await t.session.workspace.writeFile("app/layout.tsx", LAYOUT);
+    expect(await call("crm", { action: "add_tracking", snippet: SNIPPET })).toMatchObject({
+      written: "components/ghl-tracking.tsx",
+      layout: "added <GhlTracking />",
+    });
+    const component = String(await t.session.workspace.readFile("components/ghl-tracking.tsx"));
+    expect(component).toContain('src="https://link.msgsndr.com/js/external-tracking.js"');
+    expect(component).toContain('data-tracking-id="tk_abc12345def"');
+    expect(component).toContain("if (!locus.leadEndpoint) return null;");
+    const layout = String(await t.session.workspace.readFile("app/layout.tsx"));
+    expect(layout).toContain(
+      'import "./globals.css";\nimport { GhlTracking } from "@/components/ghl-tracking";',
+    );
+    expect(layout).toContain("        {children}\n        <GhlTracking />\n      </body>");
+    expect(await call("crm", { action: "add_tracking", snippet: SNIPPET })).toMatchObject({
+      layout: "already had it",
+    });
+    expect(
+      String(await t.session.workspace.readFile("app/layout.tsx")).match(/<GhlTracking/g),
+    ).toHaveLength(1);
+  });
+
+  it("refuses anything but GHL's tracking snippet, and a layout without a body", async () => {
+    const { call } = await setup();
+    await t.session.workspace.writeFile("app/layout.tsx", LAYOUT);
+    for (const snippet of [
+      '<script src="https://evil.example/x.js" data-tracking-id="tk_abc12345def"></script>',
+      '<script src="http://link.msgsndr.com/js/external-tracking.js" data-tracking-id="tk_abc12345def"></script>',
+      '<script src="https://link.msgsndr.com/js/external-tracking.js"></script>',
+      '<script src="https://link.msgsndr.com/js/external-tracking.js" data-tracking-id="abc"></script>',
+    ]) {
+      expect(await call("crm", { action: "add_tracking", snippet })).toMatchObject({
+        error: expect.stringContaining("isn't the CRM's tracking snippet"),
+      });
+    }
+    await t.session.workspace.writeFile("app/layout.tsx", "export default function L() {}");
+    expect(await call("crm", { action: "add_tracking", snippet: SNIPPET })).toMatchObject({
+      error: expect.stringContaining("no <body>"),
+    });
+    expect(await t.session.workspace.readFile("components/ghl-tracking.tsx")).toBeNull();
+  });
+
+  it("asks a person before adding any tracking script", async () => {
+    const { tools } = await setup();
+    // biome-ignore lint/suspicious/noExplicitAny: the rule takes the tool's input
+    const rule = tools.crm.requireApproval as (input: any) => boolean;
+    expect(rule({ action: "add_tracking", snippet: SNIPPET })).toBe(true);
+    expect(rule({ action: "calendars" })).toBe(false);
+    expect(rule({ action: "use_media", id: "m1", as: "favicon" })).toBe(false);
   });
 });

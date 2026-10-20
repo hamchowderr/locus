@@ -21,10 +21,21 @@ export function Field({ label, ...input }: { label: string } & React.ComponentPr
   );
 }
 
-export function Button({ children }: { children: ReactNode }) {
+export function Button({
+  children,
+  name,
+  value,
+}: {
+  children: ReactNode;
+  /** For a form with several buttons: which one was pressed. */
+  name?: string;
+  value?: string;
+}) {
   return (
     <button
       type="submit"
+      name={name}
+      value={value}
       className="w-full rounded-md bg-neutral-900 px-4 py-2 text-sm font-medium text-white"
     >
       {children}

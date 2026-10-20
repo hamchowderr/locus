@@ -28,7 +28,7 @@ import {
   SITE_ID_KEY,
   type SiteBuilderDeps,
 } from "@locus/builder/host";
-import { type ConnectDeps, clientGhlSession } from "@locus/connect";
+import { type ConnectDeps, clientGhlSession, siteCrm } from "@locus/connect";
 import { type ControlDb, DbSecretStore, openControlDb, provisionerFromEnv } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
@@ -339,7 +339,16 @@ export function createHost({
       };
       const builder = siteBuilder
         ? createSiteBuilder(
-            { ...siteBuilder, db },
+            {
+              ...siteBuilder,
+              db,
+              // The builder reads the client's calendars as the member behind each tool call.
+              crm: (client) =>
+                siteCrm(async () => ({
+                  session: await clientGhlSession(connect, client),
+                  ...(connect.http ? { http: connect.http } : {}),
+                })),
+            },
             {
               client: await anyAuthorized(clientId),
               requester: (requestContext) =>

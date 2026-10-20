@@ -27,9 +27,11 @@ export class TursoError extends Error {
   }
 }
 
-// Turso's own duration format, e.g. "10m", "1h", "2w1d30m". Tokens always expire: the only
-// way to revoke one is to rotate the database's keys, so a short life is the revocation.
-const TTL = /^(\d+[wdhm])+$/;
+// Turso's own duration format, e.g. "10m", "1h", "2w1d30m", or "never". The only way to revoke
+// a token is to rotate its database's keys (which leaves other databases' tokens working), so
+// Locus's own tokens are short-lived; "never" is for a published app-style site's own token,
+// which lives on its host and is reset by rotating that site's database.
+const TTL = /^((\d+[wdhm])+|never)$/;
 const DB_NAME = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const HOSTNAME = /^[a-z0-9.-]+\.turso\.io$/;
 
@@ -85,7 +87,8 @@ export class TursoProvisioner implements TenantProvisioner {
   }
 
   async mintToken(dbName: string, opts: { readOnly?: boolean; ttl: string }) {
-    if (!TTL.test(opts.ttl)) throw new Error(`Token lifetime must look like "10m" or "1h"`);
+    if (!TTL.test(opts.ttl))
+      throw new Error(`Token lifetime must look like "10m", "1h" or "never"`);
     const query = new URLSearchParams({
       expiration: opts.ttl,
       authorization: opts.readOnly ? "read-only" : "full-access",
