@@ -3,7 +3,10 @@
 import {
   authorizeClient,
   ClientAccessDenied,
+  CREDIT,
+  MAX_OVERAGE_CREDITS,
   NotOperator,
+  OVERAGE_CENTS_PER_CREDIT,
   operatorsFromEnv,
   requireAgencyManager,
   resolveActiveClient,
@@ -12,6 +15,7 @@ import {
   setMemberClients,
   setSiteAccess,
   setSiteBuilder,
+  setUsageOverage,
 } from "@locus/auth";
 import {
   attachSiteDomain,
@@ -29,6 +33,7 @@ import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
+import { prepareExtraUsage, sendExtraUsage } from "@/lib/extra-usage";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
@@ -42,7 +47,7 @@ import {
   SiteInputError,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { giveSiteProject, giveSiteRepo } from "@/lib/site-publish";
+import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
@@ -318,6 +323,44 @@ export async function subscribe(form: FormData) {
   redirect(url);
 }
 
+/**
+ * Turns the session agency's extra usage on or off, with a monthly limit in US dollars. Owners
+ * and admins only (`setUsageOverage`). Turning it on first adds the metered price to the agency's
+ * subscription, so Stripe can bill extra credits from the first one.
+ */
+export async function setExtraUsage(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fbilling");
+  const organizationId = current.session.activeOrganizationId;
+  if (!organizationId) redirect("/onboarding");
+  const enabled = form.get("enabled") === "on";
+  const dollars = Number(text(form, "limitUsd") || "0");
+  const credits = Math.floor((dollars * 100) / OVERAGE_CENTS_PER_CREDIT) * CREDIT;
+  if (!Number.isFinite(dollars) || dollars < 0 || credits > MAX_OVERAGE_CREDITS) {
+    back("/billing", new Error("Enter a monthly limit in dollars, such as 50."));
+  }
+  let refusal: string | null = null;
+  try {
+    const ctx = sessionContext(current);
+    // Only an owner or admin gets as far as Stripe.
+    await requireAgencyManager(locus().db, ctx);
+    refusal = enabled ? await prepareExtraUsage(organizationId) : null;
+    if (!refusal) await setUsageOverage(locus().db, ctx, { enabled, monthlyCreditLimit: credits });
+  } catch (error) {
+    back(
+      "/billing",
+      error instanceof ClientAccessDenied
+        ? new Error("Only the agency's owners and admins manage billing.")
+        : error,
+    );
+  }
+  if (refusal) back("/billing", new Error(refusal));
+  // Usage from before it was turned off is still owed; send it now rather than at the next run.
+  if (!enabled) await sendExtraUsage({ organizationId });
+  revalidatePath("/billing");
+  redirect("/billing?saved=1");
+}
+
 /** Opens Stripe's billing portal for the session's agency. Owners and admins only. */
 export async function openBillingPortal() {
   const current = await currentSession();
@@ -353,12 +396,15 @@ async function siteAction(
     client: Awaited<ReturnType<typeof resolveActiveClient>>,
   ) => Promise<unknown>,
   notConfigured = "Vercel isn't set up here yet.",
+  /** Where to land afterwards, from what the change returned; the Sites page by default. */
+  landing: (result: unknown) => string = () => "/sites",
 ) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   const ctx = sessionContext(current);
+  let result: unknown;
   try {
-    await change(ctx, await resolveActiveClient(locus().db, ctx));
+    result = await change(ctx, await resolveActiveClient(locus().db, ctx));
   } catch (error) {
     if (error instanceof ClientAccessDenied || error instanceof ConnectError) back("/sites", error);
     if (error instanceof NotConfigured) back("/sites", new Error(notConfigured));
@@ -366,7 +412,7 @@ async function siteAction(
   }
   // The redirect lands on the page the form was on, so drop its cached render.
   revalidatePath("/sites");
-  redirect("/sites");
+  redirect(landing(result));
 }
 
 /** Makes a project on the agency's Vercel team the active client's site. */
@@ -604,12 +650,16 @@ export async function unlinkSiteProject(form: FormData) {
 export async function giveSiteRepository(form: FormData) {
   await siteAction(
     (ctx, client) =>
-      giveSiteRepo(publishDeps(), ctx, client, {
+      giveSiteRepoAndPublish(publishDeps(), siteBuilderDeps, ctx, client, {
         siteId: text(form, "siteId"),
         repo: text(form, "repo"),
         name: text(form, "name"),
       }),
     "Publishing to GitHub isn't set up here yet.",
+    (result) => {
+      const { version } = result as Awaited<ReturnType<typeof giveSiteRepoAndPublish>>;
+      return version === null ? "/sites" : `/sites?published=${version}`;
+    },
   );
 }
 

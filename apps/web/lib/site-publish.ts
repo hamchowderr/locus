@@ -1,4 +1,4 @@
-import type { AuthorizedClient, SessionContext } from "@locus/auth";
+import { type AuthorizedClient, ClientAccessDenied, type SessionContext } from "@locus/auth";
 import {
   ConnectError,
   ensureSiteDeployment,
@@ -7,6 +7,7 @@ import {
   type PublishDeps,
   type SiteRow,
 } from "@locus/connect";
+import { publishLatestVersion, type SiteBuilderDeps, SiteInputError } from "./site-builder.ts";
 
 // The Sites page's publishing steps for an owner or admin: give a site a GitHub repository in
 // the agency's account, then a project on the agency's Vercel team that builds it. The client
@@ -39,6 +40,43 @@ export async function giveSiteRepo(
   choice: RepoChoice,
 ): Promise<SiteRow> {
   return ensureSiteRepo(deps, ctx, client, repoInput(choice));
+}
+
+/**
+ * The Sites page's repository step: gives the site its repository (`giveSiteRepo`), then sends
+ * its latest version there straight away, so the Vercel project created next builds the site
+ * instead of failing on an empty repository. A site that was already sent somewhere isn't sent
+ * again (a second submit of the form). If the first publish fails for any reason, the repository
+ * stays linked and the page is told so; the Sites page's Publish button retries it.
+ *
+ * `builder` is only built once the repository exists, so the repository step doesn't depend on
+ * the site builder's settings.
+ */
+export async function giveSiteRepoAndPublish(
+  deps: PublishDeps,
+  builder: () => Pick<SiteBuilderDeps, "db" | "openClientDb" | "publish" | "locusUrl">,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  choice: RepoChoice,
+): Promise<{ row: SiteRow; version: number | null }> {
+  const row = await giveSiteRepo(deps, ctx, client, choice);
+  if (row.status !== "draft") return { row, version: null };
+  try {
+    const { version } = await publishLatestVersion(builder(), ctx, client, row.id);
+    return { row, version };
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) throw error;
+    if (!(error instanceof SiteInputError)) {
+      console.error("The first publish after linking a repository failed", {
+        siteId: row.id,
+        error,
+      });
+    }
+    const why = error instanceof SiteInputError ? ` ${error.message}` : "";
+    throw new ConnectError(
+      `The repository ${row.repoFullName} is linked, but the site wasn't sent to it yet.${why} Publish it from this page once it loads again.`,
+    );
+  }
 }
 
 /** Gives the client's site a Vercel project that builds its repository. Owners and admins only. */

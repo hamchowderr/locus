@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d6bdadfc-971a-4185-8f0e-ba119e35734f",
-  "prevId": "8b3c506d-9dc2-4a08-a5e6-35afce82e74c",
+  "id": "791beb0f-6bc2-4eb3-ac4c-2a193342ecac",
+  "prevId": "4d61f604-1731-4563-98ee-cb18ae484836",
   "tables": {
     "account": {
       "name": "account",
@@ -1208,14 +1208,6 @@
           "autoincrement": false,
           "default": "'provisioning'"
         },
-        "site_builder": {
-          "name": "site_builder",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1529,80 +1521,6 @@
       "uniqueConstraints": {},
       "checkConstraints": {}
     },
-    "site_member_access": {
-      "name": "site_member_access",
-      "columns": {
-        "site_id": {
-          "name": "site_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "member_id": {
-          "name": "member_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "level": {
-          "name": "level",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {
-        "site_member_access_member_idx": {
-          "name": "site_member_access_member_idx",
-          "columns": [
-            "member_id"
-          ],
-          "isUnique": false
-        }
-      },
-      "foreignKeys": {
-        "site_member_access_site_id_site_id_fk": {
-          "name": "site_member_access_site_id_site_id_fk",
-          "tableFrom": "site_member_access",
-          "tableTo": "site",
-          "columnsFrom": [
-            "site_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "site_member_access_member_id_member_id_fk": {
-          "name": "site_member_access_member_id_member_id_fk",
-          "tableFrom": "site_member_access",
-          "tableTo": "member",
-          "columnsFrom": [
-            "member_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {
-        "site_member_access_site_id_member_id_pk": {
-          "columns": [
-            "site_id",
-            "member_id"
-          ],
-          "name": "site_member_access_site_id_member_id_pk"
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraints": {}
-    },
     "usage_alert": {
       "name": "usage_alert",
       "columns": {
@@ -1740,6 +1658,21 @@
           "notNull": false,
           "autoincrement": false
         },
+        "overage_credits": {
+          "name": "overage_credits",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "overage_reported_at": {
+          "name": "overage_reported_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1765,6 +1698,14 @@
             "created_at"
           ],
           "isUnique": false
+        },
+        "usage_event_overage_unreported_idx": {
+          "name": "usage_event_overage_unreported_idx",
+          "columns": [
+            "created_at"
+          ],
+          "isUnique": false,
+          "where": "\"usage_event\".\"overage_credits\" > 0 and \"usage_event\".\"overage_reported_at\" is null"
         }
       },
       "foreignKeys": {
@@ -1877,6 +1818,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "overage_credits": {
+          "name": "overage_credits",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
         }
       },
       "indexes": {
@@ -1913,6 +1862,59 @@
           "name": "usage_month_location_id_month_pk"
         }
       },
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "usage_overage": {
+      "name": "usage_overage",
+      "columns": {
+        "organization_id": {
+          "name": "organization_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "monthly_credit_limit": {
+          "name": "monthly_credit_limit",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "usage_overage_organization_id_organization_id_fk": {
+          "name": "usage_overage_organization_id_organization_id_fk",
+          "tableFrom": "usage_overage",
+          "tableTo": "organization",
+          "columnsFrom": [
+            "organization_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "checkConstraints": {}
     }
