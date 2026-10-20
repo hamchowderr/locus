@@ -1,9 +1,11 @@
 import { ClientAccessDenied, requireAgencyManager, resolveActiveClient } from "@locus/auth";
 import {
+  agencyGithubAccount,
   ConnectError,
   type DomainStatus,
   type HostProject,
   type HostProjectList,
+  type InstallationAccount,
   type InstallationRepo,
   latestDeployment,
   listHostProjects,
@@ -147,14 +149,22 @@ export default async function Sites({
   const seoChecks = isProblem(seo) ? new Map<string, SiteSeo>() : seo;
   // Publishing: a site started in Locus gets a repository, then a Vercel project that builds it.
   const needsRepo = (s: (typeof sites)[number]) => !s.repoFullName && !s.hostProjectId;
-  const repos: InstallationRepo[] | { problem: string } =
+  // On a personal account Locus can't create repositories, so the form only links one.
+  const [repos, githubAccount]: [
+    InstallationRepo[] | { problem: string },
+    InstallationAccount | { problem: string } | undefined,
+  ] =
     manager && sites.some(needsRepo)
-      ? await softly(
-          () => listInstallationRepos(publishDeps(), ctx),
-          "Publishing to GitHub isn't set up here yet.",
-        )
-      : [];
+      ? await Promise.all([
+          softly(
+            () => listInstallationRepos(publishDeps(), ctx),
+            "Publishing to GitHub isn't set up here yet.",
+          ),
+          softly(() => agencyGithubAccount(publishDeps(), ctx)),
+        ])
+      : [[], undefined];
   const repoChoices = isProblem(repos) ? [] : linkableRepos(repos, sites);
+  const account = githubAccount && !isProblem(githubAccount) ? githubAccount : undefined;
   const deployments = await Promise.all(
     sites.map((s) =>
       s.host === "vercel" && s.hostProjectId && !gone(s.hostProjectId)
@@ -202,6 +212,16 @@ export default async function Sites({
                 s.hostProjectId ??
                 "Untitled site"}
             </h2>
+            {briefNames.has(s.id) && (
+              <p className="flex gap-4 text-sm">
+                <Link href={`/sites/${s.id}/preview`} className="underline">
+                  Preview
+                </Link>
+                <Link href={`/sites/${s.id}/versions`} className="underline">
+                  Versions
+                </Link>
+              </p>
+            )}
             {!briefNames.has(s.id) ? null : activeSite === s.id ? (
               <p className="text-sm text-neutral-600">The site builder works on this site.</p>
             ) : (
@@ -255,6 +275,7 @@ export default async function Sites({
                 suggested={suggestedRepoName(briefNames.get(s.id))}
                 repos={repos}
                 choices={repoChoices}
+                account={account}
               />
             )}
             {manager && s.repoFullName && briefNames.has(s.id) && (
@@ -268,9 +289,20 @@ export default async function Sites({
                 <Button>Publish the latest version</Button>
               </form>
             )}
-            {manager && s.repoFullName && !s.hostProjectId && (
-              <ProjectForm siteId={s.id} problem={isProblem(projects) ? projects.problem : null} />
-            )}
+            {manager &&
+              s.repoFullName &&
+              !s.hostProjectId &&
+              // Vercel would fail to build an empty repository, so the site is published first.
+              (s.status === "draft" ? (
+                <p className="text-sm text-neutral-600">
+                  Publish the site to {s.repoFullName} first, then create its Vercel project.
+                </p>
+              ) : (
+                <ProjectForm
+                  siteId={s.id}
+                  problem={isProblem(projects) ? projects.problem : null}
+                />
+              ))}
             {deployments[i] !== undefined && <DeploymentLine deployment={deployments[i]} />}
             {gone(s.hostProjectId) && (
               <Notice tone="error">This project is no longer on your Vercel team.</Notice>
@@ -444,19 +476,51 @@ function ConnectFirst({ problem }: { problem: string }) {
   );
 }
 
-/** Gives a draft site a GitHub repository: a new private one, or an existing empty one. */
+/**
+ * Gives a draft site a GitHub repository: a new private one, or an existing empty one. On a
+ * personal GitHub account it can only link one, since GitHub Apps can't create repositories there.
+ */
 function RepoForm({
   siteId,
   suggested,
   repos,
   choices,
+  account,
 }: {
   siteId: string;
   suggested: string;
   repos: InstallationRepo[] | { problem: string };
   choices: InstallationRepo[];
+  account: InstallationAccount | undefined;
 }) {
   if (isProblem(repos)) return <ConnectFirst problem={repos.problem} />;
+  const personal = account?.personal === true;
+  const howTo = account && personal && (
+    <p className="text-sm text-neutral-600">
+      Locus can't create repositories in your personal GitHub account {account.login}.{" "}
+      <a href="https://github.com/new" className="underline" target="_blank" rel="noreferrer">
+        Create an empty private repository (opens in a new tab)
+      </a>{" "}
+      (leave out the README),{" "}
+      <a
+        href={`https://github.com/settings/installations/${encodeURIComponent(account.installationId)}`}
+        className="underline"
+        target="_blank"
+        rel="noreferrer"
+      >
+        give the Locus app access to it (opens in a new tab)
+      </a>
+      , then reload this page and pick it here.
+    </p>
+  );
+  if (personal && choices.length === 0) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-neutral-700">This site needs a GitHub repository.</p>
+        {howTo}
+      </div>
+    );
+  }
   return (
     <form action={giveSiteRepository} className="space-y-2">
       <input type="hidden" name="siteId" value={siteId} />
@@ -465,9 +529,16 @@ function RepoForm({
         <select
           name="repo"
           defaultValue=""
+          required={personal}
           className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
         >
-          <option value="">Create a new private repository</option>
+          {personal ? (
+            <option value="" disabled>
+              Pick an empty repository
+            </option>
+          ) : (
+            <option value="">Create a new private repository</option>
+          )}
           {choices.map((r) => (
             <option key={r.fullName} value={r.fullName}>
               Link {r.fullName}
@@ -475,13 +546,16 @@ function RepoForm({
           ))}
         </select>
       </label>
-      <Field
-        label="New repository name"
-        name="name"
-        defaultValue={suggested}
-        maxLength={100}
-        autoComplete="off"
-      />
+      {!personal && (
+        <Field
+          label="New repository name"
+          name="name"
+          defaultValue={suggested}
+          maxLength={100}
+          autoComplete="off"
+        />
+      )}
+      {howTo}
       <p className="text-sm text-neutral-600">
         Each saved version replaces everything in the repository, so Locus only links an empty one
         and refuses a repository that already has code.
