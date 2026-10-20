@@ -19,6 +19,7 @@ import {
   ConnectError,
   commitSiteVersion,
   type PublishDeps,
+  type SiteCrm,
   type SiteDeps,
   siteDomainStatus,
 } from "@locus/connect";
@@ -123,6 +124,11 @@ export interface SiteBuilderDeps {
   locusUrl: string;
   /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
   billing?: boolean;
+  /**
+   * The client's GHL sub-account, for the builder's `crm` tool. Called with the client after
+   * the staff check on each tool call; null or absent leaves the tool saying it can't reach it.
+   */
+  crm?: ((client: AuthorizedClient) => SiteCrm) | null;
 }
 
 export interface SiteBuilderWiring {
@@ -700,6 +706,7 @@ export function createSiteBuilder(
           ? deps.openRuntime(client, siteId)
           : deps.runtimes().open(siteRuntimeKey(client, siteId)),
       images: deps.images ?? null,
+      crm: deps.crm ? deps.crm(client) : null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
       ...(onVersionSaved ? { onVersionSaved } : {}),

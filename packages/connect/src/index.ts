@@ -64,6 +64,18 @@ export {
   siteBackendRows,
 } from "./site-backend.ts";
 export {
+  BOOKING_LIMITS,
+  type BookingInput,
+  bookSiteAppointment,
+  MAX_SLOT_DAYS,
+  type SiteBookingResult,
+  SLOT_LIMITS,
+  type SlotQuery,
+  siteSlots,
+  validTimezone,
+} from "./site-booking.ts";
+export { type CrmCalendar, listCalendars, type SiteCrm, siteCrm } from "./site-crm.ts";
+export {
   countSiteLead,
   hashVisitorIp,
   LEAD_ELAPSED_FIELD,
