@@ -32,6 +32,7 @@ export const UNTRUSTED_FIELDS: Readonly<Record<string, readonly string[]>> = {
   add_dependency: ["output", "error", "docs", "theme", "contents"],
   check_site: ["output"],
   preview: ["recentLogs", "output", "logs"],
+  crm: ["calendars"],
 };
 
 const SOURCE: Record<string, string> = {
@@ -40,6 +41,7 @@ const SOURCE: Record<string, string> = {
   add_dependency: "sandbox command output or registry text",
   check_site: "sandbox build output",
   preview: "dev-server logs",
+  crm: "the client's CRM",
 };
 
 const PATTERNS: RegExp[] = [
