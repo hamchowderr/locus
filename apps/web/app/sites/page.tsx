@@ -33,6 +33,7 @@ import {
   giveSiteRepository,
   giveSiteVercelProject,
   linkSiteProject,
+  publishSite,
   unlinkSiteProject,
 } from "../actions";
 import { Button, Field, Notice, Page } from "../ui";
@@ -72,12 +73,18 @@ const isProblem = (value: unknown): value is { problem: string } =>
 export default async function Sites({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; created?: string; chosen?: string; deleted?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    created?: string;
+    chosen?: string;
+    deleted?: string;
+    published?: string;
+  }>;
 }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, created, chosen, deleted } = await searchParams;
+  const { error, created, chosen, deleted, published: publishedVersion } = await searchParams;
   const ctx = sessionContext(current);
   const client = await resolveActiveClient(locus().db, ctx).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
@@ -144,6 +151,11 @@ export default async function Sites({
       {error && <Notice tone="error">{error}</Notice>}
       {created && <Notice tone="info">Site created from its template as version 1.</Notice>}
       {deleted && <Notice tone="info">Site deleted.</Notice>}
+      {publishedVersion && /^\d{1,6}$/.test(publishedVersion) && (
+        <Notice tone="info">
+          Version {publishedVersion} sent to GitHub. Vercel deploys it in a minute or two.
+        </Notice>
+      )}
       {chosen && <Notice tone="info">The site builder now works on that site.</Notice>}
       {isProblem(projects) && (
         <Notice tone="error">
@@ -165,10 +177,11 @@ export default async function Sites({
         const status = statuses[i];
         return (
           <section key={s.id} className="space-y-3 rounded-md border border-neutral-200 p-4">
+            {/* A site started in Locus keeps its own name once it has a Vercel project. */}
             <h2 className="font-semibold">
-              {names.get(s.hostProjectId ?? "") ??
+              {briefNames.get(s.id) ??
+                names.get(s.hostProjectId ?? "") ??
                 s.hostProjectId ??
-                briefNames.get(s.id) ??
                 "Untitled site"}
             </h2>
             {!briefNames.has(s.id) ? null : activeSite === s.id ? (
@@ -224,6 +237,16 @@ export default async function Sites({
                 repos={repos}
                 choices={repoChoices}
               />
+            )}
+            {manager && s.repoFullName && briefNames.has(s.id) && (
+              <form action={publishSite} className="space-y-2">
+                <input type="hidden" name="siteId" value={s.id} />
+                <p className="text-sm text-neutral-600">
+                  Publishing sends the site's latest saved version to {s.repoFullName}
+                  {s.hostProjectId ? ", and Vercel deploys it" : ""}.
+                </p>
+                <Button>Publish the latest version</Button>
+              </form>
             )}
             {manager && s.repoFullName && !s.hostProjectId && (
               <ProjectForm siteId={s.id} problem={isProblem(projects) ? projects.problem : null} />
@@ -434,7 +457,8 @@ function RepoForm({
         autoComplete="off"
       />
       <p className="text-sm text-neutral-600">
-        Each saved version replaces everything in the repository, so link only an empty one.
+        Each saved version replaces everything in the repository, so Locus only links an empty one
+        and refuses a repository that already has code.
       </p>
       <Button>Give the site a repository</Button>
     </form>
