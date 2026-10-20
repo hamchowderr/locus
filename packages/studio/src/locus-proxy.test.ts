@@ -1,9 +1,10 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LOCUS_PROXY_CALLS, locusProxyFile, locusSettingsFile } from "./templates/forms.ts";
 
-// Runs the site's generated `/api/locus/[...path]` route for real: written next to this test with
+// Runs the site's generated `/api/locus/[...path]` route for real: written to a temporary folder with
 // `next/server` replaced by a stand-in and `@/lib/locus` pointing at the settings Locus writes.
 
 const SITE_API = "https://locus.test/api/sites/site-1";
@@ -40,9 +41,9 @@ const call = (method: "GET" | "POST", path: string, init: RequestInit = {}, quer
     params: Promise.resolve({ path: path.split("/") }),
   });
 
-beforeEach(() => {
-  root = join(import.meta.dirname, `.proxy-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  vi.resetModules();
+beforeEach(async () => {
+  // Outside the source tree, so a run that dies leaves nothing for lint or git to find.
+  root = await mkdtemp(join(tmpdir(), "locus-proxy-"));
 });
 
 afterEach(async () => {
@@ -117,6 +118,28 @@ describe("a published site's /api/locus route", () => {
     const long = await call("GET", "booking/slots", {}, `?q=${"x".repeat(1_000)}`);
     expect(long.status).toBe(400);
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("passes on only the answer and retry-after, never Locus's other headers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ ok: true }, { headers: { "set-cookie": "locus=1", "x-internal": "yes" } }),
+      ),
+    );
+    const response = await call("POST", "booking", { body: "{}" });
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("x-internal")).toBeNull();
+  });
+
+  it("answers a readable error when Locus answers with something that isn't JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("<html>Bad gateway</html>", { status: 500 })),
+    );
+    const response = await call("POST", "checkout", { body: "{}" });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "That didn't go through." });
   });
 
   it("says it didn't go through when Locus can't be reached, and passes Locus's errors on", async () => {
