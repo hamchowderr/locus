@@ -11,7 +11,7 @@ import { z } from "zod";
 import { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
 import { QueryError, type QueryLimits, runQuery } from "./query-data.ts";
 import type { WriteGuard } from "./test-mode.ts";
-import { isTainted } from "./untrusted.ts";
+import { isTainted, type LOCUS, locusError } from "./untrusted.ts";
 
 /** What a tool can read of its run's request context. */
 export interface RunContext {
@@ -141,18 +141,21 @@ export function createLocusTools(deps: ToolDeps) {
  * Mistakes the model can fix come back as data so it can correct itself. Anything else —
  * a bug, an outage — is thrown.
  */
-async function recoverable<T>(run: () => T | Promise<T>): Promise<T | { error: string }> {
+async function recoverable<T>(
+  run: () => T | Promise<T>,
+): Promise<T | { error: string; from?: typeof LOCUS }> {
   try {
     return await run();
   } catch (error) {
+    // Locus's own errors say what to change and may name our tools; GHL's carry GHL's text.
     if (
       error instanceof QueryError ||
       error instanceof ActionError ||
-      error instanceof GhlUsageError ||
-      error instanceof GhlError
+      error instanceof GhlUsageError
     ) {
-      return { error: error.message };
+      return locusError(error.message);
     }
+    if (error instanceof GhlError) return { error: error.message };
     throw error;
   }
 }
