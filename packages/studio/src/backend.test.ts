@@ -64,6 +64,7 @@ describe("an app-style site's files", () => {
       FIRST_MIGRATION_PATH,
       "lib/db.ts",
       "lib/auth.ts",
+      "lib/members.ts",
       "lib/auth-client.ts",
       "lib/local-migrations.ts",
       "instrumentation.ts",
@@ -86,6 +87,38 @@ describe("an app-style site's files", () => {
     const renewed = withBackend(older);
     expect(text(renewed, "lib/files.ts")).toContain("keepFile");
     expect(renewed.map((f) => f.path)).not.toContain("app/api/files/[action]/route.ts");
+
+    // A login file from before sign-ups went to HighLevel gets the hook; a changed one is kept.
+    expect(text(app, "lib/auth.ts")).toContain(
+      "databaseHooks: { user: { create: { after: memberSignedUp } } }",
+    );
+    const withAuth = (content: string) =>
+      app.map((f) => (f.path === "lib/auth.ts" ? { ...f, content } : f));
+    // lib/auth.ts exactly as sites got it before (#110), frozen so a template edit can't hide it.
+    const before = [
+      'import { betterAuth } from "better-auth";',
+      'import { drizzleAdapter } from "better-auth/adapters/drizzle";',
+      'import * as schema from "@/db/schema";',
+      'import { db, isPreviewDatabase } from "@/lib/db";',
+      "",
+      "// The site's own logins: email and password, stored in the site's own database. Server code",
+      "// only. The published site's secret is set by Locus on its host; the preview uses a fixed one,",
+      "// which is fine because the preview's database is a throwaway file.",
+      "export const auth = betterAuth({",
+      "  secret:",
+      "    process.env.SITE_AUTH_SECRET ??",
+      '    (isPreviewDatabase ? "locus-preview-only-not-a-secret-at-all" : undefined),',
+      '  database: drizzleAdapter(db, { provider: "sqlite", schema }),',
+      "  emailAndPassword: { enabled: true },",
+      "  telemetry: { enabled: false },",
+      "});",
+    ]
+      .join("\n")
+      .concat("\n");
+    expect(before).not.toContain("memberSignedUp");
+    expect(text(withBackend(withAuth(before)), "lib/auth.ts")).toBe(text(app, "lib/auth.ts"));
+    const custom = `${before}// magic links\n`;
+    expect(text(withBackend(withAuth(custom)), "lib/auth.ts")).toBe(custom);
 
     const grown = app.map((f) =>
       f.path === SITE_SCHEMA_PATH ? { ...f, content: `${f.content}// bookings\n` } : f,
@@ -344,6 +377,71 @@ describe("the generated preview database", () => {
       expect(sent).toHaveLength(1);
     } finally {
       vi.unstubAllGlobals();
+    }
+  });
+
+  /** Signs a member up with the site's own lib/auth.ts, as its sign-up page would. */
+  const signUp = async (email: string) => {
+    const { auth } = await import(join(root, "lib/auth.ts"));
+    await auth.api.signUpEmail({
+      body: { name: "Ann", email, password: "correct horse battery" },
+      headers: new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }),
+    });
+  };
+  const closeDb = async () => (await import(join(root, "lib/db.ts"))).client.close();
+
+  it("sends nothing about the preview's members", async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal("fetch", async (...args: unknown[]) => {
+      sent.push(args);
+      return Response.json({ ok: true });
+    });
+    vi.stubEnv("SITE_FILES_KEY", "files-key");
+    try {
+      await (await import(join(root, "lib/local-migrations.ts"))).applyLocalMigrations();
+      await signUp("preview@example.test");
+      expect(sent).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+      await closeDb();
+    }
+  });
+
+  it("tells Locus about each new member of a published site, and never fails a sign-up", async () => {
+    await writeFile(
+      join(root, "lib/locus.ts"),
+      'export const locus = { siteApi: "https://locus.test/api/sites/s1" as string | null };\n',
+    );
+    vi.stubEnv("SITE_FILES_KEY", "files-key");
+    const sent: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return Response.json({ ok: true });
+    });
+    try {
+      await (await import(join(root, "lib/local-migrations.ts"))).applyLocalMigrations();
+      await signUp("ann@example.test");
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.url).toBe("https://locus.test/api/sites/s1/members/signup");
+      const headers = sent[0]?.init.headers as Record<string, string>;
+      expect(headers.authorization).toBe("Bearer files-key");
+      expect(headers["x-locus-visitor-ip"]).toBe("203.0.113.9");
+      expect(JSON.parse(String(sent[0]?.init.body))).toEqual({
+        email: "ann@example.test",
+        name: "Ann",
+      });
+
+      // Locus being down never stops the sign-up.
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.stubGlobal("fetch", async () => {
+        throw new Error("offline");
+      });
+      await expect(signUp("bo@example.test")).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("couldn't be reached"));
+      error.mockRestore();
+    } finally {
+      vi.unstubAllGlobals();
+      await closeDb();
     }
   });
 
