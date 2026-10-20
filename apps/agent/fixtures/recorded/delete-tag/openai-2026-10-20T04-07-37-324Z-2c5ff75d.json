@@ -1,0 +1,74 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the old-promo tag. Nobody uses it any more.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 3,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\": \"c\", \"operation\": \"contacts.search-contacts-advanced\", \"params\": {\"body\": {\"filters\": [{\"field\": \"tags\", \"operator\": \"contains\", \"value\": \"old-promo\"}]}}}], \"sql\": \"SELECT id, firstName, lastName, email, tags, dateUpdated FROM c\"}",
+            "id": "toolu_01CiZffyWirChkWvW7TF8Ppr"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 9895,
+          "completion_tokens": 203,
+          "total_tokens": 10098,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.04364,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 34,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.04364
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1024,
+        "interChunkDelaysMs": [
+          523,
+          10,
+          0,
+          0,
+          0,
+          0,
+          39,
+          53,
+          48,
+          51,
+          50,
+          53,
+          48,
+          157,
+          46,
+          51,
+          82,
+          102,
+          2,
+          0
+        ],
+        "totalDurationMs": 2339
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
