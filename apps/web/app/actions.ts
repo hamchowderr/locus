@@ -2,13 +2,17 @@
 
 import {
   ClientAccessDenied,
+  CREDIT,
+  MAX_OVERAGE_CREDITS,
   NotOperator,
+  OVERAGE_CENTS_PER_CREDIT,
   operatorsFromEnv,
   requireAgencyManager,
   resolveActiveClient,
   selectClient,
   setComped,
   setMemberClients,
+  setUsageOverage,
 } from "@locus/auth";
 import {
   attachSiteDomain,
@@ -25,6 +29,7 @@ import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
+import { prepareExtraUsage, sendExtraUsage } from "@/lib/extra-usage";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
@@ -40,6 +45,12 @@ import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
+
+/** An uploaded file's bytes and type, or null when the field was left empty. */
+async function uploaded(value: FormDataEntryValue | null) {
+  if (!(value instanceof File) || value.size === 0) return null;
+  return { bytes: new Uint8Array(await value.arrayBuffer()), mediaType: value.type };
+}
 
 /** Better Auth's API errors carry a readable message in `body.message`. */
 function messageOf(error: unknown): string {
@@ -313,6 +324,44 @@ export async function subscribe(form: FormData) {
   redirect(url);
 }
 
+/**
+ * Turns the session agency's extra usage on or off, with a monthly limit in US dollars. Owners
+ * and admins only (`setUsageOverage`). Turning it on first adds the metered price to the agency's
+ * subscription, so Stripe can bill extra credits from the first one.
+ */
+export async function setExtraUsage(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fbilling");
+  const organizationId = current.session.activeOrganizationId;
+  if (!organizationId) redirect("/onboarding");
+  const enabled = form.get("enabled") === "on";
+  const dollars = Number(text(form, "limitUsd") || "0");
+  const credits = Math.floor((dollars * 100) / OVERAGE_CENTS_PER_CREDIT) * CREDIT;
+  if (!Number.isFinite(dollars) || dollars < 0 || credits > MAX_OVERAGE_CREDITS) {
+    back("/billing", new Error("Enter a monthly limit in dollars, such as 50."));
+  }
+  let refusal: string | null = null;
+  try {
+    const ctx = sessionContext(current);
+    // Only an owner or admin gets as far as Stripe.
+    await requireAgencyManager(locus().db, ctx);
+    refusal = enabled ? await prepareExtraUsage(organizationId) : null;
+    if (!refusal) await setUsageOverage(locus().db, ctx, { enabled, monthlyCreditLimit: credits });
+  } catch (error) {
+    back(
+      "/billing",
+      error instanceof ClientAccessDenied
+        ? new Error("Only the agency's owners and admins manage billing.")
+        : error,
+    );
+  }
+  if (refusal) back("/billing", new Error(refusal));
+  // Usage from before it was turned off is still owed; send it now rather than at the next run.
+  if (!enabled) await sendExtraUsage({ organizationId });
+  revalidatePath("/billing");
+  redirect("/billing?saved=1");
+}
+
 /** Opens Stripe's billing portal for the session's agency. Owners and admins only. */
 export async function openBillingPortal() {
   const current = await currentSession();
@@ -405,6 +454,15 @@ export async function createSite(form: FormData) {
       name: text(form, "name"),
       kind: text(form, "kind"),
       templateId: text(form, "templateId"),
+      description: text(form, "description"),
+      goal: text(form, "goal"),
+      audience: text(form, "audience"),
+      palette: text(form, "palette"),
+      fonts: text(form, "fonts"),
+      layout: text(form, "layout"),
+      pages: form.getAll("pages").map(String),
+      referenceUrl: text(form, "referenceUrl"),
+      screenshot: await uploaded(form.get("screenshot")),
     });
     // The site just made is the one the person means to build next, in the chat too. The site
     // exists either way, so failing to choose it doesn't fail the creation.
