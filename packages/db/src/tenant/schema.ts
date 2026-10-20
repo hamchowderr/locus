@@ -40,7 +40,8 @@ export const siteVersion = sqliteTable(
     siteId: text("site_id").notNull(),
     number: integer("number").notNull(),
     message: text("message").notNull(),
-    source: text("source", { enum: ["template", "agent", "restore", "edit"] }).notNull(),
+    /** `copy`: version 1 of a site copied from another site's latest version. */
+    source: text("source", { enum: ["template", "agent", "restore", "edit", "copy"] }).notNull(),
     /** The version this one was made from; null for the first. */
     parentId: text("parent_id"),
     bookmarked: integer("bookmarked", { mode: "boolean" }).notNull().default(false),

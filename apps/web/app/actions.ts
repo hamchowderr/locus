@@ -1,6 +1,7 @@
 "use server";
 
 import {
+  authorizeClient,
   ClientAccessDenied,
   CREDIT,
   MAX_OVERAGE_CREDITS,
@@ -12,6 +13,8 @@ import {
   selectClient,
   setComped,
   setMemberClients,
+  setSiteAccess,
+  setSiteBuilder,
   setUsageOverage,
 } from "@locus/auth";
 import {
@@ -22,6 +25,7 @@ import {
   refusedQuery,
   removeSiteDomain,
   type SyncResult,
+  setSiteFolder,
   syncLocations,
   unlinkHostProject,
 } from "@locus/connect";
@@ -36,6 +40,7 @@ import { safeNext } from "@/lib/next-path";
 import {
   ACTIVE_SITE_COOKIE,
   chooseActiveSite,
+  copyClientSite,
   createClientSite,
   deleteClientSite,
   publishLatestVersion,
@@ -485,6 +490,106 @@ export async function createSite(form: FormData) {
 }
 
 /**
+ * Copies one of the active client's sites into a new draft, for this client or another one.
+ * The source is the session's client; the target from the form goes through the same staff
+ * check as choosing a client, so a member can only copy into clients they work on.
+ */
+export async function copySite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  let elsewhere = false;
+  try {
+    const from = await resolveActiveClient(locus().db, ctx);
+    const targetId = text(form, "targetClientId") || from.location.id;
+    const to =
+      targetId === from.location.id ? from : await authorizeClient(locus().db, ctx, targetId);
+    elsewhere = to !== from;
+    const { siteId } = await copyClientSite(
+      siteBuilderDeps(),
+      ctx,
+      from,
+      text(form, "siteId"),
+      to,
+      {
+        name: text(form, "name"),
+      },
+    );
+    if (!elsewhere) {
+      try {
+        await rememberActiveSite(await chooseActiveSite(locus().db, ctx, from, siteId));
+      } catch (error) {
+        console.error("copySite: could not choose the copy", error);
+      }
+    }
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Client databases aren't set up here yet."));
+    }
+    throw error;
+  }
+  revalidatePath("/sites");
+  redirect(`/sites?copied=${elsewhere ? "elsewhere" : "here"}`);
+}
+
+/**
+ * Sets which members may only view one of the active client's sites; the rest of the members
+ * who work on the client manage it. Owners and admins only.
+ */
+export async function saveSiteAccess(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      setSiteAccess(
+        locus().db,
+        ctx,
+        client,
+        text(form, "siteId"),
+        form.getAll("viewOnly").map(String),
+      ),
+    "Locus isn't set up here yet.",
+  );
+}
+
+/**
+ * Turns the site builder on or off for the clients ticked on the Clients page. Owners and admins
+ * only; every client must be the agency's (`setSiteBuilder`).
+ */
+export async function switchSiteBuilder(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fclients");
+  const on = form.get("on") === "yes";
+  let changed = 0;
+  try {
+    changed = await setSiteBuilder(
+      locus().db,
+      sessionContext(current),
+      form.getAll("locationId").map(String),
+      on,
+    );
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) back("/clients", error);
+    throw error;
+  }
+  revalidatePath("/clients");
+  redirect(`/clients?builder=${on ? "on" : "off"}&changed=${changed}`);
+}
+
+/** Files one of the active client's sites under a folder, or under none. */
+export async function fileSite(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      setSiteFolder(locus().db, ctx, client, {
+        siteId: text(form, "siteId"),
+        folder: text(form, "folder"),
+      }),
+    "Locus isn't set up here yet.",
+  );
+}
+
+/**
  * Deletes one of the active client's sites, with everything Locus keeps for it; its repository
  * stays. Owners and admins only; the client is the session's, and a site with a Vercel project
  * or domain is refused (`deleteClientSite`).
@@ -538,7 +643,9 @@ export async function chooseSite(form: FormData) {
     hasBrief = briefs.has(wanted);
     if (hasBrief) siteId = await chooseActiveSite(locus().db, ctx, client, wanted);
   } catch (error) {
-    if (error instanceof ClientAccessDenied) back("/sites", error);
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
     if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
     throw error;
   }

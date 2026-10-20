@@ -13,6 +13,7 @@ import {
 } from "@locus/db";
 import {
   auditLog,
+  hostConnection,
   location,
   member,
   memberLocation,
@@ -21,17 +22,22 @@ import {
   siteBackend,
   user,
 } from "@locus/db/control";
+import { MemorySecretStore } from "@locus/secrets";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConnectError } from "./errors.ts";
 import {
   enableSiteBackend,
+  ensureSiteBackendEnv,
+  migrateSiteBackend,
   removeSiteBackend,
   type SiteBackendDeps,
+  type SiteReleaseDeps,
   siteBackendOf,
   siteBackendOverview,
   siteBackendRows,
 } from "./site-backend.ts";
+import { vercelSecretRef } from "./vercel.ts";
 
 let dir: string;
 let db: ControlDb;
@@ -250,5 +256,177 @@ describe("site backend", () => {
     expect(destroyed).toEqual([row.tursoDbName, "db-client-1"]);
     expect(await db.select().from(siteBackend)).toEqual([]);
     expect(await db.select().from(location).where(eq(location.id, "client-1"))).toEqual([]);
+  });
+});
+
+describe("publishing a site with a database", () => {
+  const logins = {
+    path: "db/migrations/0000_logins.sql",
+    content: "create table member (id text primary key, email text not null)",
+  };
+  const bookings = {
+    path: "db/migrations/0001_bookings.sql",
+    content:
+      "create table booking (id text primary key, member_id text references member(id));\n--> statement-breakpoint\ncreate index booking_member on booking (member_id);",
+  };
+
+  type Call = { method: string; path: string; body: unknown };
+  let calls: Call[];
+  type Env = { id: string; key: string; target: string[]; gitBranch?: string };
+  let envs: Env[];
+  let postAnswer: (body: unknown) => unknown;
+  const live = (key: string): Env => ({ id: `env_${key}`, key, target: ["production"] });
+
+  function release(options: { provisioner?: boolean } = {}): SiteReleaseDeps {
+    const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, path: url.pathname, body });
+      if (method === "GET") return new Response(JSON.stringify({ envs }));
+      if (method === "DELETE") return new Response("{}");
+      return new Response(JSON.stringify(postAnswer(body)), { status: 201 });
+    }) as typeof globalThis.fetch;
+    return {
+      db,
+      secrets,
+      http: { fetch, apiBaseUrl: "https://api.vercel.test" },
+      ...(options.provisioner === false ? {} : { provisioner }),
+    };
+  }
+
+  let secrets: MemorySecretStore;
+  beforeEach(async () => {
+    calls = [];
+    envs = [];
+    postAnswer = (body) => ({ created: body });
+    secrets = new MemorySecretStore();
+    const secretRef = vercelSecretRef("agency-a");
+    await secrets.set(secretRef, JSON.stringify({ accessToken: "vercel-token", teamId: "team_a" }));
+    await db.insert(hostConnection).values({
+      organizationId: "agency-a",
+      provider: "vercel",
+      teamId: "team_a",
+      secretRef,
+      connectedAt: now,
+    });
+  });
+
+  it("leaves a plain website alone", async () => {
+    const staff = await authorizeClient(db, ctx("staff"), "client-1");
+    await db.update(site).set({ hostProjectId: "prj_1" }).where(eq(site.id, SITE));
+    expect(
+      await migrateSiteBackend(release(), staff, { siteId: SITE, files: [logins] }),
+    ).toBeNull();
+    expect(await ensureSiteBackendEnv(release(), staff, { siteId: SITE })).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("applies each new database change once, before the version goes out", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    const row = await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    // Staff on the client publish as they save in the chat.
+    const staff = await authorizeClient(db, ctx("staff"), "client-1");
+    const files = [logins, { path: "app/page.tsx", content: "export default 1" }];
+    expect(await migrateSiteBackend(release(), staff, { siteId: SITE, files })).toEqual({
+      applied: ["0000_logins"],
+    });
+    expect(
+      await migrateSiteBackend(release(), staff, { siteId: SITE, files: [...files, bookings] }),
+    ).toEqual({ applied: ["0001_bookings"] });
+    expect(
+      await migrateSiteBackend(release(), staff, { siteId: SITE, files: [logins, bookings] }),
+    ).toEqual({ applied: [] });
+
+    const db2 = openSiteDb(provisioner.url(row.tursoDbHostname), "x");
+    const tables = await db2.execute("select name from sqlite_master where type = 'table'");
+    expect(tables.rows.map((r) => r.name)).toEqual(
+      expect.arrayContaining(["member", "booking", "_locus_migrations"]),
+    );
+    db2.close();
+  });
+
+  it("stops the publish when a change fails, and says why", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    const broken = { path: "db/migrations/0000_logins.sql", content: "create tabel member (id)" };
+    await expect(
+      migrateSiteBackend(release(), owner, { siteId: SITE, files: [broken] }),
+    ).rejects.toThrow(
+      /^The site's database change didn't apply: 0000_logins failed: .*new migration/,
+    );
+    await expect(
+      migrateSiteBackend(release({ provisioner: false }), owner, { siteId: SITE, files: [logins] }),
+    ).rejects.toThrow("This site's database isn't set up on this deployment yet.");
+  });
+
+  it("gives the site's project its database settings once, as sensitive values", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    const row = await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    // No project yet: nothing to set.
+    expect(await ensureSiteBackendEnv(release(), owner, { siteId: SITE })).toEqual([]);
+    expect(calls).toEqual([]);
+
+    await db.update(site).set({ hostProjectId: "prj_1" }).where(eq(site.id, SITE));
+    const added = await ensureSiteBackendEnv(release(), owner, { siteId: SITE });
+    expect(added).toEqual(["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"]);
+    const post = calls.find((c) => c.method === "POST");
+    expect(post?.path).toBe("/v10/projects/prj_1/env");
+    const body = post?.body as { key: string; value: string; type: string; target: string[] }[];
+    expect(body.map((v) => [v.key, v.type, v.target])).toEqual([
+      ["SITE_DATABASE_URL", "sensitive", ["production"]],
+      ["SITE_DATABASE_TOKEN", "sensitive", ["production"]],
+      ["SITE_AUTH_SECRET", "sensitive", ["production"]],
+    ]);
+    expect(body[0]?.value).toBe(provisioner.url(row.tursoDbHostname));
+    expect(body[2]?.value).toMatch(/^[\w-]{43}$/);
+
+    // Already there: left alone, and the secret is never replaced.
+    calls = [];
+    envs = ["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"].map(live);
+    expect(await ensureSiteBackendEnv(release(), owner, { siteId: SITE })).toEqual([]);
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+
+    // Another client's staff can't reach it.
+    const other = await authorizeClient(db, ctx("owner"), "client-2");
+    expect(await ensureSiteBackendEnv(release(), other, { siteId: SITE })).toEqual([]);
+  });
+
+  it("only counts settings the live site reads, and notices ones Vercel refused", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    await db.update(site).set({ hostProjectId: "prj_1" }).where(eq(site.id, SITE));
+    // Someone's development-only or one-branch values don't reach production.
+    envs = [
+      { id: "e1", key: "SITE_DATABASE_URL", target: ["development"] },
+      { id: "e2", key: "SITE_DATABASE_TOKEN", target: ["production"], gitBranch: "test" },
+      live("SITE_AUTH_SECRET"),
+    ];
+    expect(await ensureSiteBackendEnv(release(), owner, { siteId: SITE })).toEqual([
+      "SITE_DATABASE_URL",
+      "SITE_DATABASE_TOKEN",
+    ]);
+
+    postAnswer = () => ({ created: [], failed: [{ error: { code: "ENV_CONFLICT" } }] });
+    await expect(ensureSiteBackendEnv(release(), owner, { siteId: SITE })).rejects.toThrow(
+      "Vercel didn't take the site's database settings. Try again.",
+    );
+  });
+
+  it("takes the database settings off the project when the database goes", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    await db.update(site).set({ hostProjectId: "prj_1" }).where(eq(site.id, SITE));
+    envs = [
+      ...["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"].map(live),
+      { id: "other", key: "NEXT_PUBLIC_THEME", target: ["production"] },
+    ];
+    await removeSiteBackend({ ...release(), provisioner }, ctx("owner"), owner, { siteId: SITE });
+    expect(calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
+      "/v9/projects/prj_1/env/env_SITE_DATABASE_URL",
+      "/v9/projects/prj_1/env/env_SITE_DATABASE_TOKEN",
+      "/v9/projects/prj_1/env/env_SITE_AUTH_SECRET",
+    ]);
+    expect(await siteBackendOf(db, owner, SITE)).toBeNull();
   });
 });

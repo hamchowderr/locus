@@ -5,10 +5,12 @@ import {
   requireAgencyManager,
   type SessionContext,
 } from "@locus/auth";
+import type { TenantProvisioner } from "@locus/db";
 import { auditLog, githubInstallation, site } from "@locus/db/control";
 import { and, eq, isNull, ne } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { GITHUB_API_VERSION, type GithubHttp } from "./github.ts";
+import { ensureSiteBackendEnv } from "./site-backend.ts";
 import { audit, type SiteDeps, type SiteRow } from "./sites.ts";
 import { hostGrant, refused, type VercelResult, vercel } from "./vercel-api.ts";
 
@@ -68,6 +70,8 @@ const defaultTokenCache = new InstallationTokenCache();
 
 export interface PublishDeps extends SiteDeps {
   githubApp: GithubAppCredentials;
+  /** Reaches app-style sites' own databases (`site-backend.ts`). Plain websites don't need it. */
+  provisioner?: TenantProvisioner;
   /** GitHub's API (`fetch`, `apiBaseUrl`). `http` is Vercel's, as for sites. */
   github?: GithubHttp;
   /** Defaults to one cache per process. */
@@ -722,6 +726,9 @@ export async function ensureSiteDeployment(
     projectId,
     repoFullName: row.repoFullName,
   });
+
+  // An app-style site's project needs its database settings before its first build.
+  await ensureSiteBackendEnv(deps, client, { siteId: row.id });
 
   if (row.status === "pushed") {
     // A project made after the first commit has nothing to build until the next push. A refusal

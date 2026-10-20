@@ -1,5 +1,14 @@
 import type { ControlDb, TenantProvisioner } from "@locus/db";
-import { location, member, memberLocation, session, user } from "@locus/db/control";
+import {
+  location,
+  member,
+  memberLocation,
+  session,
+  site,
+  siteBuilderOff,
+  siteMemberAccess,
+  user,
+} from "@locus/db/control";
 import { and, eq, inArray } from "drizzle-orm";
 
 /**
@@ -23,7 +32,19 @@ export interface SessionContext {
   activeLocationId?: string | null | undefined;
 }
 
-export type LocationRow = typeof location.$inferSelect;
+export type LocationRow = typeof location.$inferSelect & {
+  /** Whether the agency has the site builder on for this client (the Clients page). */
+  siteBuilder: boolean;
+};
+
+/** A `location` row with whether its site builder is on, from a select of both tables. */
+const located = (r: {
+  location: typeof location.$inferSelect;
+  off: string | null;
+}): LocationRow => ({
+  ...r.location,
+  siteBuilder: r.off === null,
+});
 
 /** A client the session may work on. Only `authorizeClient` creates these. */
 export interface AuthorizedClient {
@@ -79,10 +100,12 @@ export async function authorizeClient(
   const { member: m, organizationId } = await membership(db, ctx);
 
   // Scoped to the session's agency, so another agency's client looks exactly like a missing one.
-  const [loc] = await db
-    .select()
+  const [row] = await db
+    .select({ location, off: siteBuilderOff.locationId })
     .from(location)
+    .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
     .where(and(eq(location.id, locationId), eq(location.organizationId, organizationId)));
+  const loc = row && located(row);
   if (!loc) throw new ClientAccessDenied("no such client in the session's agency");
   if (loc.status !== "active") throw new ClientAccessDenied(`client is ${loc.status}`);
 
@@ -107,14 +130,20 @@ export async function listAccessibleClients(
   const { member: m, organizationId } = await membership(db, ctx);
   const inAgency = and(eq(location.organizationId, organizationId), eq(location.status, "active"));
   if (unrestricted(m.role)) {
-    return db.select().from(location).where(inAgency);
+    const rows = await db
+      .select({ location, off: siteBuilderOff.locationId })
+      .from(location)
+      .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
+      .where(inAgency);
+    return rows.map(located);
   }
   const rows = await db
-    .select({ location })
+    .select({ location, off: siteBuilderOff.locationId })
     .from(memberLocation)
     .innerJoin(location, eq(memberLocation.locationId, location.id))
+    .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
     .where(and(eq(memberLocation.memberId, m.id), inAgency));
-  return rows.map((r) => r.location);
+  return rows.map(located);
 }
 
 /**
@@ -251,4 +280,177 @@ export async function setMemberClients(
     clear,
     db.insert(memberLocation).values(wanted.map((locationId) => ({ memberId, locationId }))),
   ]);
+}
+
+export type SiteAccessLevel = "view" | "manage";
+
+/**
+ * What the member behind `client` may do with one of its sites: owners and admins always
+ * manage; anyone else manages unless an owner or admin made them view-only on that site
+ * (`setSiteAccess`). View-only members see the site on the Sites page but can't build, copy,
+ * file or publish it. Doesn't check that the site is the client's; callers do.
+ */
+export async function siteAccessLevel(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<SiteAccessLevel> {
+  assertAuthorizedClient(client);
+  const [row] = await db
+    .select({ role: member.role, level: siteMemberAccess.level })
+    .from(member)
+    .leftJoin(
+      siteMemberAccess,
+      and(eq(siteMemberAccess.memberId, member.id), eq(siteMemberAccess.siteId, siteId)),
+    )
+    .where(eq(member.id, client.memberId));
+  if (!row) throw new ClientAccessDenied("no longer a member of the agency");
+  if (unrestricted(row.role)) return "manage";
+  return row.level ?? "manage";
+}
+
+/** The sites of `client` the member behind it may only view. */
+export async function viewOnlySites(db: ControlDb, client: AuthorizedClient): Promise<Set<string>> {
+  assertAuthorizedClient(client);
+  const rows = await db
+    .select({ siteId: siteMemberAccess.siteId, role: member.role })
+    .from(siteMemberAccess)
+    .innerJoin(site, eq(site.id, siteMemberAccess.siteId))
+    .innerJoin(member, eq(member.id, siteMemberAccess.memberId))
+    .where(
+      and(
+        eq(siteMemberAccess.memberId, client.memberId),
+        eq(siteMemberAccess.level, "view"),
+        eq(site.locationId, client.location.id),
+      ),
+    );
+  return new Set(rows.filter((r) => !unrestricted(r.role)).map((r) => r.siteId));
+}
+
+/** A member who may work on a client without reaching every client, and their access to a site. */
+export interface SiteMember {
+  memberId: string;
+  name: string;
+  email: string;
+  level: SiteAccessLevel;
+}
+
+/**
+ * The members whose access to one of `client`'s sites can be set: those restricted to a list of
+ * clients that includes this one. Owners and admins only.
+ */
+export async function listSiteMembers(
+  db: ControlDb,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<SiteMember[]> {
+  assertAuthorizedClient(client);
+  await requireAgencyManager(db, ctx);
+  const rows = await db
+    .select({
+      memberId: member.id,
+      name: user.name,
+      email: user.email,
+      role: member.role,
+      level: siteMemberAccess.level,
+    })
+    .from(memberLocation)
+    .innerJoin(member, eq(member.id, memberLocation.memberId))
+    .innerJoin(user, eq(user.id, member.userId))
+    .leftJoin(
+      siteMemberAccess,
+      and(eq(siteMemberAccess.memberId, member.id), eq(siteMemberAccess.siteId, siteId)),
+    )
+    .where(
+      and(
+        eq(memberLocation.locationId, client.location.id),
+        eq(member.organizationId, client.location.organizationId),
+      ),
+    );
+  return rows
+    .filter((r) => !unrestricted(r.role))
+    .map(({ memberId, name, email, level }) => ({
+      memberId,
+      name,
+      email,
+      level: level ?? "manage",
+    }));
+}
+
+/**
+ * Sets which members may only view one of `client`'s sites; every other member who works on the
+ * client manages it. Owners and admins only; the site must be the client's and each member one
+ * of `listSiteMembers`, or nothing changes.
+ */
+export async function setSiteAccess(
+  db: ControlDb,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+  viewOnlyMemberIds: string[],
+): Promise<void> {
+  assertAuthorizedClient(client);
+  const members = await listSiteMembers(db, ctx, client, siteId);
+  const [row] = await db
+    .select({ id: site.id })
+    .from(site)
+    .where(and(eq(site.id, siteId), eq(site.locationId, client.location.id)));
+  if (!row) throw new ClientAccessDenied("site is not this client's");
+  const known = new Set(members.map((m) => m.memberId));
+  const wanted = [...new Set(viewOnlyMemberIds)];
+  if (wanted.some((id) => !known.has(id))) {
+    throw new ClientAccessDenied("member doesn't work on this client");
+  }
+  // Only the members listed here: a member who was promoted to admin or taken off this client
+  // meanwhile keeps their setting for when that changes back.
+  const clear = known.size
+    ? db
+        .delete(siteMemberAccess)
+        .where(
+          and(eq(siteMemberAccess.siteId, siteId), inArray(siteMemberAccess.memberId, [...known])),
+        )
+    : null;
+  if (!clear) return;
+  if (wanted.length === 0) {
+    await clear;
+    return;
+  }
+  await db.batch([
+    clear,
+    db
+      .insert(siteMemberAccess)
+      .values(wanted.map((memberId) => ({ siteId, memberId, level: "view" as const }))),
+  ]);
+}
+
+/**
+ * Turns the site builder on or off for several of the agency's clients at once. Owners and
+ * admins only; every client must be the agency's, or nothing changes. Returns how many changed.
+ */
+export async function setSiteBuilder(
+  db: ControlDb,
+  ctx: SessionContext,
+  locationIds: string[],
+  on: boolean,
+): Promise<number> {
+  const { organizationId } = await requireAgencyManager(db, ctx);
+  const wanted = [...new Set(locationIds)];
+  if (wanted.length === 0) return 0;
+  const found = await db
+    .select({ id: location.id, off: siteBuilderOff.locationId })
+    .from(location)
+    .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
+    .where(and(eq(location.organizationId, organizationId), inArray(location.id, wanted)));
+  if (found.length !== wanted.length) {
+    throw new ClientAccessDenied("no such client in the session's agency");
+  }
+  const changing = found.filter((l) => (l.off === null) !== on).map((l) => l.id);
+  if (changing.length === 0) return 0;
+  if (on) {
+    await db.delete(siteBuilderOff).where(inArray(siteBuilderOff.locationId, changing));
+  } else {
+    await db.insert(siteBuilderOff).values(changing.map((locationId) => ({ locationId })));
+  }
+  return changing.length;
 }
