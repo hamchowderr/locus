@@ -4,10 +4,12 @@ import {
   LOGIN_SECRET_TABLES,
   type SiteBackendOverview,
   type SiteMediaFile,
+  type SiteRestoreState,
   siteBackendOf,
   siteBackendOverview,
   siteFilesFolderName,
   siteFilesOverview,
+  siteRestoreState,
 } from "@locus/connect";
 import { provisionerFromEnv } from "@locus/db";
 import Link from "next/link";
@@ -17,8 +19,27 @@ import { configured, connectDeps } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
+import { restoreDatabase, undoDatabaseRestore } from "./actions";
 
 const PAGE_SIZE = 50;
+
+/** Moments a restore can go back to: recent ones, then every hour back to the earliest. */
+function restorePoints(earliest: Date, now: number): { value: number; label: string }[] {
+  // A little slack at the far end, so a point is still there when the form is sent.
+  const first = earliest.getTime() + 10 * 60_000;
+  const back = [15, 30, ...Array.from({ length: 30 * 24 }, (_, i) => (i + 1) * 60)];
+  const points = [];
+  for (const minutes of back) {
+    const value = now - minutes * 60_000;
+    if (value < first) break;
+    const ago =
+      minutes < 60
+        ? `${minutes} minutes ago`
+        : `${minutes / 60} ${minutes === 60 ? "hour" : "hours"} ago`;
+    points.push({ value, label: `${ago} · ${when.format(new Date(value))} UTC` });
+  }
+  return points;
+}
 
 const when = new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium",
@@ -41,13 +62,19 @@ export default async function SiteDatabase({
   searchParams,
 }: {
   params: Promise<{ siteId: string }>;
-  searchParams: Promise<{ table?: string; page?: string }>;
+  searchParams: Promise<{
+    table?: string;
+    page?: string;
+    error?: string;
+    restored?: string;
+    undone?: string;
+  }>;
 }) {
   const { siteId } = await params;
   const current = await currentSession();
   if (!current) redirect(`/sign-in?next=${encodeURIComponent(`/sites/${siteId}/database`)}`);
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { table, page } = await searchParams;
+  const { table, page, error: actionError, restored, undone } = await searchParams;
   const client = await resolveActiveClient(locus().db, sessionContext(current)).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
     throw e;
@@ -108,6 +135,10 @@ export default async function SiteDatabase({
       }
     }
   }
+  let restore: SiteRestoreState | null = null;
+  if (backend) restore = await siteRestoreState({ db: locus().db }, client, siteId);
+  const now = Date.now();
+  const points = restore ? restorePoints(restore.earliest, now) : [];
   const rows = overview?.rows ?? null;
   const shown = table && overview?.tables.some((t) => t.name === table) ? table : null;
   const pages = rows ? Math.max(Math.ceil(rows.total / PAGE_SIZE), 1) : 1;
@@ -139,6 +170,15 @@ export default async function SiteDatabase({
         </p>
       )}
       {problem && <Notice tone="error">{problem}</Notice>}
+      {actionError && <Notice tone="error">{actionError}</Notice>}
+      {(restored || undone) && (
+        <Notice tone="info">
+          {restored ? "The database was restored." : "The restore was undone."}{" "}
+          {(restored ?? undone) === "live"
+            ? "The live site switches over once its new deployment is ready, in a minute or two."
+            : "The site uses it from its next publish."}
+        </Notice>
+      )}
       {overview && (
         <>
           <section className="space-y-2">
@@ -282,6 +322,67 @@ export default async function SiteDatabase({
             </section>
           )}
         </>
+      )}
+      {restore && (
+        <section className="space-y-2">
+          <h2 className="font-semibold">Backups</h2>
+          <p className="text-xs text-neutral-500">
+            The database's history is kept for the last 24 hours, so it can go back to how it was at
+            any of these times. Anything added after that time leaves the live site; the database it
+            has now is kept so you can undo the restore.
+          </p>
+          {points.length === 0 ? (
+            <p className="text-sm text-neutral-600">
+              There's nothing to go back to yet: the database was only just made.
+            </p>
+          ) : (
+            <form action={restoreDatabase} className="space-y-2 text-sm">
+              <input type="hidden" name="siteId" value={siteId} />
+              <label className="block">
+                <span className="mr-2">Restore to</span>
+                <select name="to" className="rounded-md border border-neutral-300 px-2 py-1">
+                  {points.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" name="confirm" value="yes" required />
+                <span>I understand sign-ups and changes after that time leave the live site.</span>
+              </label>
+              <button
+                type="submit"
+                className="rounded-md border border-neutral-300 px-3 py-1 font-medium"
+              >
+                Restore
+              </button>
+            </form>
+          )}
+          {restore.undo && (
+            <form action={undoDatabaseRestore} className="space-y-1 text-sm">
+              <input type="hidden" name="siteId" value={siteId} />
+              <p className="text-neutral-600">
+                Restored to {when.format(restore.undo.restoredTo)} UTC on{" "}
+                {when.format(restore.undo.restoredAt)} UTC. Undoing it brings back the database from
+                before, and drops anything added since the restore.
+              </p>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" name="confirm" value="yes" required />
+                <span>
+                  I understand sign-ups and changes since the restore leave the live site.
+                </span>
+              </label>
+              <button
+                type="submit"
+                className="rounded-md border border-neutral-300 px-3 py-1 font-medium"
+              >
+                Undo the restore
+              </button>
+            </form>
+          )}
+        </section>
       )}
     </Page>
   );
