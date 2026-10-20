@@ -1,5 +1,10 @@
 import type { AuthorizedClient } from "@locus/auth";
-import { applyVisualEdits, type VisualEdit, type VisualEditFailure } from "@locus/studio";
+import {
+  applyVisualEdits,
+  type VisualEdit,
+  type VisualEditFailure,
+  WorkspaceError,
+} from "@locus/studio";
 import { CLIENT_KEY, createSiteBuilder, SITE_ID_KEY, type SiteBuilderDeps } from "./host.ts";
 import { syncRuntime } from "./sync.ts";
 import { PublishError } from "./tools.ts";
@@ -39,9 +44,20 @@ export async function saveVisualEdits(
   );
   try {
     const { workspace } = session;
-    const result = applyVisualEdits(await workspace.snapshot(), edits);
+    const snapshot = await workspace.snapshot();
+    const result = applyVisualEdits(snapshot, edits);
     if (result.files.length === 0) {
       return { version: null, applied: 0, failed: result.failed };
+    }
+    // The site builder may have changed one of these files since the snapshot: never write
+    // over its change with an edit worked out from the older file.
+    for (const file of result.files) {
+      const before = snapshot.find((f) => f.path === file.path)?.content;
+      if ((await workspace.readFile(file.path)) !== before) {
+        throw new WorkspaceError(
+          "The site builder changed this page just now. Reload the preview and make the change again.",
+        );
+      }
     }
     await workspace.writeFiles(result.files);
     const version = await workspace.saveVersion({
@@ -66,7 +82,11 @@ export async function saveVisualEdits(
     // The person is looking at the preview: show them the saved page. The save stands even
     // if the sandbox can't be reached; the next preview start syncs it.
     await Promise.resolve()
-      .then(async () => syncRuntime(await session.runtime(), await workspace.snapshot()))
+      .then(async () =>
+        syncRuntime(await session.runtime(), await workspace.snapshot(), {
+          editorOrigins: session.editorOrigins ?? [],
+        }),
+      )
       .catch((error) => {
         console.error(`Syncing the preview after visual edits failed: ${String(error)}`);
       });

@@ -43,16 +43,19 @@ export {
   applyVisualEdits,
   isAnnotatable,
   SOURCE_ATTR,
+  safeUrl,
+  stripSourceAttrs,
   VisualEdit,
   type VisualEditFailure,
   type VisualEditResult,
   VisualEdits,
 } from "./visual-edits.ts";
 export {
+  editorOrigin,
   previewFiles,
   VISUAL_EDITS_MESSAGE,
-  VISUAL_EDITS_SCRIPT,
   VISUAL_EDITS_SCRIPT_PATH,
+  visualEditsScript,
 } from "./visual-edits-preview.ts";
 export {
   type FileChanges,

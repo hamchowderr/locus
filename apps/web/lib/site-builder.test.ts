@@ -1296,7 +1296,10 @@ describe("visual edits", () => {
     const preview = runtime.files.get("app/services/page.tsx") as string;
     expect(preview).toContain(SOURCE_ATTR);
     expect(preview).toContain("What we do");
-    expect(runtime.files.has("public/__locus/visual-edits.js")).toBe(true);
+    // The script only answers the Locus web app itself.
+    expect(runtime.files.get("public/__locus/visual-edits.js")).toContain(
+      'var ORIGINS = ["https://locus.test"]',
+    );
     // The draft never carries the preview's annotations.
     expect(await ws.readFile("app/services/page.tsx")).not.toContain(SOURCE_ATTR);
   });

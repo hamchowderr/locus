@@ -73,8 +73,12 @@ export async function sandboxHashes(
  * `data-locus-src` locations and the layout loads the visual-edits script, so a person can click
  * things in the preview to change them. The draft and its versions never have either.
  */
-export async function syncRuntime(runtime: SiteRuntime, draft: SiteFile[]): Promise<SyncReport> {
-  const files = previewFiles(draft);
+export async function syncRuntime(
+  runtime: SiteRuntime,
+  draft: SiteFile[],
+  options: { editorOrigins?: string[] } = {},
+): Promise<SyncReport> {
+  const files = previewFiles(draft, options);
   const present = await sandboxHashes(runtime);
   const wanted = new Set(files.map((f) => f.path));
   const toWrite = files.filter((f) => present.get(f.path) !== hashOf(f.content));

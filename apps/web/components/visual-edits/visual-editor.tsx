@@ -46,6 +46,12 @@ export function VisualEditor({
 }) {
   const edits = useVisualEdits({ siteId, frame, previewUrl, onSaved });
   const [saved, setSaved] = useState<SaveResult | null>(null);
+  // Once something has been selected the chat box stays, so its answer and conversation
+  // survive the selection being cleared (Escape, a reload after the builder's change).
+  const [asking, setAsking] = useState(false);
+  useEffect(() => {
+    if (edits.selection.length > 0) setAsking(true);
+  }, [edits.selection.length]);
   const count = edits.pending.length;
 
   return (
@@ -88,7 +94,7 @@ export function VisualEditor({
         </p>
       )}
 
-      {editable && edits.enabled && edits.selection.length > 0 && (
+      {editable && edits.ready && asking && (
         <>
           <Separator />
           <AskBuilder
@@ -199,10 +205,9 @@ function ItemControls({
       {item.text !== null && (
         <Labeled label="Text">
           <textarea
-            key={item.target}
             className={field}
             rows={3}
-            defaultValue={item.text}
+            value={item.text}
             onChange={(e) =>
               onChange({
                 kind: "text",
@@ -451,7 +456,7 @@ function AskBuilder({
       onSubmit={async (e) => {
         e.preventDefault();
         const text = request.trim();
-        if (!text || busy || unsaved) return;
+        if (!text || busy || unsaved || selection.length === 0) return;
         setProblem(null);
         const chosen = await chooseSiteForChat(siteId);
         if ("problem" in chosen) {
@@ -475,7 +480,7 @@ function AskBuilder({
           placeholder={
             selection.length === 1
               ? "e.g. Make this stand out more"
-              : "e.g. Make these buttons match"
+              : "e.g. Make these match each other"
           }
           onChange={(e) => setRequest(e.target.value)}
         />
@@ -485,13 +490,17 @@ function AskBuilder({
           type="submit"
           size="sm"
           variant="outline"
-          disabled={busy || unsaved || !request.trim()}
+          disabled={busy || unsaved || selection.length === 0 || !request.trim()}
         >
           <Sparkles data-icon="inline-start" />
           {busy ? "Working" : "Ask"}
         </Button>
         <span className="text-xs text-neutral-500">
-          {unsaved ? "Save or discard your changes first" : "Uses AI credits"}
+          {unsaved
+            ? "Save or discard your changes first"
+            : selection.length === 0
+              ? "Select items to ask about"
+              : "Uses AI credits"}
         </span>
       </div>
       {problem && <p className="text-red-700">{problem}</p>}

@@ -38,8 +38,43 @@ export interface SaveResult {
   publishError?: string;
 }
 
+/**
+ * One pending change per element and attribute. Text is per copy as well: an element in a list
+ * renders once per item, each with its own text (and its own place in the data), so two copies'
+ * text changes stay two changes, told apart by the text each copy started with.
+ */
 const keyOf = (edit: PendingEdit) =>
-  `${edit.target}|${edit.kind}|${edit.kind === "attr" ? edit.name : ""}`;
+  edit.kind === "text"
+    ? `${edit.target}|text|${edit.from}`
+    : `${edit.target}|${edit.kind}|${edit.kind === "attr" ? edit.name : ""}`;
+
+const MAX_TEXT = 10_000;
+const str = (v: unknown, max = MAX_TEXT): string | null =>
+  typeof v === "string" ? v.slice(0, max) : null;
+
+/** A selected item as the page reported it, with every field checked: the page is untrusted. */
+function readItem(raw: unknown): SelectedItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const target = str(r.target, 600);
+  if (!target || !/^[^:"]+:\d+$/.test(target)) return null;
+  return {
+    target,
+    tag: (str(r.tag, 40) ?? "div").toLowerCase().replace(/[^a-z0-9-]/g, ""),
+    text: str(r.text),
+    className: str(r.className, 4_000) ?? "",
+    src: str(r.src, 4_000),
+    alt: str(r.alt, 4_000),
+    href: str(r.href, 4_000),
+    newTab: typeof r.newTab === "boolean" ? r.newTab : null,
+    placeholder: str(r.placeholder, 4_000),
+    inLink: r.inLink === true,
+  };
+}
+
+/** Only plain colour values from the page's theme reach a style. */
+const COLOR =
+  /^(#[0-9a-f]{3,8}|(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch|hwb)\([0-9a-z.,%\s/+-]*\))$/i;
 
 /** Whether an edit would change nothing (it was set back to what it was). */
 const unchanged = (edit: PendingEdit) =>
@@ -88,9 +123,16 @@ export function useVisualEdits({
   const record = useCallback((edit: PendingEdit) => {
     setPending((current) => {
       const next = new Map(current);
-      const key = keyOf(edit);
+      // A second change to text already changed continues that change: keep what the
+      // element had first, so the save can check it hasn't changed since.
+      const chained =
+        edit.kind === "text"
+          ? [...next.entries()].find(
+              ([, e]) => e.kind === "text" && e.target === edit.target && e.to === edit.from,
+            )
+          : undefined;
+      const key = chained ? chained[0] : keyOf(edit);
       const earlier = next.get(key);
-      // Keep what the element had first, so the save can check it hasn't changed since.
       const merged = earlier ? ({ ...edit, from: earlier.from } as PendingEdit) : edit;
       if (unchanged(merged)) next.delete(key);
       else next.set(key, merged);
@@ -121,7 +163,7 @@ export function useVisualEdits({
           setTheme(
             Object.fromEntries(
               Object.entries(data.theme as Record<string, unknown>).filter(
-                (e): e is [string, string] => typeof e[1] === "string",
+                (e): e is [string, string] => typeof e[1] === "string" && COLOR.test(e[1].trim()),
               ),
             ),
           );
@@ -130,11 +172,16 @@ export function useVisualEdits({
         // Changes not saved yet are shown again on the reloaded page.
         for (const edit of pendingRef.current.values()) send({ type: "show", change: shown(edit) });
       } else if (data.type === "selection" && Array.isArray(data.items)) {
-        setSelection(data.items as SelectedItem[]);
+        setSelection(
+          (data.items as unknown[])
+            .slice(0, 50)
+            .map(readItem)
+            .filter((i): i is SelectedItem => i !== null),
+        );
       } else if (data.type === "text" && typeof data.target === "string") {
-        const from = String(data.from ?? "");
-        const to = String(data.to ?? "");
-        record({ kind: "text", target: data.target, from, to });
+        const from = str(data.from);
+        const to = str(data.to);
+        if (from !== null && to !== null) record({ kind: "text", target: data.target, from, to });
       }
     };
     window.addEventListener("message", onMessage);
@@ -182,7 +229,8 @@ export function useVisualEdits({
 
   /** Saves every unsaved change as a new version; null when it couldn't. */
   const save = useCallback(async (): Promise<SaveResult | null> => {
-    const edits = [...pendingRef.current.values()].map(toRequest);
+    const sent = [...pendingRef.current.entries()];
+    const edits = sent.map(([, edit]) => toRequest(edit));
     if (edits.length === 0) return null;
     setSaving(true);
     setProblem(null);
@@ -200,8 +248,10 @@ export function useVisualEdits({
         return null;
       }
       setFailures(body.failed.map((f) => f.reason));
-      setPending(new Map());
-      setSelection([]);
+      // What wasn't saved stays pending (still shown in the page), to fix or discard.
+      const failed = new Set(body.failed.map((f) => f.index));
+      setPending(new Map(sent.filter((_, i) => failed.has(i))));
+      send({ type: "clear" });
       onSaved?.(body);
       return body;
     } catch {
@@ -210,7 +260,7 @@ export function useVisualEdits({
     } finally {
       setSaving(false);
     }
-  }, [siteId, onSaved]);
+  }, [siteId, onSaved, send]);
 
   return {
     ready,
@@ -235,7 +285,9 @@ export function useVisualEdits({
 
 /** How the page shows an unsaved change. */
 function shown(edit: PendingEdit) {
-  if (edit.kind === "text") return { kind: "text", target: edit.target, value: edit.to };
+  if (edit.kind === "text") {
+    return { kind: "text", target: edit.target, from: edit.from, value: edit.to };
+  }
   if (edit.kind === "newTab") {
     return { kind: "attr", target: edit.target, name: "newTab", value: edit.on };
   }
@@ -250,6 +302,5 @@ function applied(item: SelectedItem, edit: PendingEdit): SelectedItem {
 
 /** The request body's form of an edit (see `VisualEdit` in `@locus/studio`). */
 function toRequest(edit: PendingEdit) {
-  if (edit.kind === "newTab") return { kind: "newTab", target: edit.target, on: edit.on };
   return edit;
 }

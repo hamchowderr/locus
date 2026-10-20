@@ -72,10 +72,14 @@ function elementName(name: Node): string {
   return "";
 }
 
-function hasAttribute(attributes: Node[], attr: string): boolean {
-  return attributes.some(
-    (a) => a.type === "JSXAttribute" && a.name.type === "JSXIdentifier" && a.name.name === attr,
-  );
+/**
+ * `code` without any `data-locus-src` attribute: what a file copied from the preview should
+ * have been. Used where the site builder writes files, so the draft never keeps one.
+ */
+export function stripSourceAttrs(code: string): string {
+  return code.includes(SOURCE_ATTR)
+    ? code.replace(new RegExp(`\\s${SOURCE_ATTR}="[^"]*"`, "g"), "")
+    : code;
 }
 
 /**
@@ -90,17 +94,30 @@ export function annotateSource(path: string, code: string): string {
   } catch {
     return code;
   }
-  const inserts: { at: number; text: string }[] = [];
+  const splices: Splice[] = [];
   for (const [node] of walk(ast.program)) {
     if (node.type !== "JSXOpeningElement") continue;
     if (SKIPPED_ELEMENTS.has(elementName(node.name))) continue;
-    if (hasAttribute(node.attributes, SOURCE_ATTR)) continue;
+    // One that leaked into the draft (copied from the preview) would point at a stale spot.
+    for (const a of node.attributes as AnyNode[]) {
+      if (
+        a.type === "JSXAttribute" &&
+        a.name.type === "JSXIdentifier" &&
+        a.name.name === SOURCE_ATTR
+      ) {
+        splices.push({ start: precedingSpace(code, a.start), end: a.end, text: "" });
+      }
+    }
     const after = (node.typeArguments ?? node.name) as AnyNode;
-    inserts.push({ at: after.end, text: ` ${SOURCE_ATTR}="${path}:${node.start}"` });
+    splices.push({
+      start: after.end,
+      end: after.end,
+      text: ` ${SOURCE_ATTR}="${path}:${node.start}"`,
+    });
   }
   let out = code;
-  for (const { at, text } of inserts.sort((a, b) => b.at - a.at)) {
-    out = out.slice(0, at) + text + out.slice(at);
+  for (const { start, end, text } of splices.sort((a, b) => b.start - a.start)) {
+    out = out.slice(0, start) + text + out.slice(end);
   }
   return out;
 }
@@ -110,9 +127,22 @@ const Target = z
   .max(600)
   .regex(/^[^:"]+:\d+$/, "Not a preview location");
 
-const SAFE_URL = /^(https?:\/\/|mailto:|tel:|\/|#|\?|\.{0,2}\/?[\w-])/i;
-const UNSAFE_SCHEME = /^\s*(javascript|data|vbscript|file):/i;
-const safeUrl = (v: string) => v === "" || (SAFE_URL.test(v) && !UNSAFE_SCHEME.test(v));
+/**
+ * Whether a link or image address is one a site may use: web, email and phone links, and
+ * addresses on the site itself. Browsers drop tabs, newlines and control characters inside a
+ * scheme, so they are dropped before looking at it too.
+ */
+export function safeUrl(value: string): boolean {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: dropping them is the point
+  const v = value.replace(/[\u0000-\u0020]/g, "");
+  if (v === "") return true;
+  try {
+    const url = new URL(v, "https://site.invalid/");
+    return ["http:", "https:", "mailto:", "tel:"].includes(url.protocol);
+  } catch {
+    return false;
+  }
+}
 
 /** One change made in the preview. `from` is what the preview showed when it was made. */
 export const VisualEdit = z.discriminatedUnion("kind", [
@@ -126,12 +156,14 @@ export const VisualEdit = z.discriminatedUnion("kind", [
     kind: z.literal("attr"),
     target: Target,
     name: z.enum(["src", "alt", "href", "className", "placeholder"]),
+    /** Null when the element had no such attribute. */
     from: z.string().max(10_000).nullable(),
     to: z.string().max(10_000),
   }),
   z.object({
     kind: z.literal("newTab"),
     target: Target,
+    from: z.boolean(),
     on: z.boolean(),
   }),
 ]);
@@ -308,8 +340,14 @@ function planEdit(edit: VisualEdit, textOf: Lookup, snapshot: SiteFile[]): [stri
     .end;
 
   if (edit.kind === "newTab") {
+    if (!["a", "Link"].includes(elementName(element.openingElement.name))) {
+      throw new EditRefused(STALE);
+    }
     const target = named("target");
     const rel = named("rel");
+    const isNewTab = target ? literalValue(attrNode(target.value)) === "_blank" : false;
+    if (isNewTab !== edit.from) throw new EditRefused(STALE);
+    if (edit.on === edit.from) return [];
     if (edit.on) {
       if (!target && !rel) {
         return one({
@@ -334,32 +372,69 @@ function planEdit(edit: VisualEdit, textOf: Lookup, snapshot: SiteFile[]): [stri
     return out;
   }
 
-  if ((edit.name === "href" || edit.name === "src") && !safeUrl(edit.to.trim())) {
+  if ((edit.name === "href" || edit.name === "src") && !safeUrl(edit.to)) {
     throw new EditRefused("That link isn't one a site can use.");
   }
   const attr = named(edit.name);
+  if (edit.name === "className") return [classChange(path, edit, attr, nameEnd)];
   if (!attr) {
-    if (edit.from) throw new EditRefused(STALE);
+    if (edit.from !== null) throw new EditRefused(STALE);
     return [[path, { start: nameEnd, end: nameEnd, text: ` ${edit.name}=${attrValue(edit.to)}` }]];
   }
   const value = attrNode(attr.value);
   const current = literalValue(value);
   if (current !== null && value) {
-    if (edit.from !== null && current !== edit.from) {
-      if (!(edit.name === "className" && norm(current) === norm(edit.from))) {
-        throw new EditRefused(STALE);
-      }
-    }
+    if (current !== edit.from) throw new EditRefused(STALE);
     // Replace the whole value (quotes or braces included).
     const node = attr.value as AnyNode;
     return [[path, { start: node.start, end: node.end, text: attrValue(edit.to) }]];
   }
-  if (edit.name === "className") {
-    throw new EditRefused(`This item's styles are worked out in code. ${ASK_CHAT}`);
-  }
   if (!edit.from) throw new EditRefused(ASK_CHAT);
   // The value comes from data (e.g. `src={hero.image}`): change the string that holds it.
   return [findLiteral(edit.from, edit.to, textOf, snapshot, false)];
+}
+
+const classes = (value: string) => value.split(/\s+/).filter(Boolean);
+
+/**
+ * A style change. The page shows an element's whole class list, which for a component like
+ * `<Button>` includes the component's own classes, so the change is made as a difference: the
+ * classes taken off must be ones the element's own `className` has, and the classes added go
+ * on the end of it. Nothing else in the source changes.
+ */
+function classChange(
+  path: string,
+  edit: Extract<VisualEdit, { kind: "attr" }>,
+  attr: (AnyNode & { value: Node | null }) | undefined,
+  nameEnd: number,
+): [string, Splice] {
+  const before = classes(edit.from ?? "");
+  const after = classes(edit.to);
+  const removed = before.filter((c) => !after.includes(c));
+  const added = after.filter((c) => !before.includes(c));
+  if (!attr) {
+    if (removed.length > 0) {
+      throw new EditRefused(`This style comes from the item's design. ${ASK_CHAT}`);
+    }
+    return [
+      path,
+      { start: nameEnd, end: nameEnd, text: ` className=${attrValue(added.join(" "))}` },
+    ];
+  }
+  const current = literalValue(attrNode(attr.value));
+  if (current === null || !attr.value) {
+    throw new EditRefused(`This item's styles are worked out in code. ${ASK_CHAT}`);
+  }
+  const own = classes(current);
+  if (removed.some((c) => !own.includes(c))) {
+    throw new EditRefused(`This style comes from the item's design. ${ASK_CHAT}`);
+  }
+  // In the page's order, so a swapped class takes the old one's place; own classes the page
+  // didn't show (merged away by the component) stay.
+  const next = after.filter((c) => own.includes(c) || added.includes(c));
+  for (const c of own) if (!next.includes(c) && !removed.includes(c)) next.push(c);
+  const node = attr.value as AnyNode;
+  return [path, { start: node.start, end: node.end, text: attrValue(next.join(" ")) }];
 }
 
 function attrNode(value: Node | null): Node | null {
@@ -384,7 +459,7 @@ function setAttr(
 
 function precedingSpace(code: string, start: number): number {
   let i = start;
-  while (i > 0 && /[ \t]/.test(code[i - 1] ?? "")) i--;
+  while (i > 0 && /\s/.test(code[i - 1] ?? "")) i--;
   return i;
 }
 
@@ -401,8 +476,9 @@ function elementAt(program: Node, offset: number): JSXElementNode | null {
 
 /**
  * The one string in the site's code whose value is `from`, as a splice that sets it to `to`.
- * `asText` compares the way the page shows text (spaces collapsed). Import paths, object keys,
- * attribute values and type names never count, nor do shadcn's own components.
+ * `asText` compares the way the page shows text (spaces collapsed). Import paths, object keys
+ * and type names never count. Every other string with that value counts, so a value used in
+ * two places is refused; one found only in shadcn's own components is refused too.
  */
 function findLiteral(
   from: string,
@@ -413,12 +489,9 @@ function findLiteral(
 ): [string, Splice] {
   const want = asText ? norm(from) : from;
   if (!want) throw new EditRefused(ASK_CHAT);
-  const matches: { path: string; node: AnyNode; jsx: boolean }[] = [];
+  const matches: { path: string; node: AnyNode; jsx: boolean; attr: boolean }[] = [];
   for (const file of snapshot) {
     if (!CODE_FILE.test(file.path) || typeof file.content !== "string") continue;
-    if (file.path.startsWith("components/ui/")) continue;
-    const probe = asText ? (want.split(" ")[0] ?? want) : want;
-    if (!file.content.includes(probe)) continue;
     const parsed = textOf(file.path);
     if (!parsed?.ast) continue;
     for (const [node, parent] of walk(parsed.ast.program)) {
@@ -426,14 +499,16 @@ function findLiteral(
       if (parent.type === "ImportDeclaration" || parent.type === "ExportNamedDeclaration") continue;
       if (parent.type === "ExportAllDeclaration" || parent.type === "TSLiteralType") continue;
       if (parent.type === "ObjectProperty" && parent.key === node) continue;
-      if (parent.type === "JSXAttribute") continue;
+      if (parent.type === "JSXAttribute" && parent.name === node) continue;
       if (node.type === "JSXText") {
-        if (asText && norm(node.value) === want) matches.push({ path: file.path, node, jsx: true });
+        if (asText && norm(node.value) === want) {
+          matches.push({ path: file.path, node, jsx: true, attr: false });
+        }
         continue;
       }
       const literal = literalValue(node);
       if (literal !== null && (asText ? norm(literal) : literal) === want) {
-        matches.push({ path: file.path, node, jsx: false });
+        matches.push({ path: file.path, node, jsx: false, attr: parent.type === "JSXAttribute" });
       }
     }
   }
@@ -444,6 +519,13 @@ function findLiteral(
     throw new EditRefused(`This is used in more than one place on the site. ${ASK_CHAT}`);
   }
   const [match] = matches as [(typeof matches)[number]];
+  if (match.path.startsWith("components/ui/")) {
+    throw new EditRefused(`This comes from the item's design. ${ASK_CHAT}`);
+  }
+  if (match.attr) {
+    // e.g. <Tag label="Contact" /> rendering {label}.
+    return [match.path, { start: match.node.start, end: match.node.end, text: attrValue(to) }];
+  }
   if (!match.jsx) {
     return [match.path, { start: match.node.start, end: match.node.end, text: JSON.stringify(to) }];
   }

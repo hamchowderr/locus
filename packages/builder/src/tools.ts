@@ -5,6 +5,7 @@ import {
   normalizeSitePath,
   openQuestions,
   readBrief,
+  stripSourceAttrs,
   WorkspaceError,
   writeBrief,
 } from "@locus/studio";
@@ -123,7 +124,9 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
   /** Brings the sandbox up to date with the draft, then hands it over. */
   const ready = async (session: BuilderSession): Promise<SiteRuntime> => {
     const runtime = await session.runtime();
-    await syncRuntime(runtime, await session.workspace.snapshot());
+    await syncRuntime(runtime, await session.workspace.snapshot(), {
+      editorOrigins: session.editorOrigins ?? [],
+    });
     return runtime;
   };
 
@@ -414,7 +417,11 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           case "write": {
             const path = need(input.path, "write needs a path");
-            await ws.writeFile(path, need(input.content, "write needs the file's content"));
+            // The preview's location attributes never belong in the site's own files.
+            await ws.writeFile(
+              path,
+              stripSourceAttrs(need(input.content, "write needs the file's content")),
+            );
             return { written: normalizeSitePath(path) };
           }
           case "edit": {
@@ -423,7 +430,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
               replacements: await ws.editFile(
                 path,
                 need(input.find, "edit needs the text to find"),
-                need(input.replace, "edit needs the replacement text"),
+                stripSourceAttrs(need(input.replace, "edit needs the replacement text")),
                 { all: input.all ?? false },
               ),
             };
