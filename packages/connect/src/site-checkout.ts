@@ -1,6 +1,8 @@
 import { consumeAttempt } from "@locus/auth";
+import { siteCheckoutItems } from "@locus/db/control";
 import { GhlError, ghlRequest } from "@locus/ghl";
 import { operationById } from "@locus/skills";
+import { eq } from "drizzle-orm";
 import {
   consumeSiteLimits,
   countWithDeadline,
@@ -22,8 +24,13 @@ import {
 //   /api/sites/<siteId>/checkout
 //
 // The visitor names a product and one of its prices (the ids the builder wrote into the site's
-// `<BuyButton>`) and says who they are. As with forms and booking, the client is read from the
-// site's registry row, never from the request, and no token reaches the site. Everything about
+// `<BuyButton>`) and says who they are. Only a pair the site's published code sells
+// (`site_checkout_items`, read from its `<BuyButton>`s at publish) is accepted, checked before
+// GHL is called at all; a site published before Locus read them sells nothing until it is
+// published again, as booking treats a site with no calendars. So another of the client's
+// products, or a price of one product sent with another, gets nothing. As with forms and
+// booking, the client is read from the site's registry row, never from the request, and no token
+// reaches the site. Everything about
 // the sale comes from GHL, never from the request: the product and price are read with the
 // client's own session and checked against that sub-account (the product is this client's, the
 // price is that product's), and the amount and currency on the invoice are the price's. A
@@ -183,6 +190,26 @@ interface Sale {
   amount: number;
   currency: string;
   qty: number;
+}
+
+/**
+ * Whether the site's published code sells this product at this price: one of the pairs read
+ * from its `<BuyButton>`s at publish. A site with no list (published before Locus read them)
+ * sells nothing.
+ */
+async function sells(
+  db: SiteCheckoutDeps["db"],
+  siteId: string,
+  productId: string,
+  priceId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ items: siteCheckoutItems.items })
+    .from(siteCheckoutItems)
+    .where(eq(siteCheckoutItems.siteId, siteId));
+  return (row?.items ?? []).some(
+    (item) => item.productId === productId && item.priceId === priceId,
+  );
 }
 
 /** GHL's "no such product or price" (it answers 400 "Product not found"); anything else throws. */
@@ -440,6 +467,9 @@ export async function startSiteCheckout(
       retryAfterSeconds: limited,
     };
   }
+  // Only what the site sells: refused before any token is minted or GHL is asked, and before the
+  // recipient's daily allowance is touched.
+  if (!(await sells(deps.db, row.site.id, productId, priceId))) return refuse(422, NOT_FOR_SALE);
   // Each checkout emails the address typed, so one address gets only a few a day. Kept as a
   // keyed hash, like a visitor's IP: the counter only needs to tell addresses apart.
   const recipient = hashVisitorIp(deps.ipHashKey, email.trim().toLowerCase());
