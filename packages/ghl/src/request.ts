@@ -62,9 +62,6 @@ export async function ghlRequest<T = unknown>(
       `${operation.id} needs a ${operation.tokens.join(" or ")} token, got a ${session.tokenKind} token`,
     );
   }
-  if (operation.body === "multipart") {
-    throw new GhlUsageError(`${operation.id}: multipart request bodies are not supported yet`);
-  }
   rejectCallerSessionParams(operation, input);
 
   const pathParams = { ...input.path };
@@ -94,8 +91,24 @@ export async function ghlRequest<T = unknown>(
     Accept: "application/json",
   };
   if (needsAuth) headers.Authorization = `Bearer ${session.token}`;
-  let encoded: string | undefined;
-  if (body && operation.body === "form") {
+  let encoded: string | FormData | undefined;
+  if (body && operation.body === "multipart") {
+    // Files (Blobs) and flat fields. fetch sets the multipart Content-Type with its boundary.
+    const form = new FormData();
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined) continue;
+      if (value instanceof Blob) {
+        form.set(key, value, value instanceof File ? value.name : key);
+      } else if (typeof value === "object" && value !== null) {
+        throw new GhlUsageError(
+          `${operation.id}: multipart field "${key}" must be a file or a plain value`,
+        );
+      } else {
+        form.set(key, String(value));
+      }
+    }
+    encoded = form;
+  } else if (body && operation.body === "form") {
     // OAuth endpoints take application/x-www-form-urlencoded: flat string fields only.
     const form = new URLSearchParams();
     for (const [key, value] of Object.entries(body)) {
