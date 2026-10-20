@@ -8,10 +8,12 @@ import {
   location,
   organization,
   site,
+  siteCheckoutItems,
 } from "@locus/db/control";
 import { createRateLimiter } from "@locus/ghl";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, type FakeGhl, type FakeRoutes } from "@locus/testing";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
 import type { GhlAppConfig } from "./ghl-oauth.ts";
@@ -156,6 +158,14 @@ beforeEach(async () => {
     { id: "site-live", locationId: "sunrise", status: "deployed", repoFullName: "a/live" },
     { id: "site-draft", locationId: "sunrise", status: "draft" },
   ]);
+  // What the live site's published code sells, as publish records it from its `<BuyButton>`s.
+  await db.insert(siteCheckoutItems).values({
+    siteId: "site-live",
+    items: [
+      { productId: "prod1", priceId: "price1" },
+      { productId: "prod2", priceId: "price2" },
+    ],
+  });
   await secrets.set(
     ghlSecretRef("agency-a"),
     JSON.stringify({
@@ -311,6 +321,60 @@ describe("checkout on a published site", () => {
       expect(paths()).not.toContain("POST /contacts/upsert");
       expect(paths()).not.toContain("POST /invoices/text2pay");
     }
+  });
+
+  it("sells only the product and price pairs the site's published code sells", async () => {
+    const before = await checkout(deps(), another(), "site-live", nextIp());
+    expect(before.status).toBe(200);
+    // Another of the client's products, a price of a sold product it isn't sold at, and a price
+    // swapped between two products the site sells: refused before GHL is asked anything.
+    for (const pair of [
+      { productId: "prod3", priceId: "price3" },
+      { productId: "prod1", priceId: "price9" },
+      { productId: "prod1", priceId: "price2" },
+      { productId: "prod2", priceId: "price1" },
+    ]) {
+      const routes: FakeRoutes = {
+        ...okRoutes,
+        [`GET /products/${pair.productId}`]: {
+          body: { _id: pair.productId, locationId: GHL_LOCATION, name: "Other" },
+        },
+        [`GET /products/${pair.productId}/price/${pair.priceId}`]: price({
+          _id: pair.priceId,
+          product: pair.productId,
+        }),
+      };
+      const result = await checkout(deps(routes), { ...another(), ...pair }, "site-live", nextIp());
+      expect(result).toEqual({ status: 422, body: { error: "That isn't for sale here." } });
+      expect(fake.requests).toEqual([]);
+    }
+    // The site's other pair goes through, at that product's own price.
+    const second = await checkout(
+      deps({
+        ...okRoutes,
+        "GET /products/prod2": { body: { _id: "prod2", locationId: GHL_LOCATION, name: "Two" } },
+        "GET /products/prod2/price/price2": price({ _id: "price2", product: "prod2" }),
+      }),
+      { ...another(), productId: "prod2", priceId: "price2" },
+      "site-live",
+      nextIp(),
+    );
+    expect(second.status).toBe(200);
+    expect(invoiceRequest()?.body).toMatchObject({
+      items: [expect.objectContaining({ productId: "prod2", priceId: "price2" })],
+    });
+  });
+
+  it("sells nothing on a site published before its products were recorded, as booking does", async () => {
+    await db.delete(siteCheckoutItems).where(eq(siteCheckoutItems.siteId, "site-live"));
+    const result = await checkout(deps(), order);
+    expect(result).toEqual({ status: 422, body: { error: "That isn't for sale here." } });
+    expect(fake.requests).toEqual([]);
+    // Nor does one whose code sells nothing.
+    await db.insert(siteCheckoutItems).values({ siteId: "site-live", items: [] });
+    const empty = await checkout(deps(), another(), "site-live", nextIp());
+    expect(empty).toEqual({ status: 422, body: { error: "That isn't for sale here." } });
+    expect(fake.requests).toEqual([]);
   });
 
   it("refuses a subscription price, a free one, and more than is in stock", async () => {

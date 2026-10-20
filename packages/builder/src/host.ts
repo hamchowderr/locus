@@ -27,7 +27,15 @@ import {
   siteDomainStatus,
 } from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
-import { auditLog, member, session, site, siteBackend, siteFolder } from "@locus/db/control";
+import {
+  auditLog,
+  member,
+  session,
+  site,
+  siteBackend,
+  siteCheckoutItems,
+  siteFolder,
+} from "@locus/db/control";
 import {
   generationRun,
   siteBlob,
@@ -47,6 +55,7 @@ import {
 } from "@locus/sandbox";
 import {
   bookingCalendarIds,
+  checkoutItems,
   editorOrigin,
   type PageSeo,
   pageSeo,
@@ -376,6 +385,12 @@ export function publishHook(
       .update(site)
       .set({ bookingCalendars: bookingCalendarIds(files) })
       .where(eq(site.id, row.id));
+    // Likewise the products and prices it sells: a checkout of anything else is refused.
+    const items = checkoutItems(files);
+    await db
+      .insert(siteCheckoutItems)
+      .values({ siteId: row.id, items })
+      .onConflictDoUpdate({ target: siteCheckoutItems.siteId, set: { items } });
     try {
       const deps = publish();
       // An app-style site's database gets the version's changes first, and its project the
