@@ -200,6 +200,18 @@ export const siteBackendRestore = sqliteTable(
     /** The moment the site's data was restored to, and when. */
     restoredTo: integer("restored_to", { mode: "timestamp_ms" }),
     restoredAt: integer("restored_at", { mode: "timestamp_ms" }),
+    /** While a restore or undo runs: one at a time per site, and no publish meanwhile. */
+    busyUntil: integer("busy_until", { mode: "timestamp_ms" }),
+    /** The project's database settings may not name this site's database: the next publish rewrites them. */
+    envStale: integer("env_stale", { mode: "boolean" }).notNull().default(false),
+    /**
+     * Databases the site no longer uses, deleted once `deleteAfter` passes: the live deployment
+     * keeps using the old one until the new deployment is ready.
+     */
+    retired: text("retired", { mode: "json" })
+      .$type<{ dbName: string; deleteAfter: number }[]>()
+      .notNull()
+      .default(sql`'[]'`),
   },
   (t) => [index("site_backend_restore_location_idx").on(t.locationId)],
 );

@@ -191,7 +191,12 @@ export async function removeSiteBackend(
     .select()
     .from(siteBackendRestore)
     .where(eq(siteBackendRestore.siteId, row.siteId));
-  if (restore?.keptDbName) await deps.provisioner.destroy(restore.keptDbName);
+  if (restore?.busyUntil && restore.busyUntil.getTime() > Date.now()) {
+    throw new ConnectError(BUSY);
+  }
+  for (const name of [restore?.keptDbName, ...(restore?.retired ?? []).map((r) => r.dbName)]) {
+    if (name && name !== row.tursoDbName) await deps.provisioner.destroy(name);
+  }
   if (restore) {
     await deps.db.delete(siteBackendRestore).where(eq(siteBackendRestore.siteId, row.siteId));
   }
@@ -324,6 +329,7 @@ export interface SiteReleaseDeps extends VercelCallDeps {
 const MIGRATE_TTL = "10m";
 
 const NO_PROVISIONER = "This site's database isn't set up on this deployment yet.";
+export const BUSY = "The site's database is being restored right now. Try again in a minute.";
 const NOT_MADE = "Locus couldn't make the site's database. Try again.";
 const REMOVED =
   "This site's database was removed, so Locus won't make a new one on its own. Take the " +
@@ -352,6 +358,14 @@ export async function migrateSiteBackend(
   let row = await siteBackendOf(deps.db, client, input.siteId);
   if (!row && migrations.length === 0) return null;
   if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
+  if (row) {
+    // A restore swaps the site's database: a publish waits for it to finish.
+    const restore = await restoreOf(deps.db, row.siteId);
+    if (restore?.busyUntil && restore.busyUntil.getTime() > Date.now()) {
+      throw new ConnectError(BUSY);
+    }
+    await sweepRetired({ db: deps.db, provisioner: deps.provisioner }, row, Date.now());
+  }
   if (!row) {
     // Removing a site's database is an owner's choice; a later save doesn't quietly undo it.
     if (await backendRemoved(deps.db, client, input.siteId)) throw new ConnectError(REMOVED);
@@ -483,6 +497,16 @@ export async function ensureSiteBackendEnv(
   const provisioner = deps.provisioner;
 
   const env = await projectEnv(deps, client, projectId);
+  const restore = await restoreOf(deps.db, row.siteId);
+  if (restore?.envStale) {
+    // A restore that failed part way may have left them naming another database.
+    await writeSiteDatabaseEnv(deps, env, projectId, provisioner, row);
+    await deps.db
+      .update(siteBackendRestore)
+      .set({ envStale: false })
+      .where(eq(siteBackendRestore.siteId, row.siteId));
+    return [SITE_DATABASE_ENV.url, SITE_DATABASE_ENV.token];
+  }
   const present = new Set(env.ours.filter(servesProduction).map((v) => v.key));
   const values: Record<string, () => Promise<string>> = {
     [SITE_DATABASE_ENV.url]: async () => provisioner.url(row.tursoDbHostname),
@@ -511,4 +535,86 @@ export async function ensureSiteBackendEnv(
     throw refused(added, "Vercel didn't take the site's database settings. Try again.");
   }
   return missing;
+}
+
+/** The site's restore record, if it was ever restored. */
+export async function restoreOf(db: ControlDb, siteId: string) {
+  const [row] = await db
+    .select()
+    .from(siteBackendRestore)
+    .where(eq(siteBackendRestore.siteId, siteId));
+  return row ?? null;
+}
+
+/**
+ * Deletes the databases the site stopped using once their time has passed (the deployment
+ * that used them has been replaced by then). Never the one the site uses now, nor the one kept
+ * for undo.
+ */
+export async function sweepRetired(
+  deps: SiteBackendDeps,
+  backend: SiteBackendRow,
+  now: number,
+): Promise<void> {
+  const restore = await restoreOf(deps.db, backend.siteId);
+  if (!restore || restore.retired.length === 0) return;
+  const keep = new Set([backend.tursoDbName, restore.keptDbName]);
+  const due = restore.retired.filter((r) => r.deleteAfter <= now && !keep.has(r.dbName));
+  if (due.length === 0) return;
+  for (const r of due) await deps.provisioner.destroy(r.dbName);
+  const gone = new Set(due.map((r) => r.dbName));
+  // Written as "whatever is there now, minus what was deleted", so a concurrent change stays.
+  const latest = await restoreOf(deps.db, backend.siteId);
+  if (!latest) return;
+  await deps.db
+    .update(siteBackendRestore)
+    .set({ retired: latest.retired.filter((r) => !gone.has(r.dbName)) })
+    .where(eq(siteBackendRestore.siteId, backend.siteId));
+}
+
+/**
+ * Sets the live site's database address and token to `target`'s, changing the existing values
+ * in place (so there is never a moment without them) and adding any that are missing.
+ */
+export async function writeSiteDatabaseEnv(
+  deps: VercelCallDeps,
+  env: Awaited<ReturnType<typeof projectEnv>>,
+  projectId: string,
+  provisioner: TenantProvisioner,
+  target: { tursoDbName: string; tursoDbHostname: string },
+): Promise<void> {
+  const values: Record<string, string> = {
+    [SITE_DATABASE_ENV.url]: provisioner.url(target.tursoDbHostname),
+    [SITE_DATABASE_ENV.token]: await provisioner.mintToken(target.tursoDbName, { ttl: "never" }),
+  };
+  const missing: string[] = [];
+  for (const [key, value] of Object.entries(values)) {
+    const existing = env.ours.find((v) => v.key === key && servesProduction(v));
+    if (!existing) {
+      missing.push(key);
+      continue;
+    }
+    const edited = await vercel(
+      deps,
+      env.grant,
+      "PATCH",
+      `/v9/projects/${encodeURIComponent(projectId)}/env/${encodeURIComponent(existing.id)}`,
+      { body: { value, type: "sensitive", target: ["production"] } },
+    );
+    if (!edited.ok) {
+      throw refused(edited, "Vercel didn't change the site's database settings. Try again.");
+    }
+  }
+  if (missing.length === 0) return;
+  const added = await vercel<{ failed?: unknown[] }>(deps, env.grant, "POST", env.path, {
+    body: missing.map((key) => ({
+      key,
+      value: values[key],
+      type: "sensitive",
+      target: ["production"],
+    })),
+  });
+  if (!added.ok || (added.body.failed?.length ?? 0) > 0) {
+    throw refused(added, "Vercel didn't take the site's database settings. Try again.");
+  }
 }

@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ff8d5042-88d3-4119-a88e-8836e2c4b897",
+  "id": "57f9072c-8e3b-4148-8782-aa7ce0b6744c",
   "prevId": "b0e1b769-0658-41dc-bcb6-5e725079914e",
   "tables": {
     "account": {
@@ -1667,6 +1667,29 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "busy_until": {
+          "name": "busy_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "env_stale": {
+          "name": "env_stale",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "retired": {
+          "name": "retired",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
         }
       },
       "indexes": {

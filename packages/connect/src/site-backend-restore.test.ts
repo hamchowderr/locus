@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { authorizeClient, type SessionContext } from "@locus/auth";
@@ -9,6 +9,7 @@ import {
   offboardLocation,
   openControlDb,
   openSiteDb,
+  SITE_MIGRATIONS_TABLE,
   siteDbName,
 } from "@locus/db";
 import {
@@ -24,8 +25,15 @@ import {
 } from "@locus/db/control";
 import { MemorySecretStore } from "@locus/secrets";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { enableSiteBackend, removeSiteBackend, siteBackendOf } from "./site-backend.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  BUSY,
+  enableSiteBackend,
+  ensureSiteBackendEnv,
+  migrateSiteBackend,
+  removeSiteBackend,
+  siteBackendOf,
+} from "./site-backend.ts";
 import {
   restoreSiteBackend,
   SITE_RESTORE_WINDOW_MS,
@@ -47,6 +55,8 @@ type Call = { method: string; path: string; body: unknown };
 let calls: Call[];
 type Env = { id: string; key: string; target: string[] };
 let envs: Env[];
+/** Answers 500 to the calls it matches. */
+let failing: (method: string, path: string) => boolean;
 const SITE = "6f1d2c3a-0000-4000-8000-000000000001";
 const live = (key: string): Env => ({ id: `env_${key}`, key, target: ["production"] });
 
@@ -62,6 +72,9 @@ function deps(): SiteRestoreDeps {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ method, path: url.pathname, body });
+    if (failing(method, url.pathname)) {
+      return Response.json({ error: { message: "no" } }, { status: 500 });
+    }
     if (method === "GET" && url.pathname.endsWith("/env")) return Response.json({ envs });
     if (method === "GET") {
       return Response.json({ name: "members-club", link: { productionBranch: "main" } });
@@ -109,6 +122,7 @@ beforeEach(async () => {
   provisioner = new LocalProvisioner(join(dir, "dbs"));
   secrets = new MemorySecretStore();
   calls = [];
+  failing = () => false;
   envs = ["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"].map(live);
   clock = Date.now();
   const now = new Date(clock);
@@ -167,6 +181,11 @@ async function withDatabase() {
   return { owner, row };
 }
 
+const paths = (method: string) => calls.filter((c) => c.method === method).map((c) => c.path);
+const current = async (owner: Awaited<ReturnType<typeof withDatabase>>["owner"]) =>
+  (await siteBackendOf(db, owner, SITE))?.tursoDbName ?? "";
+const restoreRow = async () => (await db.select().from(siteBackendRestore))[0];
+
 describe("restoring a site's database", () => {
   it("moves the live site onto a restored copy and keeps the one it replaced", async () => {
     const { owner, row } = await withDatabase();
@@ -188,22 +207,19 @@ describe("restoring a site's database", () => {
     // The database it had is kept, untouched.
     expect(await rowsIn(row.tursoDbName)).toEqual(["ann@example.test"]);
 
-    // The live site's address and token are replaced, the login secret is kept, and production
-    // is deployed again from the site's repository.
-    expect(calls.filter((c) => c.method === "DELETE").map((c) => c.path)).toEqual([
+    // The live site's address and token change in place (never missing for a moment), the
+    // login secret is kept, and production is deployed again from the site's repository.
+    expect(paths("DELETE")).toEqual([]);
+    expect(paths("PATCH")).toEqual([
       "/v9/projects/prj_1/env/env_SITE_DATABASE_URL",
       "/v9/projects/prj_1/env/env_SITE_DATABASE_TOKEN",
     ]);
-    const added = calls.find((c) => c.method === "POST" && c.path.endsWith("/env"))?.body as {
-      key: string;
-      value: string;
-      type: string;
-    }[];
-    expect(added.map((v) => [v.key, v.type])).toEqual([
-      ["SITE_DATABASE_URL", "sensitive"],
-      ["SITE_DATABASE_TOKEN", "sensitive"],
-    ]);
-    expect(added[0]?.value).toBe(provisioner.url(now?.tursoDbHostname ?? ""));
+    const patched = calls.filter((c) => c.method === "PATCH").map((c) => c.body);
+    expect(patched[0]).toEqual({
+      value: provisioner.url(now?.tursoDbHostname ?? ""),
+      type: "sensitive",
+      target: ["production"],
+    });
     expect(calls.find((c) => c.path === "/v13/deployments")?.body).toMatchObject({
       project: "prj_1",
       target: "production",
@@ -217,6 +233,7 @@ describe("restoring a site's database", () => {
     });
     // The restored database's history starts now.
     expect(after?.earliest.getTime()).toBe(clock);
+    expect((await restoreRow())?.busyUntil).toBeNull();
     const audits = await db
       .select()
       .from(auditLog)
@@ -247,35 +264,71 @@ describe("restoring a site's database", () => {
       clock - SITE_RESTORE_WINDOW_MS,
     );
     expect(calls).toEqual([]);
-    expect(await db.select().from(siteBackendRestore)).toEqual([]);
   });
 
-  it("undoes the last restore, and keeps only the latest replaced database", async () => {
+  it("runs one restore at a time, and publishing waits for it", async () => {
+    const { owner } = await withDatabase();
+    clock += 60_000;
+    const to = new Date(clock);
+    const both = await Promise.allSettled([
+      restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to }),
+      restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to }),
+    ]);
+    expect(both.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const refused = both.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(refused.reason.message).toBe(BUSY);
+    // Only one copy was made, and the site is on it.
+    const files = await readdir(join(dir, "dbs"));
+    expect(files.filter((f) => f.endsWith(".db"))).toHaveLength(2);
+
+    await db.update(siteBackendRestore).set({ busyUntil: new Date(Date.now() + 60_000) });
+    await expect(migrateSiteBackend(deps(), owner, { siteId: SITE, files: [] })).rejects.toThrow(
+      BUSY,
+    );
+    await expect(
+      undoSiteBackendRestore(deps(), ctx("owner"), owner, { siteId: SITE }),
+    ).rejects.toThrow(BUSY);
+    await expect(
+      removeSiteBackend({ ...deps(), provisioner }, ctx("owner"), owner, { siteId: SITE }),
+    ).rejects.toThrow(BUSY);
+  });
+
+  it("deletes replaced databases only after the deployment using them has gone", async () => {
     const { owner, row } = await withDatabase();
     clock += 60_000;
     await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
-    const first = (await siteBackendOf(db, owner, SITE))?.tursoDbName ?? "";
+    const first = await current(owner);
     await addMemberRow(first, "bo@example.test");
 
     clock += 60_000;
     await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
-    const second = (await siteBackendOf(db, owner, SITE))?.tursoDbName ?? "";
-    // The original went when a second restore replaced the first copy.
-    expect(await provisioner.findDatabase(row.tursoDbName)).toBeNull();
-    expect(await rowsIn(first)).toEqual(["ann@example.test", "bo@example.test"]);
+    const second = await current(owner);
+    // The original is no longer kept for undo, but a deployment may still use it for a while.
+    expect(await provisioner.findDatabase(row.tursoDbName)).not.toBeNull();
+    expect((await restoreRow())?.retired.map((r) => r.dbName)).toEqual([row.tursoDbName]);
 
     calls = [];
     expect(await undoSiteBackendRestore(deps(), ctx("owner"), owner, { siteId: SITE })).toEqual({
       redeployed: true,
     });
-    expect((await siteBackendOf(db, owner, SITE))?.tursoDbName).toBe(first);
-    expect(await provisioner.findDatabase(second)).toBeNull();
-    expect(calls.some((c) => c.path === "/v13/deployments")).toBe(true);
-    const state = await siteRestoreState(deps(), owner, SITE);
-    expect(state?.undo).toBeNull();
+    expect(await current(owner)).toBe(first);
+    expect(await rowsIn(first)).toEqual(["ann@example.test", "bo@example.test"]);
+    expect(await provisioner.findDatabase(second)).not.toBeNull();
+    expect(paths("POST")).toContain("/v13/deployments");
+    expect((await siteRestoreState(deps(), owner, SITE))?.undo).toBeNull();
     await expect(
       undoSiteBackendRestore(deps(), ctx("owner"), owner, { siteId: SITE }),
     ).rejects.toThrow("There's no restore to undo.");
+
+    // Hours later, the next publish deletes them; never the one the site uses.
+    clock += 3 * 3_600_000;
+    vi.setSystemTime(clock);
+    await migrateSiteBackend(deps(), owner, { siteId: SITE, files: [] });
+    vi.useRealTimers();
+    expect(await provisioner.findDatabase(row.tursoDbName)).toBeNull();
+    expect(await provisioner.findDatabase(second)).toBeNull();
+    expect(await provisioner.findDatabase(first)).not.toBeNull();
+    expect((await restoreRow())?.retired).toEqual([]);
   });
 
   it("swaps a site that isn't published yet without touching Vercel", async () => {
@@ -288,43 +341,99 @@ describe("restoring a site's database", () => {
     expect(calls).toEqual([]);
   });
 
-  it("leaves the site as it was when Vercel refuses, and deletes the copy", async () => {
+  it("changes nothing when Vercel won't deploy, and puts the settings back", async () => {
     const { owner, row } = await withDatabase();
-    const refusing = deps();
-    refusing.http = {
-      apiBaseUrl: "https://api.vercel.test",
-      fetch: (async (_input: unknown, init?: RequestInit) =>
-        (init?.method ?? "GET") === "GET"
-          ? Response.json({ envs })
-          : Response.json({ error: { message: "no" } }, { status: 500 })) as typeof fetch,
+    failing = (method, path) => method === "POST" && path === "/v13/deployments";
+    clock += 60_000;
+    await expect(
+      restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) }),
+    ).rejects.toThrow("Vercel didn't deploy the site again, so nothing changed. Try again.");
+    expect(await current(owner)).toBe(row.tursoDbName);
+    expect(await provisioner.findDatabase(`${siteDbName(SITE)}-r${clock.toString(36)}`)).toBeNull();
+    // Patched to the copy, then back to the database the live site uses.
+    const urls = calls
+      .filter((c) => c.method === "PATCH" && c.path.endsWith("env_SITE_DATABASE_URL"))
+      .map((c) => (c.body as { value: string }).value);
+    expect(urls.at(-1)).toBe(provisioner.url(row.tursoDbHostname));
+    expect(await restoreRow()).toMatchObject({
+      keptDbName: null,
+      envStale: false,
+      busyUntil: null,
+    });
+  });
+
+  it("has the next publish rewrite the settings when putting them back failed too", async () => {
+    const { owner, row } = await withDatabase();
+    // The move to the copy works, the deploy fails, and so does putting the settings back.
+    let patches = 0;
+    failing = (method, path) =>
+      (method === "PATCH" && ++patches > 2) || (method === "POST" && path === "/v13/deployments");
+    clock += 60_000;
+    await expect(
+      restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) }),
+    ).rejects.toThrow();
+    expect(await current(owner)).toBe(row.tursoDbName);
+    expect((await restoreRow())?.envStale).toBe(true);
+
+    failing = () => false;
+    calls = [];
+    expect(await ensureSiteBackendEnv(deps(), owner, { siteId: SITE })).toEqual([
+      "SITE_DATABASE_URL",
+      "SITE_DATABASE_TOKEN",
+    ]);
+    expect(calls.find((c) => c.method === "PATCH")?.body).toMatchObject({
+      value: provisioner.url(row.tursoDbHostname),
+    });
+    expect((await restoreRow())?.envStale).toBe(false);
+  });
+
+  it("won't go back to before a change the live site's code needs", async () => {
+    const { owner, row } = await withDatabase();
+    const site = openSiteDb(provisioner.url(row.tursoDbHostname), "x");
+    await site.execute(
+      `create table ${SITE_MIGRATIONS_TABLE} (name text primary key, hash text, applied_at integer)`,
+    );
+    await site.execute(`insert into ${SITE_MIGRATIONS_TABLE} values ('0001_bookings', 'h', 1)`);
+    site.close();
+    // Turso's copy of an earlier moment, before that change ran.
+    const earlier = Object.create(provisioner) as LocalProvisioner;
+    earlier.createDatabase = async (name, opts) => {
+      const made = await provisioner.createDatabase(name, opts);
+      const copy = openSiteDb(provisioner.url(made.hostname), "x");
+      await copy.execute(`delete from ${SITE_MIGRATIONS_TABLE}`);
+      copy.close();
+      return made;
     };
     clock += 60_000;
     await expect(
-      restoreSiteBackend(refusing, ctx("owner"), owner, { siteId: SITE, to: new Date(clock) }),
-    ).rejects.toThrow();
-    expect((await siteBackendOf(db, owner, SITE))?.tursoDbName).toBe(row.tursoDbName);
-    const left = await provisioner.findDatabase(`${siteDbName(SITE)}-r${clock.toString(36)}`);
-    expect(left).toBeNull();
-    expect(await db.select().from(siteBackendRestore)).toEqual([]);
+      restoreSiteBackend({ ...deps(), provisioner: earlier }, ctx("owner"), owner, {
+        siteId: SITE,
+        to: new Date(clock),
+      }),
+    ).rejects.toThrow(/didn't have changes the live site needs \(0001_bookings\)/);
+    expect(await current(owner)).toBe(row.tursoDbName);
+    expect(calls).toEqual([]);
+    expect(await provisioner.findDatabase(`${siteDbName(SITE)}-r${clock.toString(36)}`)).toBeNull();
   });
 
-  it("deletes the kept database with the site's database, and when the client leaves", async () => {
+  it("deletes kept and retired databases with the site's database, and when the client leaves", async () => {
     const { owner, row } = await withDatabase();
     clock += 60_000;
     await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
-    await removeSiteBackend({ ...deps(), provisioner }, ctx("owner"), owner, { siteId: SITE });
-    expect(await provisioner.findDatabase(row.tursoDbName)).toBeNull();
-    expect(await db.select().from(siteBackendRestore)).toEqual([]);
-
-    const again = await enableSiteBackend({ db, provisioner }, ctx("owner"), owner, {
-      siteId: SITE,
-    });
     clock += 60_000;
     await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
-    const current = (await siteBackendOf(db, owner, SITE))?.tursoDbName ?? "";
-    await offboardLocation({ control: db, provisioner }, "client-1");
-    expect(await provisioner.findDatabase(again.tursoDbName)).toBeNull();
-    expect(await provisioner.findDatabase(current)).toBeNull();
+    const files = async () => (await readdir(join(dir, "dbs"))).filter((f) => f.endsWith(".db"));
+    expect(await files()).toHaveLength(3);
+    await removeSiteBackend({ ...deps(), provisioner }, ctx("owner"), owner, { siteId: SITE });
+    expect(await files()).toEqual([]);
     expect(await db.select().from(siteBackendRestore)).toEqual([]);
+
+    await enableSiteBackend({ db, provisioner }, ctx("owner"), owner, { siteId: SITE });
+    clock += 60_000;
+    await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
+    await offboardLocation({ control: db, provisioner }, "client-1");
+    expect(await files()).toEqual([]);
+    expect(await db.select().from(siteBackendRestore)).toEqual([]);
+    expect(row.tursoDbName).toBe(siteDbName(SITE));
   });
 });
