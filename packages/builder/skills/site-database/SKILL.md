@@ -92,6 +92,10 @@ export const booking = sqliteTable(
 );
 ```
 
+## Searching records
+For a search box over the site's own records (posts, listings, members' notes), read this
+skill's `search.md` with `skill_read` before writing the migration.
+
 ## Files members upload
 `database add` also adds file uploads: pictures and everyday documents up to 25 MB, and
 videos (MP4, WebM, MOV) up to 500 MB. A published site keeps them in the client's HighLevel

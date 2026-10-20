@@ -51,6 +51,16 @@ describe("site database reads", () => {
     ]);
   });
 
+  it("lists a search table once, without the tables its indexes keep", async () => {
+    await db.batch([
+      "create table post (id integer primary key, title text, embedding F32_BLOB(3))",
+      "create index post_embedding_idx on post (libsql_vector_idx(embedding))",
+      "create virtual table post_search using fts5(title)",
+    ]);
+    const names = (await listSiteTables(db)).map((t) => t.name);
+    expect(names).toEqual(["account", "bookings", "post", "post_search", "user"]);
+  });
+
   it("pages a table and refuses a name the site doesn't have", async () => {
     const page = await readSiteRows(db, "bookings", { limit: 3, offset: 5 });
     expect(page.total).toBe(7);
