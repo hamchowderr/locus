@@ -220,7 +220,26 @@ describe("ghlRequest", () => {
     expect(req?.body).toEqual({ client_id: "id", grant_type: "authorization_code", code: "c&d" });
   });
 
-  test("refuses nested values in a form body and multipart bodies, before sending", async () => {
+  test("sends files and fields as multipart, letting fetch set the boundary", async () => {
+    const ghl = createFakeGhl({ "POST /medias/upload-file": { body: { fileId: "f1", url: "u" } } });
+    const file = new File([new Uint8Array([1, 2, 3])], "photo.png", { type: "image/png" });
+    const out = await ghlRequest(
+      uploadMedia,
+      { token: "t", tokenKind: "location", locationId: "loc" },
+      { body: { file, name: "photo.png", parentId: "folder" } },
+      { fetch: ghl.fetch },
+    );
+    expect(out).toEqual({ fileId: "f1", url: "u" });
+    const [req] = ghl.requests;
+    expect(req?.headers["content-type"]).toBeUndefined();
+    const form = req?.body as FormData;
+    expect(form.get("name")).toBe("photo.png");
+    expect(form.get("parentId")).toBe("folder");
+    expect((form.get("file") as File).name).toBe("photo.png");
+    expect((form.get("file") as File).size).toBe(3);
+  });
+
+  test("refuses nested values in form and multipart bodies, before sending", async () => {
     const ghl = createFakeGhl({});
     await expect(
       ghlRequest(
@@ -234,7 +253,7 @@ describe("ghlRequest", () => {
       ghlRequest(
         uploadMedia,
         { token: "t", tokenKind: "location" },
-        { body: {} },
+        { body: { meta: { a: 1 } } },
         { fetch: ghl.fetch },
       ),
     ).rejects.toBeInstanceOf(GhlUsageError);

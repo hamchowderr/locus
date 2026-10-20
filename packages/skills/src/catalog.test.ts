@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { type GhlSession, GhlUsageError, ghlRequest } from "@locus/ghl";
+import { type GhlSession, ghlRequest } from "@locus/ghl";
 import { createFakeGhl } from "@locus/testing";
 import { describe, expect, test } from "vitest";
 import { catalog, docsSource, type SkillOperation } from "./index.ts";
@@ -47,13 +47,10 @@ describe.each(catalog.map((skill) => [skill.category, skill.operations] as const
       const send = () =>
         ghlRequest(op, session, { path, ...(op.body ? { body: {} } : {}) }, { fetch: ghl.fetch });
 
-      if (op.body === "multipart") {
-        await expect(send()).rejects.toBeInstanceOf(GhlUsageError);
-        return;
-      }
       await send();
 
       const [req] = ghl.requests;
+      if (op.body === "multipart") expect(req?.body).toBeInstanceOf(FormData);
       if (op.body === "form") {
         expect(req?.headers["content-type"]).toBe("application/x-www-form-urlencoded");
       }
@@ -72,7 +69,12 @@ describe.each(catalog.map((skill) => [skill.category, skill.operations] as const
         const expected = values[param.value];
         if (param.in === "query") expect(req?.url.searchParams.get(param.name)).toBe(expected);
         if (param.in === "body") {
-          expect((req?.body as Record<string, unknown> | undefined)?.[param.name]).toBe(expected);
+          const body = req?.body;
+          const sent =
+            body instanceof FormData
+              ? body.get(param.name)
+              : (body as Record<string, unknown> | undefined)?.[param.name];
+          expect(sent).toBe(expected);
         }
       }
     });
