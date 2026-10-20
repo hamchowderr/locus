@@ -4,19 +4,24 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./visual-edits-protocol": "./src/visual-edits-protocol.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "@babel/parser": "8.0.7",
     "@locus/db": "workspace:*",
     "drizzle-orm": "0.45.4",
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@babel/types": "8.0.6",
+    "@libsql/client": "0.18.0",
     "@types/node": "22.20.5",
+    "better-auth": "1.7.7",
     "vitest": "5.0.3"
   }
 }

@@ -1,0 +1,49 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Find the contacts with an email address at example.org.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 3,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "Two contacts have an email address at example.org:\n\n| Name | Email | Contact ID |\n|---|---|---|\n| Riley Demo | riley@example.org | fake-contact-04 |\n| Jordan Sample | jordan@example.org | fake-contact-02 |\n\nI searched all 6 contacts in the account, and the search returned every one of them. I only checked each contact's main email, not any extra emails saved on a contact. I didn't change anything.",
+        "usage": {
+          "prompt_tokens": 7217,
+          "completion_tokens": 177,
+          "total_tokens": 7394,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.032408,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 30,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.032408
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1124,
+        "interChunkDelaysMs": [
+          1307, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0
+        ],
+        "totalDurationMs": 2450
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

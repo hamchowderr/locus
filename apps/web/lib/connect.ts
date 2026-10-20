@@ -94,6 +94,25 @@ export function siteLeadIpKey(): Buffer {
   return devIpKey;
 }
 
+let warnedTestPayments = false;
+
+/**
+ * Whether invoices a site's checkout makes take real money: only with
+ * `LOCUS_GHL_LIVE_PAYMENTS=true`. Anything else makes GHL test-mode invoices. Against live GHL
+ * with the setting left out, that is probably a mistake, so it says so in the log, once.
+ */
+export function ghlLivePayments(): boolean {
+  const setting = process.env.LOCUS_GHL_LIVE_PAYMENTS;
+  if (setting === undefined && !warnedTestPayments && ghlMode() === "live") {
+    warnedTestPayments = true;
+    console.warn(
+      "LOCUS_GHL_LIVE_PAYMENTS is not set: site checkouts make GHL test-mode invoices, which " +
+        "take no money. Set it to true for real payments, or false to keep test mode.",
+    );
+  }
+  return setting === "true";
+}
+
 /** Everything the connect flow needs, from the environment. Server-side only. */
 export function connectDeps(): ConnectDeps {
   const mode = ghlMode();

@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Tag one of my contacts for me, but check with me which one and which tag first.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 6,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "ask_user",
+            "arguments": "{\"question\": \"Avery Example already has the \\\"vip\\\" tag (current tags: vip, newsletter), so adding it again won't change anything. What should I do?\", \"options\": [{\"label\": \"Use a different tag\", \"description\": \"Tell me which tag to add to Avery\"}, {\"label\": \"Tag another contact\", \"description\": \"Tell me which contact should get vip\"}, {\"label\": \"Leave it\", \"description\": \"No changes needed\"}]}",
+            "id": "toolu_01ERtX4AdsXiNpSXysNsXvWd"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 8138,
+          "completion_tokens": 330,
+          "total_tokens": 8468,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.039152,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 134,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.039152
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1493,
+        "interChunkDelaysMs": [
+          1183, 11, 0, 89, 56, 42, 59, 40, 52, 49, 53, 45, 49, 50, 102, 58, 52, 45, 47, 52, 49, 48,
+          51, 50, 50, 51, 50, 96, 4, 0
+        ],
+        "totalDurationMs": 4076
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

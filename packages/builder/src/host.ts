@@ -13,11 +13,21 @@ import {
   recordUsage,
   requireAgencyManager,
   type SessionContext,
+  siteAccessLevel,
   type UsageMeasurement,
 } from "@locus/auth";
-import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
+import {
+  ConnectError,
+  commitSiteVersion,
+  ensureSiteBackendEnv,
+  migrateSiteBackend,
+  type PublishDeps,
+  type SiteCrm,
+  type SiteDeps,
+  siteDomainStatus,
+} from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
-import { auditLog, member, session, site } from "@locus/db/control";
+import { auditLog, member, session, site, siteBackend, siteFolder } from "@locus/db/control";
 import {
   generationRun,
   siteBlob,
@@ -36,16 +46,24 @@ import {
   sandboxFromEnv,
 } from "@locus/sandbox";
 import {
+  bookingCalendarIds,
+  editorOrigin,
+  type PageSeo,
+  pageSeo,
   readBrief,
+  type SeoIssue,
   SITE_KINDS,
   SiteWorkspace,
+  seoIssues,
   startSite,
   templateById,
   type VersionInfo,
   WorkspaceError,
   withLocusSettings,
+  writeBrief,
 } from "@locus/studio";
-import { and, count, eq, gte, inArray, isNull, notInArray, sum } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, notExists, notInArray, sum } from "drizzle-orm";
+import { ZodError } from "zod";
 import {
   BuilderError,
   type BuilderSession,
@@ -60,6 +78,10 @@ import {
   UntrustedOutputProcessor,
   type UsageMeter,
 } from "./index.ts";
+import { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
+
+export * from "./site-history.ts";
+export { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
 
 // Host wiring for the site-builder agent. Everything here starts from an `AuthorizedClient`
 // (the session's client, after the staff check) and never takes a client or agency id from a
@@ -108,6 +130,11 @@ export interface SiteBuilderDeps {
   locusUrl: string;
   /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
   billing?: boolean;
+  /**
+   * The client's GHL sub-account, for the builder's `crm` tool. Called with the client after
+   * the staff check on each tool call; null or absent leaves the tool saying it can't reach it.
+   */
+  crm?: ((client: AuthorizedClient) => SiteCrm) | null;
 }
 
 export interface SiteBuilderWiring {
@@ -135,6 +162,12 @@ const contextValue = (requestContext: unknown, key: string): unknown => {
 };
 
 /** The sandbox key for a site: stable across processes, one per client and site. */
+/** The pages allowed to drive a preview's visual edits: the Locus web app's own origin. */
+export function editorOrigins(locusUrl: string): string[] {
+  const origin = editorOrigin(locusUrl);
+  return origin ? [origin] : [];
+}
+
 export const siteRuntimeKey = (client: AuthorizedClient, siteId: string) =>
   `${client.location.id}/${siteId}`;
 
@@ -142,7 +175,11 @@ export const siteRuntimeKey = (client: AuthorizedClient, siteId: string) =>
  * The control `site` row for `siteId`, only if it is this client's. Refuses (403, saying no
  * more) a missing site and another client's site alike.
  */
-export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
+/**
+ * The control `site` row for `siteId`, only if it is this client's, whether or not the member may
+ * build it: for showing a site, never for changing it (use `clientSite`).
+ */
+export async function siteOfClient(db: ControlDb, client: AuthorizedClient, siteId: string) {
   assertAuthorizedClient(client);
   const [row] = siteId
     ? await db
@@ -151,6 +188,37 @@ export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId
         .where(and(eq(site.id, siteId), eq(site.locationId, client.location.id)))
     : [];
   if (!row) throw new ClientAccessDenied("site is not this client's");
+  return row;
+}
+
+export const SITE_BUILDER_OFF =
+  "The site builder is turned off for this client. An owner or admin can turn it on on the Clients page.";
+export const SITE_VIEW_ONLY =
+  "You can view this site but not change it. An owner or admin can change that on the Sites page.";
+
+/**
+ * Why the member behind `client` may not build `siteId` (a site of the client), or null: the
+ * site builder is off for the client, or the member is view-only on the site.
+ */
+export async function buildRefusal(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<string | null> {
+  if (!client.location.siteBuilder) return SITE_BUILDER_OFF;
+  if ((await siteAccessLevel(db, client, siteId)) === "view") return SITE_VIEW_ONLY;
+  return null;
+}
+
+/**
+ * The control `site` row for `siteId`, only if it is this client's and the member behind
+ * `client` may build it (`buildRefusal`). Refuses (403, saying no more) a missing site, another
+ * client's site and one the member may not build alike; check `buildRefusal` first to say why.
+ */
+export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
+  const row = await siteOfClient(db, client, siteId);
+  const refusal = await buildRefusal(db, client, row.id);
+  if (refusal) throw new ClientAccessDenied(refusal);
   return row;
 }
 
@@ -236,11 +304,40 @@ const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^Locus won't publish the file "[^"\n]{1,300}": the path isn't allowed\.$/,
   /^Locus won't publish "[^"\n]{1,300}": environment files can hold secrets and never go in the repository\.$/,
   /^"[^"\n]{1,300}" is in the version twice\.$/,
+  // An app-style site's own database: the reason is the database's, for SQL the agent wrote.
+  /^The site's database change didn't apply: [^\n]{1,1500}$/,
+  /^This site's database isn't set up on this deployment yet\.$/,
+  /^The site's database wasn't saved\. Try again\.$/,
+  /^Locus couldn't make the site's database\. Try again\.$/,
+  /^This site's database was removed, so Locus won't make a new one on its own\. Take the db\/migrations files out to publish it as a plain website\.$/,
+  /^Vercel didn't (show|take|remove) the site's (database )?settings\. Try again\.$/,
+  /^Vercel refused\. Reconnect Vercel on the Connections page and allow access to all projects\.$/,
 ];
 
 const GENERIC_PUBLISH_ERROR =
   "The version is saved, but GitHub refused it. Check that the Locus app can still reach the " +
   "site's repository, then save again.";
+const SITES_PAGE_PUBLISH_ERROR =
+  "GitHub refused the publish. Check that the Locus app can still reach the site's " +
+  "repository, then publish again.";
+
+/**
+ * The address a published site goes by, for its sitemap, links and structured data: its own
+ * domain once that is live (verified and pointing at Vercel), else its Vercel address. Null
+ * before either exists, when the site falls back to the host's production address at build.
+ */
+export async function siteAddress(
+  deps: SiteDeps,
+  client: AuthorizedClient,
+  row: { id: string; customDomain: string | null; deployUrl: string | null },
+): Promise<string | null> {
+  if (row.customDomain) {
+    // A domain still being set up (or a check that fails) doesn't hold up the publish.
+    const status = await siteDomainStatus(deps, client, row.id).catch(() => null);
+    if (status?.state === "live") return `https://${row.customDomain}`;
+  }
+  return row.deployUrl;
+}
 
 /** What runs after each saved version (`BuilderSession.onVersionSaved`). */
 export type VersionSavedHook = NonNullable<BuilderSession["onVersionSaved"]>;
@@ -273,14 +370,26 @@ export function publishHook(
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
+    // The calendars this version books on: the only ones its visitors may book once it's live.
+    // Recorded before the push, so the new deployment never refuses its own calendars.
+    await db
+      .update(site)
+      .set({ bookingCalendars: bookingCalendarIds(files) })
+      .where(eq(site.id, row.id));
     try {
-      const { commitSha, url } = await commitSiteVersion(publish(), client, {
+      const deps = publish();
+      // An app-style site's database gets the version's changes first, and its project the
+      // database's settings, so the build this push starts runs against a ready database.
+      await migrateSiteBackend(deps, client, { siteId, files });
+      await ensureSiteBackendEnv(deps, client, { siteId });
+      const siteUrl = await siteAddress(deps, client, row);
+      const { commitSha, url } = await commitSiteVersion(deps, client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
-        // The version's files, with this site's form endpoint in `lib/locus.ts`.
+        // The version's files, with this site's form endpoint and address in `lib/locus.ts`.
         files: withLocusSettings(
           files.map(({ path, content }) => ({ path, content })),
-          { siteId, locusUrl },
+          { siteId, locusUrl, siteUrl },
         ),
       });
       return { commitSha, url };
@@ -289,6 +398,65 @@ export function publishHook(
       throw error;
     }
   };
+}
+
+/**
+ * Sends a site's latest saved version to its repository from the Sites page, as a save in the
+ * chat does (`publishHook`), for a deployment without the chat or a site whose repository came
+ * after its last save. Owners and admins only. The client is the session's; the site must be
+ * one of its and have a repository. Vercel deploys the push.
+ */
+export async function publishLatestVersion(
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "publish" | "locusUrl">,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<{ version: number; commitSha: string }> {
+  assertAuthorizedClient(client);
+  await requireAgencyManager(deps.db, ctx);
+  if (!client.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
+  const row = await clientSite(deps.db, client, siteId);
+  if (!row.repoFullName) {
+    throw new SiteInputError("Give the site a GitHub repository first.");
+  }
+  if (!deps.publish) throw new SiteInputError("Publishing to GitHub isn't set up here yet.");
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    const workspace = new SiteWorkspace(tenant, siteId);
+    const hook = publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl);
+    let version = await workspace.latestVersion();
+    if (!version) throw new SiteInputError("This site has no saved version to publish yet.");
+    // A save in the chat can land while this commits; the newest version must end up on top,
+    // so a newer one seen afterwards is published too (each push builds on the branch head).
+    for (let attempt = 0; ; attempt++) {
+      const files = await workspace.versionFiles(version.id);
+      let published: Awaited<ReturnType<VersionSavedHook>>;
+      try {
+        published = await hook(version, files);
+      } catch (error) {
+        if (error instanceof PublishError) {
+          throw new SiteInputError(
+            error.message === GENERIC_PUBLISH_ERROR ? SITES_PAGE_PUBLISH_ERROR : error.message,
+          );
+        }
+        throw error;
+      }
+      if (!published?.commitSha) {
+        throw new SiteInputError("Give the site a GitHub repository first.");
+      }
+      // The commit is on GitHub either way; only the version's record of it can fail here.
+      await workspace.setCommitSha(version.id, published.commitSha).catch((error: unknown) => {
+        console.error(`Recording the commit for site ${siteId} failed`, error);
+      });
+      const latest = await workspace.latestVersion();
+      if (!latest || latest.id === version.id || attempt >= 2) {
+        return { version: version.number, commitSha: published.commitSha };
+      }
+      version = latest;
+    }
+  } finally {
+    release();
+  }
 }
 
 // One pooled connection per client database, shared by every builder in the process. It is
@@ -300,9 +468,17 @@ interface PooledDb {
   until: number;
   users: number;
   retired: boolean;
+  /** Closes the connection once it has gone unused for `POOL_IDLE_MS`. */
+  idle?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * A pooled connection is replaced after this long. Its token lives an hour (`openClientDb`), so a
+ * call that leased it just before then still has a quarter of an hour.
+ */
 const POOL_LIFETIME_MS = 45 * 60_000;
+/** A connection nobody has used for this long is closed, so idle clients hold nothing open. */
+export const POOL_IDLE_MS = 5 * 60_000;
 const pool = new Map<string, PooledDb>();
 
 function closeIfIdle(entry: PooledDb) {
@@ -313,6 +489,7 @@ function closeIfIdle(entry: PooledDb) {
 function retire(locationId: string) {
   const entry = pool.get(locationId);
   if (!entry) return;
+  clearTimeout(entry.idle);
   pool.delete(locationId);
   entry.retired = true;
   closeIfIdle(entry);
@@ -345,6 +522,7 @@ export async function leaseClientDb(
     pool.set(id, entry);
   }
   const leased = entry;
+  clearTimeout(leased.idle);
   leased.users++;
   let db: TenantDb;
   try {
@@ -362,6 +540,14 @@ export async function leaseClientDb(
       released = true;
       leased.users--;
       closeIfIdle(leased);
+      if (leased.users === 0 && !leased.retired) {
+        clearTimeout(leased.idle);
+        leased.idle = setTimeout(() => {
+          if (pool.get(id) === leased && leased.users === 0) retire(id);
+        }, POOL_IDLE_MS);
+        // Never keeps the process alive.
+        leased.idle.unref?.();
+      }
     },
   };
 }
@@ -571,7 +757,12 @@ export function createSiteBuilder(
       throw new ClientAccessDenied("request is for another client");
     }
     const { client, userId } = await reauthorize(deps.db, requester);
-    await clientSite(deps.db, client, siteId);
+    const refusal = await buildRefusal(
+      deps.db,
+      client,
+      (await siteOfClient(deps.db, client, siteId)).id,
+    );
+    if (refusal) throw new BuilderError(refusal);
     const lease = await leaseClientDb(deps.openClientDb, client);
     const onVersionSaved = deps.publish
       ? publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl)
@@ -586,8 +777,10 @@ export function createSiteBuilder(
           ? deps.openRuntime(client, siteId)
           : deps.runtimes().open(siteRuntimeKey(client, siteId)),
       images: deps.images ?? null,
+      crm: deps.crm ? deps.crm(client) : null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
+      editorOrigins: editorOrigins(deps.locusUrl),
       ...(onVersionSaved ? { onVersionSaved } : {}),
     };
   };
@@ -642,8 +835,9 @@ export async function activeSiteIdFor(
 
 /**
  * Records `siteId` as the site the builder works on for this signed-in session, after checking
- * it is `client`'s (a refused site throws `ClientAccessDenied`). The agent server, which gets no
- * cookies, reads it back with `activeSiteIdForSession`.
+ * it is `client`'s (another client's site throws `ClientAccessDenied`, one the member may not
+ * build `SiteInputError`). The agent server, which gets no cookies, reads it back with
+ * `activeSiteIdForSession`.
  */
 export async function chooseActiveSite(
   db: ControlDb,
@@ -651,7 +845,9 @@ export async function chooseActiveSite(
   client: AuthorizedClient,
   siteId: string,
 ): Promise<string> {
-  const row = await clientSite(db, client, siteId);
+  const row = await siteOfClient(db, client, siteId);
+  const refusal = await buildRefusal(db, client, row.id);
+  if (refusal) throw new SiteInputError(refusal);
   await db.update(session).set({ activeSiteId: row.id }).where(eq(session.id, ctx.id));
   return row.id;
 }
@@ -690,7 +886,7 @@ export async function openClientDb(
 
 export type SiteKind = (typeof SITE_KINDS)[number];
 
-export interface NewSite {
+export interface NewSite extends NewSiteDesign {
   name: string;
   kind: string;
   /** Empty means the template that fits the kind. */
@@ -777,6 +973,14 @@ export async function createClientSite(
   if (templateId && !templateById(templateId)) {
     throw new SiteInputError("Pick one of the templates.");
   }
+  if (!client.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
+  let design: ReturnType<typeof designFromForm>;
+  try {
+    design = designFromForm(input);
+  } catch (error) {
+    if (error instanceof DesignInputError) throw new SiteInputError(error.message);
+    throw error;
+  }
   if (deps.billing) {
     const refusal = await newSiteRefusal(deps.db, client.location.organizationId);
     if (refusal) throw new SiteInputError(refusal);
@@ -800,7 +1004,8 @@ export async function createClientSite(
   try {
     ({ db: tenant, release } = await leaseClientDb(deps.openClientDb, client));
     const { version } = await startSite(new SiteWorkspace(tenant, siteId), {
-      brief: { name, kind: input.kind as SiteKind },
+      brief: { ...design.brief, name, kind: input.kind as SiteKind },
+      files: design.files,
       ...(templateId ? { templateId } : {}),
       userId: ctx.userId,
     });
@@ -819,29 +1024,151 @@ export async function createClientSite(
 }
 
 /**
- * Deletes a draft site of the session's client (the client from `client`, never the form):
- * its files, versions, brief and runs in the client's own database, then its control row, with
- * an audit entry; any session that had chosen it forgets it. Owners and admins only.
+ * Copies a site's latest saved version into a new draft site of `to`, which may be the same
+ * client or another one of the agency's. Both clients passed the staff check for this member,
+ * so a member restricted to some clients can only copy between those. The copy gets its own
+ * row, brief (renamed) and version 1, and nothing else: no history, repository, Vercel project,
+ * domain or form leads. It counts as a new site against the agency's plan. The site's folder
+ * comes along only within the same client.
+ */
+export async function copyClientSite(
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "billing">,
+  ctx: SessionContext,
+  from: AuthorizedClient,
+  siteId: string,
+  to: AuthorizedClient,
+  input: { name: string },
+): Promise<{ siteId: string; version: VersionInfo }> {
+  assertAuthorizedClient(from);
+  assertAuthorizedClient(to);
+  if (from.location.organizationId !== to.location.organizationId) {
+    throw new ClientAccessDenied("clients are in different agencies");
+  }
+  const name = input.name.trim();
+  if (!name || name.length > 120) {
+    throw new SiteInputError("Give the copy a name of up to 120 characters.");
+  }
+  const source = await siteOfClient(deps.db, from, siteId);
+  const refusal = await buildRefusal(deps.db, from, source.id);
+  if (refusal) throw new SiteInputError(refusal);
+  if (!to.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
+  if (deps.billing) {
+    const refusal = await newSiteRefusal(deps.db, to.location.organizationId);
+    if (refusal) throw new SiteInputError(refusal);
+  }
+
+  // Read everything first and let the connection go, so the copy never holds two at once.
+  const read = await leaseClientDb(deps.openClientDb, from);
+  let files: Awaited<ReturnType<SiteWorkspace["versionFiles"]>>;
+  let brief: Awaited<ReturnType<typeof readBrief>>;
+  let fromVersion: VersionInfo | null;
+  try {
+    const workspace = new SiteWorkspace(read.db, source.id);
+    brief = await readBrief(read.db, source.id);
+    fromVersion = await workspace.latestVersion();
+    files = fromVersion ? await workspace.versionFiles(fromVersion.id) : [];
+  } finally {
+    read.release();
+  }
+  if (!brief || !fromVersion) {
+    throw new SiteInputError("Only a site built in Locus, with a saved version, can be copied.");
+  }
+
+  const newId = randomUUID();
+  const auditId = randomUUID();
+  await deps.db.batch([
+    deps.db.insert(site).values({
+      id: newId,
+      locationId: to.location.id,
+    }),
+    deps.db.insert(auditLog).values({
+      id: auditId,
+      organizationId: to.location.organizationId,
+      actorUserId: ctx.userId,
+      locationId: to.location.id,
+      action: "site.create",
+      detail: {
+        siteId: newId,
+        copiedFrom: {
+          locationId: from.location.id,
+          siteId: source.id,
+          version: fromVersion.number,
+        },
+      },
+    }),
+  ]);
+  // A copy for the same client stays in the original's folder.
+  if (to.location.id === from.location.id) {
+    const [folder] = await deps.db
+      .select({ name: siteFolder.name })
+      .from(siteFolder)
+      .where(eq(siteFolder.siteId, source.id));
+    if (folder) await deps.db.insert(siteFolder).values({ siteId: newId, name: folder.name });
+  }
+  let tenant: TenantDb | undefined;
+  let release: (() => void) | undefined;
+  try {
+    ({ db: tenant, release } = await leaseClientDb(deps.openClientDb, to));
+    const workspace = new SiteWorkspace(tenant, newId);
+    await workspace.writeFiles(files);
+    const version = await workspace.saveVersion({
+      message: `Copied from ${brief.name}, version ${fromVersion.number}`,
+      source: "copy",
+      userId: ctx.userId,
+    });
+    if (!version) throw new SiteInputError("That site's latest version has no files to copy.");
+    await writeBrief(tenant, newId, { ...brief, name });
+    return { siteId: newId, version };
+  } catch (error) {
+    if (tenant) await forgetSiteFiles(tenant, newId);
+    await deps.db.batch([
+      deps.db.delete(auditLog).where(eq(auditLog.id, auditId)),
+      deps.db.delete(site).where(eq(site.id, newId)),
+    ]);
+    if (error instanceof WorkspaceError) throw new SiteInputError(error.message);
+    throw error;
+  } finally {
+    release?.();
+  }
+}
+
+/**
+ * Deletes a site of the session's client (the client from `client`, never the form): its
+ * files, versions, brief and runs in the client's own database, then its control row, with an
+ * audit entry; any session that had chosen it forgets it. Owners and admins only.
  *
- * A site with a repository or a Vercel project is refused: its published copy would keep
- * sending leads to a site Locus no longer knows, and Locus never deletes anything on the
- * agency's GitHub or Vercel. The site's `site.create` entry stays, so deleting doesn't give
- * back plan allowance. The site's sandbox is not removed yet: no one can reach it once the row
- * is gone, and Vercel stops it when its timeout ends.
+ * A site saved to a repository can be deleted too: Locus never deletes anything on the
+ * agency's GitHub, so the repository stays. A site with a Vercel project or a custom domain is
+ * refused: its copy may be live (on `*.vercel.app` or a domain added on Vercel), and its forms
+ * would stop reaching the CRM with no way to point them at a new site. Unlinking the project
+ * first (`unlinkHostProject`) is the owner's deliberate step.
+ * The site's `site.create` entry stays, so deleting doesn't give back plan allowance. Its
+ * sandbox is deleted last, best effort (`RuntimeProvider.destroy`): no one can reach it once the
+ * row is gone, and one left behind only stops when its timeout ends.
  */
 export async function deleteClientSite(
-  deps: Pick<SiteBuilderDeps, "db" | "openClientDb">,
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb"> & Partial<Pick<SiteBuilderDeps, "runtimes">>,
   ctx: SessionContext,
   client: AuthorizedClient,
   siteId: string,
 ): Promise<void> {
   assertAuthorizedClient(client);
   await requireAgencyManager(deps.db, ctx);
-  const row = await clientSite(deps.db, client, siteId);
-  if (row.repoFullName || row.hostProjectId || row.customDomain) {
+  // Not `clientSite`: owners and admins may tidy away drafts with the site builder off.
+  const row = await siteOfClient(deps.db, client, siteId);
+  if (row.hostProjectId || row.customDomain) {
     throw new SiteInputError(
-      "This site is saved to GitHub or published on Vercel, so it can't be deleted here.",
+      "This site may be live on Vercel. Remove its domain and unlink its Vercel project first, then delete the site.",
     );
+  }
+  const [backend] = await deps.db
+    .select({ siteId: siteBackend.siteId })
+    .from(siteBackend)
+    .where(eq(siteBackend.siteId, row.id));
+  if (backend) {
+    // Its database holds the site's own records (sign-ups, bookings), which a draft delete
+    // must not take with it unasked.
+    throw new SiteInputError("This site has its own database, so it can't be deleted here.");
   }
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
@@ -878,8 +1205,8 @@ export async function deleteClientSite(
   } finally {
     release();
   }
-  // The row goes only if it is still an unpublished draft of this client: a repository or
-  // project linked while the files were being deleted keeps it.
+  // The row goes only if it is still this client's and not on Vercel: a project or domain
+  // added while the files were being deleted keeps it.
   const [, removed] = await deps.db.batch([
     deps.db.update(session).set({ activeSiteId: null }).where(eq(session.activeSiteId, siteId)),
     deps.db
@@ -888,17 +1215,21 @@ export async function deleteClientSite(
         and(
           eq(site.id, siteId),
           eq(site.locationId, client.location.id),
-          isNull(site.repoFullName),
           isNull(site.hostProjectId),
           isNull(site.customDomain),
+          // Nor if it got its own database meanwhile: that database must not be orphaned.
+          notExists(
+            deps.db
+              .select({ siteId: siteBackend.siteId })
+              .from(siteBackend)
+              .where(eq(siteBackend.siteId, site.id)),
+          ),
         ),
       )
       .returning({ id: site.id }),
   ]);
   if (removed.length === 0) {
-    throw new SiteInputError(
-      "The site was saved to GitHub or published while it was being deleted. Reload the page.",
-    );
+    throw new SiteInputError("The site got a domain while it was being deleted. Reload the page.");
   }
   await deps.db.insert(auditLog).values({
     id: randomUUID(),
@@ -908,6 +1239,11 @@ export async function deleteClientSite(
     action: "site.delete",
     detail: { siteId },
   });
+  try {
+    await deps.runtimes?.().destroy?.(siteRuntimeKey(client, siteId));
+  } catch (error) {
+    console.error("The deleted site's sandbox wasn't removed", { siteId, error });
+  }
 }
 
 const isBusy = (error: unknown) =>
@@ -959,6 +1295,44 @@ export async function siteLeadTotals(
   return totals;
 }
 
+/** What search engines will see of a site's latest saved version, page by page. */
+export interface SiteSeo {
+  version: number;
+  pages: PageSeo[];
+  issues: SeoIssue[];
+}
+
+/**
+ * The search check of each site's latest saved version, for the Sites page: its pages' titles,
+ * descriptions and structured data, and what to fix. A site without a saved version is left
+ * out. The client is the caller's (after the staff check); the ids are its sites.
+ */
+export async function siteSeo(
+  deps: Pick<SiteBuilderDeps, "openClientDb">,
+  client: AuthorizedClient,
+  siteIds: string[],
+): Promise<Map<string, SiteSeo>> {
+  const checks = new Map<string, SiteSeo>();
+  if (siteIds.length === 0) return checks;
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    for (const id of siteIds) {
+      const workspace = new SiteWorkspace(tenant, id);
+      const version = await workspace.latestVersion();
+      if (!version) continue;
+      const files = await workspace.versionFiles(version.id);
+      checks.set(id, {
+        version: version.number,
+        pages: pageSeo(files),
+        issues: seoIssues(files),
+      });
+    }
+  } finally {
+    release();
+  }
+  return checks;
+}
+
 /** The sites' names from their briefs in the client's database, by site id. */
 export async function siteNames(
   deps: Pick<SiteBuilderDeps, "openClientDb">,
@@ -970,7 +1344,12 @@ export async function siteNames(
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
-      const brief = await readBrief(tenant, id);
+      // One brief that no longer reads (an older format) mustn't hide every other site.
+      const brief = await readBrief(tenant, id).catch((error) => {
+        if (!(error instanceof ZodError)) throw error;
+        console.error("A site's brief couldn't be read", { siteId: id, error });
+        return null;
+      });
       if (brief) names.set(id, brief.name);
     }
   } finally {
@@ -978,3 +1357,5 @@ export async function siteNames(
   }
   return names;
 }
+
+export { saveVisualEdits, type VisualEditsSaved } from "./visual-edits.ts";

@@ -1,0 +1,53 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the old-promo tag. Nobody uses it any more.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 6,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "perform_action",
+            "arguments": "{\"operation\": \"locations.delete-tag\", \"params\": {\"path\": {\"tagId\": \"fake-tag-03\"}}}",
+            "id": "toolu_01RsoH6DyBH9wgAy5Z6FD4on"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 10403,
+          "completion_tokens": 97,
+          "total_tokens": 10500,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.043552,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.043552
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1384,
+        "interChunkDelaysMs": [1, 116, 18, 146, 53, 45, 51, 126, 3, 0],
+        "totalDurationMs": 1943
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
