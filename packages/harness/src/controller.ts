@@ -107,6 +107,8 @@ export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   keepResults?: LocusAgentConfig["keepResults"];
   /** Tools added here whose results are Locus's own text (see `LocusAgentConfig`). */
   ownTextTools?: LocusAgentConfig["ownTextTools"];
+  /** The client's connected apps (see `LocusAgentConfig`). */
+  apps?: LocusAgentConfig["apps"];
 }
 
 export async function createLocusController({
@@ -120,6 +122,7 @@ export async function createLocusController({
   processors,
   keepResults,
   ownTextTools,
+  apps,
   ...deps
 }: LocusControllerConfig): Promise<AgentController> {
   refuseOwnTextCollisions(ownTextTools ?? [], CONTROLLER_BUILTINS);
@@ -140,6 +143,7 @@ export async function createLocusController({
     ...(processors ? { processors } : {}),
     ...(keepResults ? { keepResults } : {}),
     ...(ownTextTools ? { ownTextTools } : {}),
+    ...(apps ? { apps } : {}),
   });
   const controller = new AgentController({
     id: CONTROLLER_ID,
