@@ -36,12 +36,14 @@ export {
   verifyGithubSignature,
 } from "./github.ts";
 export {
+  agencyGithubAccount,
   checkSitePaths,
   commitSiteVersion,
   createAppJwt,
   ensureSiteDeployment,
   ensureSiteRepo,
   type GithubAppCredentials,
+  type InstallationAccount,
   type InstallationRepo,
   InstallationTokenCache,
   installationToken,
