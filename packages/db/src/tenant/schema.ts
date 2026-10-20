@@ -112,3 +112,19 @@ export const siteLeadDay = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.siteId, t.day] })],
 );
+
+/** How the chat may use a connected app; the harness's `AppAccess`, which enforces it. */
+export const APP_ACCESS_VALUES = ["allow", "ask_changes", "ask", "off"] as const;
+
+/**
+ * How the client's chat may use each of its connected apps (Gmail, Slack...), as an owner or
+ * admin set it on the Apps page. No row means the default. The row goes when the app is
+ * disconnected, so connecting it again starts from the default.
+ */
+export const appAccess = sqliteTable("app_access", {
+  /** Composio's toolkit slug, lower case: `gmail`. */
+  toolkit: text("toolkit").primaryKey(),
+  access: text("access", { enum: APP_ACCESS_VALUES }).notNull(),
+  updatedByUserId: text("updated_by_user_id"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
