@@ -26,21 +26,29 @@ export function pageUrl(previewUrl: string, route: string): string {
 
 /**
  * A site's live preview in a frame, at desktop, tablet or phone width, with a switcher for its
- * pages. `start` starts the preview on the server and returns its address and pages. `aside`
- * renders next to the frame and gets the frame itself (e.g. for Visual edits).
+ * pages. `start` starts the preview on the server and returns its address and pages.
  */
 export function SitePreview({
   start,
   version,
   className,
-  aside,
+  actions,
+  onFrameLoad,
+  onPageChange,
 }: {
   start: () => Promise<Started | { problem: string }>;
   version: number | null;
   className?: string;
-  aside?: (preview: { frame: HTMLIFrameElement | null; url: string | null }) => ReactNode;
+  /** More controls for the toolbar, after the built-in ones (e.g. an editing toggle). */
+  actions?: ReactNode;
+  /** Called with the frame each time a page finishes loading in it. */
+  onFrameLoad?: (frame: HTMLIFrameElement) => void;
+  /**
+   * Called with what the frame shows: the preview's origin (to check `postMessage` senders
+   * against), the page's full address and its route. Null until a preview has started.
+   */
+  onPageChange?: (page: { origin: string; url: string; route: string } | null) => void;
 }) {
-  const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [preview, setPreview] = useState<Started | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [device, setDevice] = useState<DeviceId>("desktop");
@@ -74,8 +82,14 @@ export function SitePreview({
     run();
   }, [run, version]);
 
-  const size = DEVICES.find((d) => d.id === device) ?? DEVICES[0];
   const src = preview ? pageUrl(preview.url, route) : null;
+  const pageChanged = useRef(onPageChange);
+  pageChanged.current = onPageChange;
+  useEffect(() => {
+    pageChanged.current?.(src ? { origin: new URL(src).origin, url: src, route } : null);
+  }, [src, route]);
+
+  const size = DEVICES.find((d) => d.id === device) ?? DEVICES[0];
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
@@ -95,6 +109,7 @@ export function SitePreview({
             </Button>
           ))}
         </ButtonGroup>
+        {actions}
         <label className="flex items-center gap-2 text-sm">
           <span className="text-neutral-600">Page</span>
           <select
@@ -136,33 +151,30 @@ export function SitePreview({
           Versions page to make it current.
         </p>
       )}
-      <div className="flex min-h-0 flex-1 gap-4">
-        <div className="flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-neutral-200 bg-neutral-100 p-3">
-          {src ? (
-            <iframe
-              ref={setFrame}
-              key={`${src}#${reloads}`}
-              title="Site preview"
-              src={src}
-              // The site's code is untrusted: it may run, but never steer the Locus page around it.
-              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-              referrerPolicy="no-referrer"
-              className="shrink-0 rounded-md border border-neutral-300 bg-white shadow-sm"
-              style={{
-                width: size.width ? `${size.width}px` : "100%",
-                height: size.height ? `${size.height}px` : "100%",
-                maxHeight: size.height ? undefined : "100%",
-              }}
-            />
-          ) : (
-            <p className="self-center text-sm text-neutral-600">
-              {starting
-                ? "Starting the preview. The first start can take a minute or two while the site's packages install."
-                : "No preview yet."}
-            </p>
-          )}
-        </div>
-        {aside?.({ frame: src ? frame : null, url: preview?.url ?? null })}
+      <div className="flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-neutral-200 bg-neutral-100 p-3">
+        {src ? (
+          <iframe
+            key={`${src}#${reloads}`}
+            title="Site preview"
+            src={src}
+            // The site's code is untrusted: it may run, but never steer the Locus page around it.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            referrerPolicy="no-referrer"
+            onLoad={(e) => onFrameLoad?.(e.currentTarget)}
+            className="shrink-0 rounded-md border border-neutral-300 bg-white shadow-sm"
+            style={{
+              width: size.width ? `${size.width}px` : "100%",
+              height: size.height ? `${size.height}px` : "100%",
+              maxHeight: size.height ? undefined : "100%",
+            }}
+          />
+        ) : (
+          <p className="self-center text-sm text-neutral-600">
+            {starting
+              ? "Starting the preview. The first start can take a minute or two while the site's packages install."
+              : "No preview yet."}
+          </p>
+        )}
       </div>
     </div>
   );
