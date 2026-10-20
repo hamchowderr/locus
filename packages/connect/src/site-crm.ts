@@ -2,8 +2,8 @@ import { type GhlRequestOptions, type GhlSession, ghlRequest, sharedRateLimiter 
 import { operationById } from "@locus/skills";
 
 // What the site builder may read from the client's sub-account to wire a site into it:
-// calendars to book on, and images from the Media Library (a logo for the favicon, a photo for
-// link previews). Read-only, through the session's own client (the host passes a session minted
+// calendars to book on, products to sell, and images from the Media Library (a logo for the
+// favicon, a photo for link previews). Read-only, through the session's own client (the host passes a session minted
 // after the staff check), never cached. Names are the client's own text, so the builder screens
 // them as data before the model sees them.
 //
@@ -20,6 +20,22 @@ export interface CrmCalendar {
   type: string;
   /** GHL's own booking page for it, for an embedded calendar. */
   embedUrl: string;
+}
+
+/** A one-time price of a product, as GHL lists it. */
+export interface CrmPrice {
+  id: string;
+  name: string;
+  /** In the currency's main unit, as GHL keeps it (12.5 is 12.50). */
+  amount: number;
+  currency: string;
+}
+
+/** A product the builder can sell on a site, with its one-time prices. */
+export interface CrmProduct {
+  id: string;
+  name: string;
+  prices: CrmPrice[];
 }
 
 /** An image in the client's Media Library. */
@@ -43,6 +59,8 @@ export interface CrmMediaFile {
 /** The sub-account reads the builder uses. */
 export interface SiteCrm {
   calendars(): Promise<CrmCalendar[]>;
+  /** Up to `MAX_PRODUCTS` products, newest first, each with its one-time prices. */
+  products(): Promise<CrmProduct[]>;
   /** Images, newest first; `search` matches names. */
   media(search?: string): Promise<CrmMedia[]>;
   /** One image from `media`, by id, downloaded; pass the `search` it was found with. */
@@ -269,6 +287,63 @@ export async function listCalendars(
   return calendars;
 }
 
+/** How many products the builder lists. */
+export const MAX_PRODUCTS = 20;
+const MAX_PRICES = 20;
+const GHL_ID = /^[A-Za-z0-9]{1,64}$/;
+
+/** One line of the client's own text for the model: no line breaks or column bars, capped. */
+const oneLine = (value: unknown, max = 120) =>
+  typeof value === "string"
+    ? value
+        .replace(/[\s|]+/g, " ")
+        .trim()
+        .slice(0, max)
+    : "";
+
+/**
+ * The client's products, newest first, each with its one-time prices (what a site can sell);
+ * a product with none is left out. Recurring prices are left out until a site can sell them.
+ */
+export async function listProducts(
+  session: GhlSession,
+  options: GhlRequestOptions = {},
+): Promise<CrmProduct[]> {
+  const list = operationById("products.list-invoices");
+  const prices = operationById("products.list-prices-for-product");
+  if (!list || !prices) throw new Error("The skill catalog is missing the products operations");
+  const found = await ghlRequest<{ products?: Record<string, unknown>[] }>(
+    list,
+    session,
+    { query: { limit: MAX_PRODUCTS, offset: 0, sortOrder: "desc" } },
+    options,
+  );
+  const products: CrmProduct[] = [];
+  for (const p of (found.products ?? []).slice(0, MAX_PRODUCTS)) {
+    const id = typeof p._id === "string" ? p._id : "";
+    if (!GHL_ID.test(id)) continue;
+    if (p.locationId !== undefined && p.locationId !== session.locationId) continue;
+    const listed = await ghlRequest<{ prices?: Record<string, unknown>[] }>(
+      prices,
+      session,
+      { path: { productId: id }, query: { limit: MAX_PRICES, offset: 0 } },
+      options,
+    );
+    const oneTime: CrmPrice[] = [];
+    for (const price of listed.prices ?? []) {
+      const priceId = typeof price._id === "string" ? price._id : "";
+      const { amount, currency } = price;
+      if (!GHL_ID.test(priceId) || price.type !== "one_time") continue;
+      if (price.product !== undefined && price.product !== id) continue;
+      if (typeof amount !== "number" || !Number.isFinite(amount) || amount <= 0) continue;
+      if (typeof currency !== "string" || !/^[A-Za-z]{3}$/.test(currency)) continue;
+      oneTime.push({ id: priceId, name: oneLine(price.name), amount, currency });
+    }
+    if (oneTime.length > 0) products.push({ id, name: oneLine(p.name) || id, prices: oneTime });
+  }
+  return products;
+}
+
 /**
  * The builder's reads for one client. `open` mints the client's GHL session for each read (the
  * host's `clientGhlSession`, after the staff check) and says how to reach GHL; nothing is kept
@@ -286,6 +361,10 @@ export function siteCrm(
     calendars: async () => {
       const { session, options } = await opened();
       return listCalendars(session, options);
+    },
+    products: async () => {
+      const { session, options } = await opened();
+      return listProducts(session, options);
     },
     media: async (search) => {
       const { session, options } = await opened();
