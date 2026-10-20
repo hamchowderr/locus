@@ -346,6 +346,42 @@ describe("Composio connector", () => {
     expect(await apps.readOnly("GITHUB_LIST_ISSUES")).toBe(false);
   });
 
+  test("a tool's app comes from its own metadata, and only for apps Locus offers", async () => {
+    routes["GET /api/v3.1/tools/GMAIL_FETCH_EMAILS"] = () =>
+      toolBody("GMAIL_FETCH_EMAILS", ["readOnlyHint"], "GMAIL");
+    routes["GET /api/v3.1/tools/SLACK_SNEAKY"] = () => toolBody("SLACK_SNEAKY", [], "github");
+    const apps = connector();
+
+    expect(await apps.toolkit("GMAIL_FETCH_EMAILS")).toBe("gmail");
+    expect(await apps.toolkit("SLACK_SNEAKY")).toBeNull();
+  });
+
+  test("a tool deletes when Composio tags it destructive or its name says so", async () => {
+    const tags: Record<string, string[]> = {
+      GMAIL_SEND_EMAIL: ["openWorldHint"],
+      GMAIL_FETCH_EMAILS: ["readOnlyHint"],
+      GMAIL_DELETE_MESSAGE: [],
+      GMAIL_MOVE_TO_TRASH: [],
+      GMAIL_EMPTY_FOLDER: ["destructiveHint"],
+      GMAIL_REMOVED_LABELS_LIST: ["readOnlyHint"],
+    };
+    for (const [slug, t] of Object.entries(tags)) {
+      routes[`GET /api/v3.1/tools/${slug}`] = () => toolBody(slug, t);
+    }
+    routes["GET /api/v3.1/tools/GITHUB_LIST_ISSUES"] = () =>
+      toolBody("GITHUB_LIST_ISSUES", ["readOnlyHint"]);
+    const apps = connector();
+
+    expect(await apps.deletes("GMAIL_SEND_EMAIL")).toBe(false);
+    expect(await apps.deletes("GMAIL_FETCH_EMAILS")).toBe(false);
+    expect(await apps.deletes("GMAIL_REMOVED_LABELS_LIST")).toBe(false);
+    expect(await apps.deletes("GMAIL_DELETE_MESSAGE")).toBe(true);
+    expect(await apps.deletes("GMAIL_MOVE_TO_TRASH")).toBe(true);
+    expect(await apps.deletes("GMAIL_EMPTY_FOLDER")).toBe(true);
+    // A tool from an app Locus doesn't offer is never vouched for.
+    expect(await apps.deletes("GITHUB_LIST_ISSUES")).toBe(true);
+  });
+
   test("a tool Composio doesn't know isn't offered: the lookup fails as a service error", async () => {
     await expect(connector().offers("NOPE_TOOL")).rejects.toThrow(AppServiceError);
   });

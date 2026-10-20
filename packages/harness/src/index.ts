@@ -6,14 +6,19 @@ export {
   type LocusAgentConfig,
 } from "./agent.ts";
 export {
+  APP_ACCESS,
   APP_TOOL_NAMES,
+  type AppAccess,
+  type AppAccessSettings,
   type AppConnector,
   AppError,
   type AppResult,
   type AppSearch,
   AppServiceError,
   type AppTool,
+  accessOf,
   createAppTools,
+  DEFAULT_APP_ACCESS,
 } from "./apps.ts";
 export {
   type AppCatalog,
