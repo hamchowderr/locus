@@ -83,6 +83,7 @@ import {
   SiteInputError,
   siteLeadTotals,
   siteRuntimeKey,
+  siteSeo,
   toMeasurement,
   usageMeter,
 } from "./site-builder.ts";
@@ -431,6 +432,28 @@ describe("publishing saved versions", () => {
     expect(latest?.commitSha).toMatch(/\w+/);
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.status).toBe("pushed");
+  });
+
+  it("publishes with the site's own domain as its address, and checks its search basics", async () => {
+    const { client, siteId } = await startedSite();
+    const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
+      siteId,
+      name: "a-site",
+    });
+    await db.update(site).set({ customDomain: "www.a-site.test" }).where(eq(site.id, siteId));
+    await publishLatestVersion(deps(), ctx("owner"), client, siteId);
+    const pushed = github.repoFiles(repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain('siteUrl: "https://www.a-site.test"');
+    expect(pushed?.["app/sitemap.ts"]).toContain("locus.pages.map");
+    expect(pushed?.["app/llms.txt/route.ts"]).toContain("export function GET");
+
+    const checks = await siteSeo(deps(), client, [siteId, "not-a-site"]);
+    expect([...checks.keys()]).toEqual([siteId]);
+    expect(checks.get(siteId)).toMatchObject({
+      version: 1,
+      issues: [],
+      pages: [expect.objectContaining({ path: "/", canonical: "/" })],
+    });
   });
 
   it("publishes the latest saved version from the Sites page, without the chat", async () => {

@@ -84,6 +84,24 @@ describe("sandbox tools", () => {
     expect(t.usage).toEqual([{ kind: "sandbox", seconds: expect.any(Number) }]);
   });
 
+  it("check_site lists what search results would show badly once it builds", async () => {
+    const { call } = await setup();
+    await startSite(t.session.workspace, { brief: { name: "Acme" }, templateId: "blank" });
+    await call("files", {
+      action: "write",
+      path: "app/pricing/page.tsx",
+      content: "export default function Pricing() { return null; }",
+    });
+    expect(await call("check_site")).toEqual({
+      ok: true,
+      seo: [
+        { page: "/pricing", problem: "No title in the page's metadata." },
+        { page: "/pricing", problem: "No description in the page's metadata." },
+        { page: "/pricing", problem: expect.stringContaining("No canonical address") },
+      ],
+    });
+  });
+
   it("check_site reports build errors", async () => {
     const { call } = await setup({
       runtime: {
