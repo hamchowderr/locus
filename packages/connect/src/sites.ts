@@ -163,6 +163,7 @@ export async function linkHostProject(
       host: "vercel",
       hostProjectId: projectId,
       status: "deployed",
+      origin: "linked",
     })
     .returning()
     .catch((error: unknown) => {
@@ -361,7 +362,7 @@ export async function removeSiteDomain(
 /**
  * Takes a linked Vercel project off the client, e.g. after the project was deleted on Vercel.
  * Owners and admins only, and only once its domain is removed. Nothing changes on Vercel. A site
- * made only by linking is deleted; one with a repository keeps its row, without the project.
+ * made by linking is deleted; one started in Site Studio keeps its row, without the project.
  */
 export async function unlinkHostProject(
   deps: SiteDeps,
@@ -386,14 +387,19 @@ export async function unlinkHostProject(
     eq(site.hostProjectId, row.hostProjectId),
     isNull(site.customDomain),
   );
-  // TODO(site studio): a site made by Studio needs its own marker; "no repository" stands in.
-  const changed = row.repoFullName
-    ? await deps.db
-        .update(site)
-        .set({ host: null, hostProjectId: null, deployUrl: null, status: "pushed" })
-        .where(unchanged)
-        .returning({ id: site.id })
-    : await deps.db.delete(site).where(unchanged).returning({ id: site.id });
+  const changed =
+    row.origin === "studio"
+      ? await deps.db
+          .update(site)
+          .set({
+            host: null,
+            hostProjectId: null,
+            deployUrl: null,
+            status: row.repoFullName ? "pushed" : "draft",
+          })
+          .where(unchanged)
+          .returning({ id: site.id })
+      : await deps.db.delete(site).where(unchanged).returning({ id: site.id });
   if (changed.length === 0) {
     throw new ConnectError("This site changed while you were unlinking it. Try again.");
   }
