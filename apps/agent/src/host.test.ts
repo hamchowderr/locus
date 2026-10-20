@@ -917,6 +917,7 @@ describe("connected apps", () => {
       builtFor.push(clientId);
       return {
         search: async () => ({ tools: [], notConnected: [] }),
+        offers: async () => true,
         readOnly: async () => true,
         execute: async (slug) => {
           executed.push(slug);

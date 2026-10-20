@@ -28,10 +28,18 @@ const now = new Date();
 /** Composio, in memory: records which client each call was for. */
 function fakeConnections() {
   const calls: string[] = [];
+  const gmail = {
+    toolkit: "gmail",
+    name: "Gmail",
+    description: "Email",
+    logo: "",
+    categories: [],
+  };
   const connections: AppConnections = {
+    catalog: async () => [gmail],
     list: async (clientId) => {
       calls.push(`list ${clientId}`);
-      return [{ toolkit: "gmail", name: "Gmail", connected: false }];
+      return [{ ...gmail, connected: false }];
     },
     connect: async (clientId, toolkit, callbackUrl) => {
       calls.push(`connect ${clientId} ${toolkit} ${callbackUrl}`);

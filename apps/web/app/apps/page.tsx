@@ -1,33 +1,50 @@
 import { ClientAccessDenied } from "@locus/auth";
+import type { AppConnection } from "@locus/harness";
+import { CheckIcon } from "lucide-react";
+import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { appConnectionsFromEnv, clientApps } from "@/lib/apps";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { Notice, Page } from "../ui";
+import { Notice } from "../ui";
 import { disconnectApp } from "./actions";
 import { ConnectButton } from "./connect-button";
+import { categoriesOf, directoryHref, filterApps, pageOf, readQuery } from "./directory";
+import { DirectoryFilters } from "./directory-filters";
 
-/** What the chat can do with each app, in plain words. */
-const USES: Record<string, string> = {
-  gmail: "Read and send email.",
-  googlecalendar: "See and book calendar events.",
-  slack: "Read and post messages.",
+type Search = {
+  error?: string;
+  connected?: string;
+  disconnected?: string;
+  q?: string;
+  category?: string;
+  page?: string;
 };
 
-export default async function Apps({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string; connected?: string; disconnected?: string }>;
-}) {
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
+      <h1 className="text-2xl font-semibold tracking-tight">Connectors</h1>
+      <div className="mt-6 space-y-6">{children}</div>
+    </main>
+  );
+}
+
+export default async function Apps({ searchParams }: { searchParams: Promise<Search> }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fapps");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, connected, disconnected } = await searchParams;
+  const params = await searchParams;
+  const { error, connected, disconnected } = params;
+  const query = readQuery(params);
   const connections = appConnectionsFromEnv();
   if (!connections) {
     return (
-      <Page title="Connected apps">
+      <Shell>
         <Notice tone="info">Connected apps aren't set up here yet.</Notice>
-      </Page>
+      </Shell>
     );
   }
   const ctx = sessionContext(current);
@@ -39,49 +56,196 @@ export default async function Apps({
   if (!listing) redirect("/clients");
 
   return (
-    <Page title="Connected apps">
+    <Shell>
       {error && <Notice tone="error">{error}</Notice>}
       {connected && <Notice tone="info">Back from the app's sign-in. Its status is below.</Notice>}
       {disconnected && <Notice tone="info">App disconnected.</Notice>}
-      <p className="text-neutral-600">
-        The chat can use the apps this client connects. Reading runs right away; sending or changing
-        anything waits for someone to approve it.
+      <p className="max-w-2xl text-neutral-600">
+        The chat can use the apps connected for this client. Reading runs right away; sending or
+        changing anything waits for someone to approve it.
+        {!("problem" in listing) && !listing.manager && " Only owners and admins can connect apps."}
       </p>
       {"problem" in listing ? (
         <Notice tone="error">Locus couldn't load the apps just now. Reload to try again.</Notice>
       ) : (
-        <ul className="space-y-3">
-          {listing.apps.map((app) => (
-            <li key={app.toolkit} className="rounded-md border border-neutral-200 px-3 py-2">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className="font-medium">{app.name}</p>
-                  <p className="text-sm text-neutral-600">
-                    {USES[app.toolkit]} {app.connected ? "Connected." : "Not connected."}
-                  </p>
-                </div>
-                {listing.manager &&
-                  (app.connected ? (
-                    <form action={disconnectApp}>
-                      <input type="hidden" name="toolkit" value={app.toolkit} />
-                      <button
-                        type="submit"
-                        className="rounded-md border border-neutral-300 px-3 py-1 text-sm"
-                      >
-                        Disconnect
-                      </button>
-                    </form>
-                  ) : (
-                    <ConnectButton toolkit={app.toolkit} />
-                  ))}
-              </div>
-            </li>
-          ))}
-        </ul>
+        <Directory apps={listing.apps} manager={listing.manager} query={query} />
       )}
-      {!("problem" in listing) && !listing.manager && (
-        <p className="text-sm text-neutral-600">Only owners and admins can connect apps.</p>
+    </Shell>
+  );
+}
+
+function Directory({
+  apps,
+  manager,
+  query,
+}: {
+  apps: AppConnection[];
+  manager: boolean;
+  query: ReturnType<typeof readQuery>;
+}) {
+  const matching = filterApps(apps, query);
+  const connectedApps = matching.filter((app) => app.connected);
+  const others = pageOf(
+    matching.filter((app) => !app.connected),
+    query.page,
+  );
+  const filtered = query.q !== "" || query.category !== "";
+
+  return (
+    <>
+      <DirectoryFilters q={query.q} category={query.category} categories={categoriesOf(apps)} />
+      {connectedApps.length > 0 && (
+        <section aria-labelledby="connected-apps" className="space-y-3">
+          <h2 id="connected-apps" className="text-sm font-medium text-neutral-600">
+            Connected ({connectedApps.length})
+          </h2>
+          <AppGrid apps={connectedApps} manager={manager} />
+        </section>
       )}
-    </Page>
+      <section aria-labelledby="all-apps" className="space-y-3">
+        <h2 id="all-apps" className="text-sm font-medium text-neutral-600">
+          {filtered ? "Matching apps" : "All apps"} ({others.total})
+        </h2>
+        {others.total === 0 ? (
+          <p className="text-sm text-neutral-600">
+            No apps match.{" "}
+            <Link href="/apps" className="underline">
+              Clear the search
+            </Link>
+          </p>
+        ) : (
+          <AppGrid apps={others.items} manager={manager} />
+        )}
+        {others.pages > 1 && (
+          <nav aria-label="Pages" className="flex items-center justify-between gap-3 pt-2">
+            <PageLink query={query} page={others.page - 1} disabled={others.page <= 1}>
+              Previous
+            </PageLink>
+            <span className="text-sm text-neutral-600">
+              Page {others.page} of {others.pages}
+            </span>
+            <PageLink query={query} page={others.page + 1} disabled={others.page >= others.pages}>
+              Next
+            </PageLink>
+          </nav>
+        )}
+      </section>
+    </>
+  );
+}
+
+function PageLink({
+  query,
+  page,
+  disabled,
+  children,
+}: {
+  query: ReturnType<typeof readQuery>;
+  page: number;
+  disabled: boolean;
+  children: React.ReactNode;
+}) {
+  if (disabled) {
+    return (
+      <Button variant="outline" size="sm" disabled>
+        {children}
+      </Button>
+    );
+  }
+  return (
+    <Button variant="outline" size="sm" asChild>
+      <Link href={directoryHref({ ...query, page })} scroll={false}>
+        {children}
+      </Link>
+    </Button>
+  );
+}
+
+function AppGrid({ apps, manager }: { apps: AppConnection[]; manager: boolean }) {
+  return (
+    <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {apps.map((app) => (
+        <li key={app.toolkit}>
+          <AppCard app={app} manager={manager} />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AppCard({ app, manager }: { app: AppConnection; manager: boolean }) {
+  const category = app.categories[0]?.name;
+  return (
+    <Card size="sm" className="h-full">
+      <CardHeader>
+        <div className="flex min-w-0 items-center gap-3">
+          <Logo app={app} />
+          <div className="min-w-0">
+            <CardTitle className="truncate">{app.name}</CardTitle>
+            {app.connected ? (
+              <span className="flex items-center gap-1 text-xs text-emerald-700">
+                <CheckIcon className="size-3" /> Connected
+              </span>
+            ) : (
+              category && (
+                <Badge variant="secondary" className="mt-0.5">
+                  {category}
+                </Badge>
+              )
+            )}
+          </div>
+        </div>
+        {manager && (
+          <CardAction>
+            {app.connected ? (
+              <form action={disconnectApp}>
+                <input type="hidden" name="toolkit" value={app.toolkit} />
+                <Button
+                  type="submit"
+                  variant="outline"
+                  size="sm"
+                  aria-label={`Disconnect ${app.name}`}
+                >
+                  Disconnect
+                </Button>
+              </form>
+            ) : (
+              <ConnectButton toolkit={app.toolkit} name={app.name} />
+            )}
+          </CardAction>
+        )}
+        {app.description && (
+          <CardDescription className="line-clamp-2">{app.description}</CardDescription>
+        )}
+      </CardHeader>
+    </Card>
+  );
+}
+
+/** The app's logo from Composio, loaded only as it scrolls into view; its initial without one. */
+function Logo({ app }: { app: AppConnection }) {
+  if (!app.logo.startsWith("https://")) {
+    return (
+      <span
+        aria-hidden
+        className="flex size-9 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-sm font-medium uppercase text-neutral-600"
+      >
+        {app.name.slice(0, 1)}
+      </span>
+    );
+  }
+  return (
+    // Composio's logos come from hosts Locus doesn't list for next/image; they're small already.
+    // biome-ignore lint/performance/noImgElement: see above
+    <img
+      src={app.logo}
+      alt=""
+      width={36}
+      height={36}
+      loading="lazy"
+      decoding="async"
+      referrerPolicy="no-referrer"
+      className="size-9 shrink-0 rounded-md bg-white object-contain p-1 ring-1 ring-foreground/10"
+    />
   );
 }

@@ -5,7 +5,9 @@
  * The rules, all in code:
  * - The connector is built for one client, so nothing the model says can reach another client's
  *   apps. The model names a tool and its arguments, never an account or a client.
- * - Only apps on Locus's allowed list (`APP_TOOLKITS`) are offered, whatever the client connects.
+ * - Only apps in Locus's catalog are offered: Composio's apps whose sign-in Composio manages (see
+ *   `composio.ts`). The connector says whether a tool is from one (`offers`), by the tool's own
+ *   metadata, and `use_app` runs nothing else.
  * - `use_app` waits for a person unless the app's own metadata marks the tool read-only and the
  *   run is not tainted. An unknown tool counts as a write.
  * - Everything an app returns is written by other people (emails, messages, events), so every
@@ -18,9 +20,6 @@ import { z } from "zod";
 import type { RunContext } from "./tools.ts";
 import { isTainted, locusError } from "./untrusted.ts";
 
-/** The apps Locus offers, by their connector's toolkit slug. Adding one is one line. */
-export const APP_TOOLKITS = ["gmail", "googlecalendar", "slack"] as const;
-
 export interface AppTool {
   slug: string;
   toolkit: string;
@@ -30,8 +29,9 @@ export interface AppTool {
 }
 
 export interface AppSearch {
+  /** Tools from the client's connected apps. */
   tools: AppTool[];
-  /** Allowed apps this client has not connected; their tools can't run until it does. */
+  /** Offered apps that could help but aren't connected; their tools can't run until they are. */
   notConnected: string[];
 }
 
@@ -43,6 +43,8 @@ export type AppResult = { ok: true; data: unknown } | { ok: false; error: string
  */
 export interface AppConnector {
   search(query: string): Promise<AppSearch>;
+  /** Whether the tool is from an app Locus offers, by the app's own metadata. */
+  offers(slug: string): Promise<boolean>;
   /** Whether the app's own metadata marks the tool as only reading. */
   readOnly(slug: string): Promise<boolean>;
   execute(slug: string, args: Record<string, unknown>): Promise<AppResult>;
@@ -73,15 +75,14 @@ export function createAppTools(
   const findAppTools = createTool({
     id: "find_app_tools",
     description:
-      `Find tools in the client's connected apps (${APP_TOOLKITS.join(", ")}) for a task, ` +
-      "with the arguments each takes. Use it before use_app.",
+      "Find tools in the client's connected apps (Gmail, Slack, calendars, CRMs and more) for a " +
+      "task, with the arguments each takes, and the apps that could do it but aren't connected. " +
+      "Use it before use_app.",
     inputSchema: z.object({ task: z.string().describe("What you want to do, in a few words") }),
     requireApproval: () => false,
     execute: async ({ task }, context) =>
       recoverable(async () => {
-        const found = await (await resolve(context?.requestContext)).search(task);
-        const tools = found.tools.filter((tool) => allowed(tool.toolkit));
-        const notConnected = found.notConnected.filter(allowed);
+        const { tools, notConnected } = await (await resolve(context?.requestContext)).search(task);
         return {
           tools,
           ...(notConnected.length > 0
@@ -107,8 +108,10 @@ export function createAppTools(
     }),
     requireApproval: async ({ tool }, ctx) => {
       try {
-        if (isTainted(ctx?.requestContext) || !allowedSlug(tool)) return true;
-        return !(await (await resolve(asRunContext(ctx?.requestContext))).readOnly(tool));
+        if (isTainted(ctx?.requestContext) || !isSlug(tool)) return true;
+        const apps = await resolve(asRunContext(ctx?.requestContext));
+        if (!(await apps.offers(tool))) return true;
+        return !(await apps.readOnly(tool));
       } catch {
         // Can't tell: ask.
         return true;
@@ -116,12 +119,13 @@ export function createAppTools(
     },
     execute: async ({ tool, arguments: args }, context) =>
       recoverable(async () => {
-        if (!allowedSlug(tool)) {
+        const apps = await resolve(context?.requestContext);
+        if (!isSlug(tool) || !(await apps.offers(tool))) {
           throw new AppError(
-            `${tool} isn't from an app Locus offers (${APP_TOOLKITS.join(", ")}). Find tools with find_app_tools.`,
+            `${tool} isn't from an app Locus offers. Find tools with find_app_tools.`,
           );
         }
-        const result = await (await resolve(context?.requestContext)).execute(tool, args ?? {});
+        const result = await apps.execute(tool, args ?? {});
         return result.ok ? { data: result.data } : { error: result.error };
       }),
   });
@@ -139,14 +143,9 @@ function asRunContext(requestContext: unknown): RunContext | undefined {
   return typeof ctx.get === "function" ? (ctx as RunContext) : { get: (key) => ctx[key] };
 }
 
-export function allowed(toolkit: string): boolean {
-  return (APP_TOOLKITS as readonly string[]).includes(toolkit.toLowerCase());
-}
-
-/** Tool slugs start with their toolkit's slug: GMAIL_SEND_EMAIL, SLACK_LIST_CHANNELS. */
-function allowedSlug(slug: unknown): boolean {
-  if (typeof slug !== "string") return false;
-  return APP_TOOLKITS.some((toolkit) => slug.toUpperCase().startsWith(`${toolkit.toUpperCase()}_`));
+/** A tool slug as Composio writes them: GMAIL_SEND_EMAIL, SLACK_LIST_CHANNELS. */
+function isSlug(slug: unknown): slug is string {
+  return typeof slug === "string" && /^[A-Za-z0-9][A-Za-z0-9_]*$/.test(slug);
 }
 
 async function recoverable<T>(run: () => Promise<T>) {

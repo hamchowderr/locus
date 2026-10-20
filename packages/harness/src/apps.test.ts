@@ -30,10 +30,11 @@ function fakeApps(results: Record<string, AppResult> = {}) {
           description: "Send an email",
           inputSchema: {},
         },
-        { slug: "GITHUB_CREATE_ISSUE", toolkit: "github", description: "Open", inputSchema: {} },
       ],
-      notConnected: ["slack", "github"],
+      notConnected: ["slack"],
     }),
+    // GitHub stands for an app Locus doesn't offer (Composio doesn't manage its sign-in, say).
+    offers: async (slug) => !slug.startsWith("GITHUB_"),
     readOnly: async (slug) => slug === "GMAIL_FETCH_EMAILS",
     execute: async (slug, args) => {
       executed.push({ slug, args });
@@ -50,7 +51,7 @@ const context = () => {
 };
 
 describe("app tools", () => {
-  test("only apps Locus offers are listed, and unconnected ones point to the Connect button", async () => {
+  test("connected apps' tools are listed, and unconnected ones point to the Connect button", async () => {
     const tools = createAppTools(fakeApps().connector);
     const found = await tools.find_app_tools.execute?.({ task: "email" }, {} as never);
     expect(found).toEqual({
@@ -108,11 +109,21 @@ describe("app tools", () => {
   test("a tool from an app Locus doesn't offer never runs", async () => {
     const { connector, executed } = fakeApps();
     const { use_app } = createAppTools(connector);
-    const result = await use_app.execute?.({ tool: "GITHUB_CREATE_ISSUE" }, {} as never);
-    expect(result).toMatchObject({
-      error: expect.stringMatching(/isn't from an app Locus offers/),
-    });
+    for (const tool of ["GITHUB_CREATE_ISSUE", "../GMAIL_SEND_EMAIL", ""]) {
+      const result = await use_app.execute?.({ tool }, {} as never);
+      expect(result).toMatchObject({
+        error: expect.stringMatching(/isn't from an app Locus offers/),
+      });
+    }
     expect(executed).toEqual([]);
+  });
+
+  test("a tool the connector won't vouch for waits, even when it says it only reads", async () => {
+    const { connector } = fakeApps();
+    const { use_app } = createAppTools({ ...connector, readOnly: async () => true });
+    const rule = use_app.requireApproval as (i: unknown, c: unknown) => Promise<boolean>;
+    expect(await rule({ tool: "GITHUB_LIST_ISSUES" }, { requestContext: context() })).toBe(true);
+    expect(await rule({ tool: "GMAIL_FETCH_EMAILS" }, { requestContext: context() })).toBe(false);
   });
 });
 
