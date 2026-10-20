@@ -5,6 +5,7 @@ import {
   normalizeSitePath,
   openQuestions,
   readBrief,
+  SCREENSHOT_TYPES,
   WorkspaceError,
   writeBrief,
 } from "@locus/studio";
@@ -677,6 +678,46 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     ),
   });
 
+  const view_reference = createTool({
+    id: "view_reference",
+    description:
+      "Look at a reference screenshot the brief lists (pass its path). Take layout, colour " +
+      "and mood from it; never copy its words, logos or pictures.",
+    requireApproval: noApproval,
+    inputSchema: z.object({ path: z.string().min(1).max(300) }),
+    execute: withSession(async (session, input: { path: string }) => {
+      const path = normalizeSitePath(input.path);
+      const brief = await readBrief(session.workspace.db, session.workspace.siteId);
+      const listed = brief?.references?.some((r) => r.kind === "screenshot" && r.path === path);
+      if (!listed) {
+        throw new BuilderError(`${path} isn't a screenshot in the brief's references.`);
+      }
+      const mediaType = screenshotType(path);
+      const content = await session.workspace.readFile(path);
+      if (!mediaType || !(content instanceof Uint8Array)) {
+        throw new BuilderError(`${path} isn't a PNG, JPEG or WebP image any more.`);
+      }
+      return { path, mediaType, data: Buffer.from(content).toString("base64") };
+    }),
+    // The model sees the picture itself; the base64 text would only cost tokens.
+    toModelOutput: (raw: unknown) => {
+      const output = raw as { path: string; mediaType: string; data: string } | { error: string };
+      return "error" in output
+        ? { type: "json", value: output }
+        : {
+            type: "content",
+            value: [
+              { type: "text", text: `Reference screenshot ${output.path}:` },
+              {
+                type: "file",
+                mediaType: output.mediaType,
+                data: { type: "data", data: output.data },
+              },
+            ],
+          };
+    },
+  });
+
   const saveVersion = async (session: BuilderSession, message: string) => {
     const version = await session.workspace.saveVersion({
       message,
@@ -778,8 +819,16 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     preview,
     fetch_reference,
     generate_image,
+    view_reference,
     versions,
   };
+}
+
+/** A screenshot's media type from its extension, or null. */
+function screenshotType(path: string): string | null {
+  const ext = path.split(".").at(-1)?.toLowerCase();
+  if (ext === "jpeg") return "image/jpeg";
+  return Object.entries(SCREENSHOT_TYPES).find(([, e]) => e === ext)?.[0] ?? null;
 }
 
 export type SiteBuilderTools = ReturnType<typeof createSiteBuilderTools>;
