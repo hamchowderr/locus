@@ -15,7 +15,13 @@ import {
   type SessionContext,
   type UsageMeasurement,
 } from "@locus/auth";
-import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
+import {
+  ConnectError,
+  commitSiteVersion,
+  type PublishDeps,
+  type SiteDeps,
+  siteDomainStatus,
+} from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
 import { auditLog, member, session, site, siteBackend } from "@locus/db/control";
 import {
@@ -36,9 +42,13 @@ import {
   sandboxFromEnv,
 } from "@locus/sandbox";
 import {
+  type PageSeo,
+  pageSeo,
   readBrief,
+  type SeoIssue,
   SITE_KINDS,
   SiteWorkspace,
+  seoIssues,
   startSite,
   templateById,
   type VersionInfo,
@@ -250,6 +260,24 @@ const SITES_PAGE_PUBLISH_ERROR =
   "GitHub refused the publish. Check that the Locus app can still reach the site's " +
   "repository, then publish again.";
 
+/**
+ * The address a published site goes by, for its sitemap, links and structured data: its own
+ * domain once that is live (verified and pointing at Vercel), else its Vercel address. Null
+ * before either exists, when the site falls back to the host's production address at build.
+ */
+export async function siteAddress(
+  deps: SiteDeps,
+  client: AuthorizedClient,
+  row: { id: string; customDomain: string | null; deployUrl: string | null },
+): Promise<string | null> {
+  if (row.customDomain) {
+    // A domain still being set up (or a check that fails) doesn't hold up the publish.
+    const status = await siteDomainStatus(deps, client, row.id).catch(() => null);
+    if (status?.state === "live") return `https://${row.customDomain}`;
+  }
+  return row.deployUrl;
+}
+
 /** What runs after each saved version (`BuilderSession.onVersionSaved`). */
 export type VersionSavedHook = NonNullable<BuilderSession["onVersionSaved"]>;
 
@@ -282,13 +310,15 @@ export function publishHook(
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
     try {
-      const { commitSha, url } = await commitSiteVersion(publish(), client, {
+      const deps = publish();
+      const siteUrl = await siteAddress(deps, client, row);
+      const { commitSha, url } = await commitSiteVersion(deps, client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
-        // The version's files, with this site's form endpoint in `lib/locus.ts`.
+        // The version's files, with this site's form endpoint and address in `lib/locus.ts`.
         files: withLocusSettings(
           files.map(({ path, content }) => ({ path, content })),
-          { siteId, locusUrl },
+          { siteId, locusUrl, siteUrl },
         ),
       });
       return { commitSha, url };
@@ -1070,6 +1100,44 @@ export async function siteLeadTotals(
     release();
   }
   return totals;
+}
+
+/** What search engines will see of a site's latest saved version, page by page. */
+export interface SiteSeo {
+  version: number;
+  pages: PageSeo[];
+  issues: SeoIssue[];
+}
+
+/**
+ * The search check of each site's latest saved version, for the Sites page: its pages' titles,
+ * descriptions and structured data, and what to fix. A site without a saved version is left
+ * out. The client is the caller's (after the staff check); the ids are its sites.
+ */
+export async function siteSeo(
+  deps: Pick<SiteBuilderDeps, "openClientDb">,
+  client: AuthorizedClient,
+  siteIds: string[],
+): Promise<Map<string, SiteSeo>> {
+  const checks = new Map<string, SiteSeo>();
+  if (siteIds.length === 0) return checks;
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    for (const id of siteIds) {
+      const workspace = new SiteWorkspace(tenant, id);
+      const version = await workspace.latestVersion();
+      if (!version) continue;
+      const files = await workspace.versionFiles(version.id);
+      checks.set(id, {
+        version: version.number,
+        pages: pageSeo(files),
+        issues: seoIssues(files),
+      });
+    }
+  } finally {
+    release();
+  }
+  return checks;
 }
 
 /** The sites' names from their briefs in the client's database, by site id. */
