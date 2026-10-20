@@ -587,14 +587,50 @@ describe("destroying a site's sandbox", () => {
       token: TOKEN,
       teamId: "team_1",
       projectId: "prj_1",
+      signal: expect.any(AbortSignal),
     });
-    expect(remove).toHaveBeenCalledWith({ deleteOrphanSnapshots: true });
+    expect(remove).toHaveBeenCalledWith(expect.objectContaining({ deleteOrphanSnapshots: true }));
+  });
+
+  it("doesn't stop (and so snapshot) a sandbox this process holds, and never reopens it", async () => {
+    const held = fakeSdkSandbox();
+    serve({ sandbox: held, created: false }, { sandbox: fakeSdkSandbox(), created: true });
+    const provider = new VercelRuntimeProvider(CONFIG);
+    const runtime = await provider.open("k");
+    const remove = vi.fn(async () => {});
+    sdk.get.mockResolvedValue({ delete: remove });
+    await provider.destroy("k");
+    expect(held.stop).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalledTimes(1);
+    // A call already holding the runtime can't bring the sandbox back.
+    await expect(runtime.run("ls")).rejects.toThrow("This site was deleted.");
+    expect(sdk.getOrCreate).toHaveBeenCalledTimes(1);
+    // A later open is a new runtime, for a site of the same key made again.
+    await provider.open("k");
+    expect(sdk.getOrCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("deletes a sandbox that finished opening while the site was being deleted", async () => {
+    const gate = deferred();
+    const late = Object.assign(fakeSdkSandbox(), { delete: vi.fn(async () => {}) });
+    serve({ sandbox: late, created: true, gate: gate.promise });
+    sdk.get.mockRejectedValue(gone(404));
+    const provider = new VercelRuntimeProvider(CONFIG);
+    const opening = provider.open("k");
+    await tick();
+    await provider.destroy("k");
+    gate.resolve();
+    await expect(opening).rejects.toThrow("This site was deleted.");
+    expect(late.delete).toHaveBeenCalledWith({ deleteOrphanSnapshots: true });
   });
 
   it("is done when the sandbox no longer exists", async () => {
     sdk.get.mockRejectedValue(Object.assign(new Error("not found"), { response: { status: 404 } }));
     await expect(new VercelRuntimeProvider({ oidc: true }).destroy("k")).resolves.toBeUndefined();
-    expect(sdk.get.mock.calls[0]?.[0]).toEqual({ name: sandboxName("k") });
+    expect(sdk.get.mock.calls[0]?.[0]).toEqual({
+      name: sandboxName("k"),
+      signal: expect.any(AbortSignal),
+    });
   });
 
   it("passes on any other failure", async () => {
