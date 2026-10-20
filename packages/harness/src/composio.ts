@@ -56,6 +56,9 @@ export interface AppCatalog {
 export const CATALOG_TTL_MS = 10 * 60_000;
 /** Composio's largest page. */
 const CATALOG_PAGE = 1000;
+/** The most apps a search names as not connected: the chat shows a Connect button for each. */
+const NOT_CONNECTED_MAX = 4;
+
 /** A bound on the pages read, should Composio's cursor never end. */
 const CATALOG_MAX_PAGES = 20;
 
@@ -115,17 +118,28 @@ export function createComposioCatalog({
     return { apps, slugs: new Set(apps.map((app) => app.toolkit)) };
   };
 
-  let cached: { at: number; loaded: ReturnType<typeof load> } | undefined;
+  type Loaded = Awaited<ReturnType<typeof load>>;
+  let cached: { at: number; loaded: Promise<Loaded> } | undefined;
+  // The last catalog read in full: served while a refresh fails, so a Composio outage doesn't
+  // take the Apps page and the chat's apps down with it.
+  let lastGood: Loaded | undefined;
   const current = () => {
     if (!cached || now() - cached.at >= ttlMs) {
-      const entry = { at: now(), loaded: load() };
+      const entry = {
+        at: now(),
+        loaded: load().then((loaded) => {
+          lastGood = loaded;
+          return loaded;
+        }),
+      };
       // A failed read isn't kept: the next call reads again.
       entry.loaded.catch(() => {
         if (cached === entry) cached = undefined;
       });
       cached = entry;
     }
-    return cached.loaded;
+    const stale = lastGood;
+    return stale ? cached.loaded.catch(() => stale) : cached.loaded;
   };
 
   return {
@@ -240,7 +254,8 @@ export function createComposioConnector({
           const toolkit = status.toolkit.toLowerCase();
           if (!(await catalog.offers(toolkit))) continue;
           if (status.hasActiveConnection) connected.add(toolkit);
-          else if (!notConnected.includes(toolkit)) notConnected.push(toolkit);
+          else if (!notConnected.includes(toolkit) && notConnected.length < NOT_CONNECTED_MAX)
+            notConnected.push(toolkit);
         }
         const slugs = new Set(
           found.results.flatMap((r) => [...r.primaryToolSlugs, ...r.relatedToolSlugs]),
@@ -348,7 +363,8 @@ export function createComposioConnections({
           listed.push({
             toolkit,
             name: toolkit,
-            description: "",
+            description:
+              "Locus no longer offers this app, so the chat can't use it. Disconnect it here.",
             logo: "",
             categories: [],
             connected: true,
