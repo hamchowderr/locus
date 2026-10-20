@@ -23,6 +23,8 @@ export function useConnectPopup({
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const popup = useRef<Window | null>(null);
+  // The app this hook is signing in to. Every Locus tab hears every sign-in, so others' are ignored.
+  const pending = useRef<string | null>(null);
   const timers = useRef<number[]>([]);
   const handlers = useRef({ onDone, onError, onClosed });
   handlers.current = { onDone, onError, onClosed };
@@ -30,13 +32,14 @@ export function useConnectPopup({
   const stop = useCallback(() => {
     for (const id of timers.current) window.clearInterval(id);
     timers.current = [];
+    pending.current = null;
     setBusy(null);
   }, []);
 
   useEffect(() => {
     const channel = new BroadcastChannel(CONNECTED_CHANNEL);
     channel.onmessage = (event: MessageEvent<ConnectedMessage>) => {
-      if (!event.data?.toolkit) return;
+      if (!event.data?.toolkit || event.data.toolkit !== pending.current) return;
       popup.current?.close();
       stop();
       handlers.current.onDone(event.data);
@@ -59,6 +62,7 @@ export function useConnectPopup({
     );
     if (!opened) return false;
     popup.current = opened;
+    pending.current = toolkit;
     setBusy(toolkit);
     connectAppLink(toolkit)
       .then((result) => {
