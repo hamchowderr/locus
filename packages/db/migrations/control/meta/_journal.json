@@ -127,6 +127,13 @@
       "when": 1792476918357,
       "tag": "0017_site_backend",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792478368975,
+      "tag": "0018_site_booking_calendars",
+      "breakpoints": true
     }
   ]
 }

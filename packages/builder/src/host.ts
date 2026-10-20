@@ -21,6 +21,9 @@ import {
   ensureSiteBackendEnv,
   migrateSiteBackend,
   type PublishDeps,
+  type SiteCrm,
+  type SiteDeps,
+  siteDomainStatus,
 } from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
 import { auditLog, member, session, site, siteBackend } from "@locus/db/control";
@@ -42,9 +45,14 @@ import {
   sandboxFromEnv,
 } from "@locus/sandbox";
 import {
+  bookingCalendarIds,
+  type PageSeo,
+  pageSeo,
   readBrief,
+  type SeoIssue,
   SITE_KINDS,
   SiteWorkspace,
+  seoIssues,
   startSite,
   templateById,
   type VersionInfo,
@@ -52,6 +60,7 @@ import {
   withLocusSettings,
 } from "@locus/studio";
 import { and, count, eq, gte, inArray, isNull, notExists, notInArray, sum } from "drizzle-orm";
+import { ZodError } from "zod";
 import {
   BuilderError,
   type BuilderSession,
@@ -118,6 +127,11 @@ export interface SiteBuilderDeps {
   locusUrl: string;
   /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
   billing?: boolean;
+  /**
+   * The client's GHL sub-account, for the builder's `crm` tool. Called with the client after
+   * the staff check on each tool call; null or absent leaves the tool saying it can't reach it.
+   */
+  crm?: ((client: AuthorizedClient) => SiteCrm) | null;
 }
 
 export interface SiteBuilderWiring {
@@ -260,6 +274,24 @@ const SITES_PAGE_PUBLISH_ERROR =
   "GitHub refused the publish. Check that the Locus app can still reach the site's " +
   "repository, then publish again.";
 
+/**
+ * The address a published site goes by, for its sitemap, links and structured data: its own
+ * domain once that is live (verified and pointing at Vercel), else its Vercel address. Null
+ * before either exists, when the site falls back to the host's production address at build.
+ */
+export async function siteAddress(
+  deps: SiteDeps,
+  client: AuthorizedClient,
+  row: { id: string; customDomain: string | null; deployUrl: string | null },
+): Promise<string | null> {
+  if (row.customDomain) {
+    // A domain still being set up (or a check that fails) doesn't hold up the publish.
+    const status = await siteDomainStatus(deps, client, row.id).catch(() => null);
+    if (status?.state === "live") return `https://${row.customDomain}`;
+  }
+  return row.deployUrl;
+}
+
 /** What runs after each saved version (`BuilderSession.onVersionSaved`). */
 export type VersionSavedHook = NonNullable<BuilderSession["onVersionSaved"]>;
 
@@ -291,19 +323,26 @@ export function publishHook(
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
+    // The calendars this version books on: the only ones its visitors may book once it's live.
+    // Recorded before the push, so the new deployment never refuses its own calendars.
+    await db
+      .update(site)
+      .set({ bookingCalendars: bookingCalendarIds(files) })
+      .where(eq(site.id, row.id));
     try {
       const deps = publish();
       // An app-style site's database gets the version's changes first, and its project the
       // database's settings, so the build this push starts runs against a ready database.
       await migrateSiteBackend(deps, client, { siteId, files });
       await ensureSiteBackendEnv(deps, client, { siteId });
+      const siteUrl = await siteAddress(deps, client, row);
       const { commitSha, url } = await commitSiteVersion(deps, client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
-        // The version's files, with this site's form endpoint in `lib/locus.ts`.
+        // The version's files, with this site's form endpoint and address in `lib/locus.ts`.
         files: withLocusSettings(
           files.map(({ path, content }) => ({ path, content })),
-          { siteId, locusUrl },
+          { siteId, locusUrl, siteUrl },
         ),
       });
       return { commitSha, url };
@@ -381,9 +420,17 @@ interface PooledDb {
   until: number;
   users: number;
   retired: boolean;
+  /** Closes the connection once it has gone unused for `POOL_IDLE_MS`. */
+  idle?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * A pooled connection is replaced after this long. Its token lives an hour (`openClientDb`), so a
+ * call that leased it just before then still has a quarter of an hour.
+ */
 const POOL_LIFETIME_MS = 45 * 60_000;
+/** A connection nobody has used for this long is closed, so idle clients hold nothing open. */
+export const POOL_IDLE_MS = 5 * 60_000;
 const pool = new Map<string, PooledDb>();
 
 function closeIfIdle(entry: PooledDb) {
@@ -394,6 +441,7 @@ function closeIfIdle(entry: PooledDb) {
 function retire(locationId: string) {
   const entry = pool.get(locationId);
   if (!entry) return;
+  clearTimeout(entry.idle);
   pool.delete(locationId);
   entry.retired = true;
   closeIfIdle(entry);
@@ -426,6 +474,7 @@ export async function leaseClientDb(
     pool.set(id, entry);
   }
   const leased = entry;
+  clearTimeout(leased.idle);
   leased.users++;
   let db: TenantDb;
   try {
@@ -443,6 +492,14 @@ export async function leaseClientDb(
       released = true;
       leased.users--;
       closeIfIdle(leased);
+      if (leased.users === 0 && !leased.retired) {
+        clearTimeout(leased.idle);
+        leased.idle = setTimeout(() => {
+          if (pool.get(id) === leased && leased.users === 0) retire(id);
+        }, POOL_IDLE_MS);
+        // Never keeps the process alive.
+        leased.idle.unref?.();
+      }
     },
   };
 }
@@ -667,6 +724,7 @@ export function createSiteBuilder(
           ? deps.openRuntime(client, siteId)
           : deps.runtimes().open(siteRuntimeKey(client, siteId)),
       images: deps.images ?? null,
+      crm: deps.crm ? deps.crm(client) : null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
       ...(onVersionSaved ? { onVersionSaved } : {}),
@@ -1069,6 +1127,44 @@ export async function siteLeadTotals(
   return totals;
 }
 
+/** What search engines will see of a site's latest saved version, page by page. */
+export interface SiteSeo {
+  version: number;
+  pages: PageSeo[];
+  issues: SeoIssue[];
+}
+
+/**
+ * The search check of each site's latest saved version, for the Sites page: its pages' titles,
+ * descriptions and structured data, and what to fix. A site without a saved version is left
+ * out. The client is the caller's (after the staff check); the ids are its sites.
+ */
+export async function siteSeo(
+  deps: Pick<SiteBuilderDeps, "openClientDb">,
+  client: AuthorizedClient,
+  siteIds: string[],
+): Promise<Map<string, SiteSeo>> {
+  const checks = new Map<string, SiteSeo>();
+  if (siteIds.length === 0) return checks;
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    for (const id of siteIds) {
+      const workspace = new SiteWorkspace(tenant, id);
+      const version = await workspace.latestVersion();
+      if (!version) continue;
+      const files = await workspace.versionFiles(version.id);
+      checks.set(id, {
+        version: version.number,
+        pages: pageSeo(files),
+        issues: seoIssues(files),
+      });
+    }
+  } finally {
+    release();
+  }
+  return checks;
+}
+
 /** The sites' names from their briefs in the client's database, by site id. */
 export async function siteNames(
   deps: Pick<SiteBuilderDeps, "openClientDb">,
@@ -1080,7 +1176,12 @@ export async function siteNames(
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
-      const brief = await readBrief(tenant, id);
+      // One brief that no longer reads (an older format) mustn't hide every other site.
+      const brief = await readBrief(tenant, id).catch((error) => {
+        if (!(error instanceof ZodError)) throw error;
+        console.error("A site's brief couldn't be read", { siteId: id, error });
+        return null;
+      });
       if (brief) names.set(id, brief.name);
     }
   } finally {
