@@ -12,10 +12,18 @@ export {
   AppError,
   type AppResult,
   type AppSearch,
+  AppServiceError,
   type AppTool,
   createAppTools,
 } from "./apps.ts";
-export { appUserId, type ComposioConnectorConfig, createComposioConnector } from "./composio.ts";
+export {
+  type AppConnection,
+  type AppConnections,
+  appUserId,
+  type ComposioConnectorConfig,
+  createComposioConnections,
+  createComposioConnector,
+} from "./composio.ts";
 export {
   ASK_TOOLS,
   CONTROLLER_ID,

@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { AppServiceError } from "./apps.ts";
-import { appUserId, createComposioConnector } from "./composio.ts";
+import { appUserId, createComposioConnections, createComposioConnector } from "./composio.ts";
 
 // A pretend Composio API: the real SDK runs against it, so this proves what Locus asks Composio
 // for (which user, which apps, no sign-in links, no paid Instant accounts) with no key and no
@@ -10,6 +10,7 @@ import { appUserId, createComposioConnector } from "./composio.ts";
 interface Seen {
   method: string;
   path: string;
+  query: URLSearchParams;
   body: Record<string, unknown> | undefined;
 }
 let server: Server;
@@ -25,9 +26,10 @@ const read = async (req: IncomingMessage) => {
 
 beforeAll(async () => {
   server = createServer(async (req, res) => {
-    const path = new URL(req.url ?? "/", "http://x").pathname;
+    const url = new URL(req.url ?? "/", "http://x");
+    const path = url.pathname;
     const body = await read(req);
-    seen.push({ method: req.method ?? "", path, body });
+    seen.push({ method: req.method ?? "", path, query: url.searchParams, body });
     const route = routes[`${req.method} ${path}`];
     res.setHeader("content-type", "application/json");
     if (!route) {
@@ -259,5 +261,139 @@ describe("Composio connector", () => {
       toolkit: { slug: "github", name: "", logo: "" },
     });
     expect(await connector().readOnly("GMAIL_SNEAKY")).toBe(false);
+  });
+});
+
+describe("Composio connections", () => {
+  const connections = () => createComposioConnections({ apiKey: "test-key", baseURL });
+  const toolkitsBody = (gmail: "ACTIVE" | null) => ({
+    items: [
+      {
+        slug: "gmail",
+        name: "Gmail",
+        is_no_auth: false,
+        meta: { logo: "" },
+        connected_account: gmail
+          ? {
+              id: "ca_gmail",
+              status: gmail,
+              auth_config: { id: "ac_1", auth_scheme: "OAUTH2", is_composio_managed: true },
+            }
+          : null,
+      },
+      {
+        slug: "slack",
+        name: "Slack",
+        is_no_auth: false,
+        meta: { logo: "" },
+        connected_account: null,
+      },
+    ],
+    next_cursor: null,
+    total_pages: 1,
+  });
+
+  const ACCOUNTS = "/api/v3.1/connected_accounts";
+  /** The client's accounts for an app as Composio lists them, `next` naming a further page. */
+  const accountsBody = (accounts: [id: string, status: string][], next: string | null = null) => ({
+    items: accounts.map(([id, status]) => ({
+      id,
+      status,
+      status_reason: null,
+      is_disabled: false,
+      created_at: "2026-10-20T00:00:00Z",
+      updated_at: "2026-10-20T00:00:00Z",
+      toolkit: { slug: "gmail" },
+      auth_config: {
+        id: "ac_1",
+        auth_scheme: "OAUTH2",
+        is_composio_managed: true,
+        is_disabled: false,
+      },
+      data: {},
+      params: {},
+    })),
+    next_cursor: next,
+    total_pages: next ? 2 : 1,
+  });
+  const deleted = () =>
+    seen.filter((s) => s.method === "DELETE").map((s) => s.path.slice(ACCOUNTS.length + 1));
+
+  test("lists Locus's apps for the client, connected or not", async () => {
+    routes[`GET ${SESSION}/trs_1/toolkits`] = () => toolkitsBody("ACTIVE");
+    expect(await connections().list("client-1")).toEqual([
+      { toolkit: "gmail", name: "Gmail", connected: true },
+      { toolkit: "googlecalendar", name: "googlecalendar", connected: false },
+      { toolkit: "slack", name: "Slack", connected: false },
+    ]);
+    expect(seen.find((s) => s.path === SESSION)?.body).toMatchObject({
+      user_id: appUserId("client-1"),
+    });
+  });
+
+  test("connecting gives the app's sign-in link, coming back to Locus", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => accountsBody([]);
+    routes[`POST ${SESSION}/trs_1/link`] = (body) => {
+      expect(body).toMatchObject({ toolkit: "gmail", callback_url: "https://locus.test/apps" });
+      return { connected_account_id: "ca_new", redirect_url: "https://accounts.google.test/o" };
+    };
+    expect(await connections().connect("client-1", "gmail", "https://locus.test/apps")).toBe(
+      "https://accounts.google.test/o",
+    );
+  });
+
+  test("only apps Locus offers can be connected or disconnected", async () => {
+    await expect(connections().connect("client-1", "github", "https://x")).rejects.toThrow(
+      AppServiceError,
+    );
+    await expect(connections().disconnect("client-1", "github")).rejects.toThrow(AppServiceError);
+    expect(seen).toEqual([]);
+  });
+
+  test("disconnecting deletes every account the client has for that app, found by Locus", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => {
+      const listed = seen.filter((s) => s.path === ACCOUNTS);
+      return listed.length === 1
+        ? accountsBody([["ca_gmail", "ACTIVE"]], "page-2")
+        : accountsBody([["ca_second", "ACTIVE"]]);
+    };
+    routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
+    routes[`DELETE ${ACCOUNTS}/ca_second`] = () => ({ success: true });
+    await connections().disconnect("client-1", "GMAIL");
+    const lists = seen.filter((s) => s.path === ACCOUNTS);
+    for (const list of lists) {
+      expect(list.query.getAll("user_ids").join(",")).toContain(appUserId("client-1"));
+      expect(list.query.getAll("toolkit_slugs").join(",")).toContain("gmail");
+    }
+    expect(lists[1]?.query.get("cursor")).toBe("page-2");
+    expect(deleted()).toEqual(["ca_gmail", "ca_second"]);
+  });
+
+  test("disconnecting an app that isn't connected does nothing", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => accountsBody([]);
+    await connections().disconnect("client-1", "gmail");
+    expect(deleted()).toEqual([]);
+  });
+
+  test("connecting clears the client's stale tries first and keeps a working account", async () => {
+    routes[`GET ${ACCOUNTS}`] = () =>
+      accountsBody([
+        ["ca_live", "ACTIVE"],
+        ["ca_expired", "EXPIRED"],
+        ["ca_abandoned", "INITIATED"],
+      ]);
+    routes[`DELETE ${ACCOUNTS}/ca_expired`] = () => ({ success: true });
+    routes[`DELETE ${ACCOUNTS}/ca_abandoned`] = () => ({ success: true });
+    routes[`POST ${SESSION}/trs_1/link`] = () => ({
+      connected_account_id: "ca_new",
+      redirect_url: "https://accounts.google.test/o",
+    });
+    await connections().connect("client-1", "gmail", "https://locus.test/apps");
+    expect(deleted()).toEqual(["ca_expired", "ca_abandoned"]);
+    expect(seen.find((s) => s.path === SESSION)?.body).toMatchObject({
+      user_id: appUserId("client-1"),
+      manage_connections: { enable: false },
+      instant: false,
+    });
   });
 });

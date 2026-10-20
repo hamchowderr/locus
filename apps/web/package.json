@@ -18,6 +18,7 @@
     "@locus/connect": "workspace:*",
     "@locus/db": "workspace:*",
     "@locus/ghl": "workspace:*",
+    "@locus/harness": "workspace:*",
     "@locus/sandbox": "workspace:*",
     "@locus/secrets": "workspace:*",
     "@locus/studio": "workspace:*",

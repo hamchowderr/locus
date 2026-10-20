@@ -4,7 +4,7 @@
  *
  * Each Locus client is one Composio user (`appUserId`), so a client's chat can only ever use
  * the accounts that client connected. The session is built for that user with Locus's allowed
- * apps only, can't create sign-in links (connecting happens on the Connections page, by a
+ * apps only, can't create sign-in links (connecting happens on the Apps page, by a
  * person), and never falls back to Composio-owned "Instant" accounts, which Composio charges for.
  */
 
@@ -126,3 +126,95 @@ export function createComposioConnector({
       }),
   };
 }
+
+/** One allowed app and whether the client has connected it. */
+export interface AppConnection {
+  toolkit: string;
+  name: string;
+  connected: boolean;
+}
+
+/**
+ * Connecting and disconnecting a client's apps, for the Apps page. Callers check the
+ * member may manage the client first; the client id comes from that check, never a form.
+ * Connected-account ids are looked up for the client here, so nothing a browser sends can name
+ * another client's account.
+ */
+export function createComposioConnections({
+  apiKey,
+  baseURL,
+}: Omit<ComposioConnectorConfig, "clientId">) {
+  const composio = new Composio({
+    apiKey,
+    ...(baseURL ? { baseURL } : {}),
+    allowTracking: false,
+    disableVersionCheck: true,
+  });
+  const sessionFor = (clientId: string) =>
+    composio.create(appUserId(clientId), {
+      toolkits: [...APP_TOOLKITS],
+      manageConnections: false,
+      instant: false,
+    });
+  const states = async (clientId: string) =>
+    (await (await sessionFor(clientId)).toolkits({ toolkits: [...APP_TOOLKITS] })).items;
+  /** Every account the client has for the app, in any state, across Composio's pages. */
+  const accounts = async (clientId: string, slug: string) => {
+    const found: { id: string; status: string }[] = [];
+    let cursor: string | null | undefined;
+    do {
+      const page = await composio.connectedAccounts.list({
+        userIds: [appUserId(clientId)],
+        toolkitSlugs: [slug],
+        ...(cursor ? { cursor } : {}),
+      });
+      found.push(...page.items.map((a) => ({ id: a.id, status: a.status })));
+      cursor = page.nextCursor;
+    } while (cursor);
+    return found;
+  };
+  const offered = (toolkit: string) => {
+    if (!allowed(toolkit)) throw new AppServiceError(`Locus doesn't offer ${toolkit}`);
+    return toolkit.toLowerCase();
+  };
+
+  return {
+    async list(clientId: string): Promise<AppConnection[]> {
+      const items = await states(clientId);
+      return APP_TOOLKITS.map((toolkit) => {
+        const item = items.find((i) => i.slug.toLowerCase() === toolkit);
+        return {
+          toolkit,
+          name: item?.name ?? toolkit,
+          connected: item?.connection?.isActive === true,
+        };
+      });
+    },
+
+    /**
+     * The app's own sign-in page; it comes back to `callbackUrl` when the person is done.
+     * Accounts left half-connected or expired by earlier tries are removed first, so they can't
+     * pile up where nobody can see or remove them.
+     */
+    async connect(clientId: string, toolkit: string, callbackUrl: string): Promise<string> {
+      const slug = offered(toolkit);
+      for (const account of await accounts(clientId, slug)) {
+        if (account.status !== "ACTIVE") await composio.connectedAccounts.delete(account.id);
+      }
+      const request = await (await sessionFor(clientId)).authorize(slug, { callbackUrl });
+      if (!request.redirectUrl)
+        throw new AppServiceError(`Composio gave no sign-in link for ${toolkit}`);
+      return request.redirectUrl;
+    },
+
+    /** Removes every account the client has for the app, so none is left for the chat to use. */
+    async disconnect(clientId: string, toolkit: string): Promise<void> {
+      const slug = offered(toolkit);
+      for (const account of await accounts(clientId, slug)) {
+        await composio.connectedAccounts.delete(account.id);
+      }
+    },
+  };
+}
+
+export type AppConnections = ReturnType<typeof createComposioConnections>;
