@@ -2,7 +2,7 @@
 
 import type { SitePage } from "@locus/studio";
 import { ExternalLink, Monitor, RotateCw, Smartphone, Tablet } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { cn } from "@/lib/utils";
@@ -26,17 +26,21 @@ export function pageUrl(previewUrl: string, route: string): string {
 
 /**
  * A site's live preview in a frame, at desktop, tablet or phone width, with a switcher for its
- * pages. `start` starts the preview on the server and returns its address and pages.
+ * pages. `start` starts the preview on the server and returns its address and pages. `aside`
+ * renders next to the frame and gets the frame itself (e.g. for Visual edits).
  */
 export function SitePreview({
   start,
   version,
   className,
+  aside,
 }: {
   start: () => Promise<Started | { problem: string }>;
   version: number | null;
   className?: string;
+  aside?: (preview: { frame: HTMLIFrameElement | null; url: string | null }) => ReactNode;
 }) {
+  const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [preview, setPreview] = useState<Started | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [device, setDevice] = useState<DeviceId>("desktop");
@@ -132,29 +136,33 @@ export function SitePreview({
           Versions page to make it current.
         </p>
       )}
-      <div className="flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-neutral-200 bg-neutral-100 p-3">
-        {src ? (
-          <iframe
-            key={`${src}#${reloads}`}
-            title="Site preview"
-            src={src}
-            // The site's code is untrusted: it may run, but never steer the Locus page around it.
-            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-            referrerPolicy="no-referrer"
-            className="shrink-0 rounded-md border border-neutral-300 bg-white shadow-sm"
-            style={{
-              width: size.width ? `${size.width}px` : "100%",
-              height: size.height ? `${size.height}px` : "100%",
-              maxHeight: size.height ? undefined : "100%",
-            }}
-          />
-        ) : (
-          <p className="self-center text-sm text-neutral-600">
-            {starting
-              ? "Starting the preview. The first start can take a minute or two while the site's packages install."
-              : "No preview yet."}
-          </p>
-        )}
+      <div className="flex min-h-0 flex-1 gap-4">
+        <div className="flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-neutral-200 bg-neutral-100 p-3">
+          {src ? (
+            <iframe
+              ref={setFrame}
+              key={`${src}#${reloads}`}
+              title="Site preview"
+              src={src}
+              // The site's code is untrusted: it may run, but never steer the Locus page around it.
+              sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              referrerPolicy="no-referrer"
+              className="shrink-0 rounded-md border border-neutral-300 bg-white shadow-sm"
+              style={{
+                width: size.width ? `${size.width}px` : "100%",
+                height: size.height ? `${size.height}px` : "100%",
+                maxHeight: size.height ? undefined : "100%",
+              }}
+            />
+          ) : (
+            <p className="self-center text-sm text-neutral-600">
+              {starting
+                ? "Starting the preview. The first start can take a minute or two while the site's packages install."
+                : "No preview yet."}
+            </p>
+          )}
+        </div>
+        {aside?.({ frame: src ? frame : null, url: preview?.url ?? null })}
       </div>
     </div>
   );

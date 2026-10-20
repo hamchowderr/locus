@@ -1041,3 +1041,5 @@ export async function siteNames(
   }
   return names;
 }
+
+export { saveVisualEdits, type VisualEditsSaved } from "./visual-edits.ts";

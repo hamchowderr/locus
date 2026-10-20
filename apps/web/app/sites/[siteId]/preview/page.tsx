@@ -1,7 +1,8 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
+import { SITE_BUILDER_MODE_ID } from "@locus/builder";
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { SitePreview } from "@/components/site-preview/site-preview";
+import { EditablePreview } from "@/components/visual-edits/editable-preview";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { clientSite, siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
@@ -52,7 +53,9 @@ export default async function Preview({
         Preview of <strong>{name}</strong>
         {version ? `, version ${version}` : ""}
       </p>
-      <SitePreview
+      <EditablePreview
+        siteId={siteId}
+        chatMode={SITE_BUILDER_MODE_ID}
         className="mt-4 min-h-0 flex-1"
         version={version}
         start={previewSite.bind(null, siteId, version)}

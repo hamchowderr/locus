@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SiteRuntime } from "@locus/sandbox";
-import type { SiteFile } from "@locus/studio";
+import { previewFiles, type SiteFile } from "@locus/studio";
 
 /** sha256 of a file's bytes, as `sha256sum` prints it inside the sandbox. */
 export const hashOf = (content: SiteFile["content"]) =>
@@ -68,8 +68,13 @@ export async function sandboxHashes(
  * Makes the runtime's project match the draft: writes what differs and deletes what the draft
  * no longer has, except the files the sandbox makes for itself (lockfiles, next-env.d.ts).
  * A recreated (empty) sandbox therefore gets every file again.
+ *
+ * The sandbox gets the preview's copy of the draft (`previewFiles`): pages and components carry
+ * `data-locus-src` locations and the layout loads the visual-edits script, so a person can click
+ * things in the preview to change them. The draft and its versions never have either.
  */
-export async function syncRuntime(runtime: SiteRuntime, files: SiteFile[]): Promise<SyncReport> {
+export async function syncRuntime(runtime: SiteRuntime, draft: SiteFile[]): Promise<SyncReport> {
+  const files = previewFiles(draft);
   const present = await sandboxHashes(runtime);
   const wanted = new Set(files.map((f) => f.path));
   const toWrite = files.filter((f) => present.get(f.path) !== hashOf(f.content));

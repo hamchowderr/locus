@@ -39,6 +39,22 @@ export {
   withLocusSettings,
 } from "./templates/index.ts";
 export {
+  annotateSource,
+  applyVisualEdits,
+  isAnnotatable,
+  SOURCE_ATTR,
+  VisualEdit,
+  type VisualEditFailure,
+  type VisualEditResult,
+  VisualEdits,
+} from "./visual-edits.ts";
+export {
+  previewFiles,
+  VISUAL_EDITS_MESSAGE,
+  VISUAL_EDITS_SCRIPT,
+  VISUAL_EDITS_SCRIPT_PATH,
+} from "./visual-edits-preview.ts";
+export {
   type FileChanges,
   type FileContent,
   type SiteFile,
