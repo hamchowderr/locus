@@ -109,6 +109,8 @@ function writtenContents(writes: Map<string, string>): string {
 }
 
 const IMAGE_EXT = /\.(png)$/i;
+/** How long generate_image waits for the client's Media Library before answering without it. */
+export const MEDIA_LIBRARY_TIMEOUT_MS = 10_000;
 
 const FILE_ACTIONS = ["list", "read", "write", "edit", "delete"] as const;
 const CRM_ACTIONS = [
@@ -786,15 +788,23 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     image: { bytes: Uint8Array; mediaType: "image/png" | "image/jpeg" | "image/webp" },
   ): Promise<{ mediaLibrary?: string; note?: string }> => {
     if (!session.crm) return {};
-    const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[image.mediaType];
-    const base = (path.split("/").at(-1) ?? "image.png").replace(/\.[a-z0-9]+$/i, "");
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      await session.crm.saveImage({
+      // The name is the site file's; the CRM tidies it and gives it the type's extension.
+      const saving = session.crm.saveImage({
         siteId: session.workspace.siteId,
-        name: `${base}.${ext}`,
+        name: path.split("/").at(-1) ?? "",
         bytes: image.bytes,
         contentType: image.mediaType,
       });
+      // A slow GHL doesn't hold the tool up: past the limit it answers with the note below.
+      const late = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The Media Library took too long")),
+          MEDIA_LIBRARY_TIMEOUT_MS,
+        );
+      });
+      await Promise.race([saving, late]);
       return { mediaLibrary: "A copy is in the client's Media Library too." };
     } catch (error) {
       const why =
@@ -807,6 +817,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       return {
         note: `The image is in the site, but it wasn't saved to the client's Media Library. ${why}`,
       };
+    } finally {
+      clearTimeout(timer);
     }
   };
 

@@ -1,6 +1,13 @@
 import { type GhlRequestOptions, type GhlSession, ghlRequest, sharedRateLimiter } from "@locus/ghl";
 import { operationById } from "@locus/skills";
-import { isGhlStorageUrl, mediaFolder, uploadMedia } from "./media-library.ts";
+import {
+  isGhlStorageUrl,
+  listMediaItems,
+  mediaFolder,
+  mediaOp,
+  uploadMedia,
+} from "./media-library.ts";
+import { logGhlFailure } from "./site-leads.ts";
 
 export { isGhlStorageUrl };
 
@@ -80,8 +87,9 @@ export interface SiteCrm {
   mediaFile(id: string, search?: string): Promise<CrmMediaFile>;
   /**
    * Keeps a copy of an image the builder made for `siteId` in the Media Library, in the site's
-   * folder (`siteImagesFolderName`). Throws `CrmMediaError` when the connection may not write
-   * there.
+   * folder (`siteImagesFolderName`), named from `name` with `contentType`'s extension
+   * (`savedImageName`), replacing an earlier copy of that name. Throws `CrmMediaError` when the
+   * connection may not write there.
    */
   saveImage(input: {
     siteId: string;
@@ -356,9 +364,32 @@ export async function listProducts(
   return products;
 }
 
+/** The file extension of each image type the builder keeps. */
+const SAVED_IMAGE_EXT: Record<SavedImageType, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+};
+
+/**
+ * The name an image is kept under: the last part of `name`, tidied, without its extension,
+ * then the extension of its type. "image" when nothing is left of it.
+ */
+export function savedImageName(name: string, contentType: SavedImageType): string {
+  const base = (name.split(/[\\/]/).pop() ?? "")
+    .replace(/\.[A-Za-z0-9]*$/, "")
+    .replace(/[^\w.-]+/g, "-")
+    .slice(-80)
+    .replace(/^[.-]+/, "");
+  return `${base || "image"}.${SAVED_IMAGE_EXT[contentType]}`;
+}
+
 /**
  * Keeps an image in the site's folder of the Media Library, making the folder the first time.
- * The caller has checked the connection may write there.
+ * An image made again under the same name replaces the copy kept before: once the new one is
+ * up, files of exactly that name in the site's folder (and only there) are deleted. A delete
+ * that fails leaves the older copy and is only logged. The caller has checked the connection
+ * may write there.
  */
 export async function saveSiteImage(
   session: GhlSession,
@@ -366,32 +397,50 @@ export async function saveSiteImage(
   input: { siteId: string; name: string; bytes: Uint8Array; contentType: SavedImageType },
 ): Promise<CrmSavedMedia> {
   if (!/^[A-Za-z0-9-]{1,64}$/.test(input.siteId)) throw new CrmMediaError("That isn't a site.");
-  const name =
-    input.name
-      .split(/[\\/]/)
-      .pop()
-      ?.replace(/[^\w.-]+/g, "-")
-      .slice(-80)
-      .replace(/^[.-]+/, "") || "image.png";
+  const name = savedImageName(input.name, input.contentType);
   const ghl = { session, options };
   const parentId = await mediaFolder(ghl, siteImagesFolderName(input.siteId));
-  return uploadMedia(ghl, {
+  const older = await listMediaItems(ghl, { type: "file", parentId, query: name }, 0).then(
+    ({ items }) =>
+      items.filter(
+        (f) => f.type === "file" && f.name === name && (f.parentId ?? parentId) === parentId,
+      ),
+    (error: unknown) => {
+      logGhlFailure(`Finding older copies of an image of site ${input.siteId}`, error);
+      return [];
+    },
+  );
+  const saved = await uploadMedia(ghl, {
     // A copy, so the File owns a plain ArrayBuffer whatever backs the bytes.
     file: new File([new Uint8Array(input.bytes)], name, { type: input.contentType }),
     name,
     parentId,
   });
+  for (const file of older) {
+    if (file.id === saved.fileId) continue;
+    await ghlRequest(
+      mediaOp("medias.delete-media-content"),
+      session,
+      { path: { id: file.id } },
+      options,
+    ).catch((error: unknown) =>
+      logGhlFailure(`Deleting an older copy of an image of site ${input.siteId}`, error),
+    );
+  }
+  return saved;
 }
 
 /**
- * What the builder uses of one client. `open` mints the client's GHL session for each call (the
- * host's `clientGhl`, after the staff check), says how to reach GHL, and gives the scopes the
- * agency's connection was granted; nothing is kept between calls. `download` fetches Media
- * Library files (tests pass a fake).
+ * What the builder uses of one client. `open` gives, for each call, the scopes the agency's
+ * connection was granted and `session`, which mints the client's GHL session (the host's
+ * `clientGhl`, after the staff check), and says how to reach GHL; nothing is kept between
+ * calls. A session is minted only once a call is going to GHL: a write the scopes don't allow
+ * asks GHL nothing, not even for a token. `download` fetches Media Library files (tests pass a
+ * fake).
  */
 export function siteCrm(
   open: () => Promise<{
-    session: GhlSession;
+    session: () => Promise<GhlSession>;
     http?: Pick<GhlRequestOptions, "fetch" | "baseUrl">;
     /** The connection's granted scopes. Left out, nothing is written to the sub-account. */
     scopes?: readonly string[];
@@ -405,19 +454,19 @@ export function siteCrm(
   return {
     calendars: async () => {
       const { session, options } = await opened();
-      return listCalendars(session, options);
+      return listCalendars(await session(), options);
     },
     products: async () => {
       const { session, options } = await opened();
-      return listProducts(session, options);
+      return listProducts(await session(), options);
     },
     media: async (search) => {
       const { session, options } = await opened();
-      return listMedia(session, options, search);
+      return listMedia(await session(), options, search);
     },
     mediaFile: async (id, search) => {
       const { session, options } = await opened();
-      return downloadMedia(session, options, id, download, search);
+      return downloadMedia(await session(), options, id, download, search);
     },
     saveImage: async (input) => {
       const { session, options, scopes } = await opened();
@@ -426,7 +475,7 @@ export function siteCrm(
           "This client's HighLevel connection isn't allowed to add files to its Media Library.",
         );
       }
-      return saveSiteImage(session, options, input);
+      return saveSiteImage(await session(), options, input);
     },
   };
 }

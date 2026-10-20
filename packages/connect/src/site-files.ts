@@ -161,7 +161,7 @@ async function folderFiles(
         { type: "file", parentId: folderId },
         page * MEDIA_LIST_PAGE,
       );
-      for (const { type, ...file } of items) if (type === "file") files.push(file);
+      for (const { type, parentId: _, ...file } of items) if (type === "file") files.push(file);
       if (seen()) return { files, more };
       if (!more) break;
     }

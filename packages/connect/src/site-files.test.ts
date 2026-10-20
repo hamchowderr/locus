@@ -8,7 +8,7 @@ import { createRateLimiter } from "@locus/ghl";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, type FakeGhl, type FakeRoutes } from "@locus/testing";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
 import { ConnectError } from "./errors.ts";
 import type { GhlAppConfig } from "./ghl-oauth.ts";
@@ -252,6 +252,54 @@ describe("a site's files", () => {
     );
     expect(await upload(deps())).toMatchObject({ status: 403 });
     expect(library).toEqual([]);
+  });
+
+  it("takes back a file GHL kept outside this sub-account's storage, and says it wasn't kept", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const foreign: FakeRoutes = {
+      ...routes,
+      "POST /medias/upload-file": (req) => {
+        (routes["POST /medias/upload-file"] as (r: typeof req) => unknown)(req);
+        return {
+          body: {
+            fileId: "file1",
+            url: "https://storage.googleapis.com/msgsndr/ghl-client-2/media/file1.png",
+          },
+        };
+      },
+    };
+    const d = deps();
+    fake = createFakeGhl(foreign);
+    d.http = { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" };
+    expect(await upload(d)).toEqual({
+      status: 502,
+      body: { error: "The file couldn't be kept just now. Try again." },
+    });
+    const taken = fake.requests.filter((r) => r.method === "DELETE");
+    expect(taken.map((r) => r.url.pathname)).toEqual(["/medias/file1"]);
+    expect(taken[0]?.url.searchParams.get("altId")).toBe("ghl-client-1");
+    expect(library.filter((f) => f.type === "file")).toEqual([]);
+    expect(errors.mock.calls).toEqual([
+      [`GHL kept a file for site ${SITE} at an unexpected address`],
+    ]);
+
+    // When taking it back fails too, that is logged as well; the answer is the same.
+    errors.mockClear();
+    const stuck: FakeRoutes = {
+      ...foreign,
+      "*": (req) =>
+        req.method === "DELETE"
+          ? { status: 500, body: { message: "boom" } }
+          : { status: 404, body: { message: "not here" } },
+    };
+    fake = createFakeGhl(stuck);
+    d.http = { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" };
+    expect(await upload(d)).toMatchObject({ status: 502 });
+    expect(errors.mock.calls).toEqual([
+      [`Taking back a file for site ${SITE} failed: GhlError medias.delete-media-content 500`],
+      [`GHL kept a file for site ${SITE} at an unexpected address`],
+    ]);
+    errors.mockRestore();
   });
 
   it("deletes only files in the site's folders, so a retry after a partial delete works", async () => {

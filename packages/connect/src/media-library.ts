@@ -19,6 +19,8 @@ export interface MediaItem {
   name: string;
   url: string;
   createdAt: Date | null;
+  /** The folder it is in, when GHL says. */
+  parentId?: string;
 }
 
 /** Files and folders listed per page. */
@@ -72,6 +74,7 @@ function mediaItem(raw: unknown, locationId: string, asked: string): MediaItem |
     name: name || id,
     url,
     createdAt: created && !Number.isNaN(created.getTime()) ? created : null,
+    ...(typeof f.parentId === "string" ? { parentId: f.parentId } : {}),
   };
 }
 
