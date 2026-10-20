@@ -54,6 +54,9 @@ Rules that keep the live site's data safe:
 - Never edit `lib/db.ts`, `lib/local-migrations.ts`, `instrumentation.ts`,
   `app/api/locus/preview-migrations` or the auth route. Locus relies on them as written.
 - Never create tables whose names start with `_locus_`, `sqlite_` or `libsql_`.
+- Owners and staff can read the site's tables on its Database page. Give any column that holds
+  a secret (a key, token or code) a name with `secret` or `token` in it, so the page
+  hides it.
 
 Example `db/migrations/0001_bookings.sql`:
 

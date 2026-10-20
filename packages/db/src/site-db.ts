@@ -36,8 +36,12 @@ export interface SiteUser {
  * Opens a site's database with a token that names only it (`TenantProvisioner.mintToken`),
  * minted after the staff checks. The caller closes it.
  */
-export function openSiteDb(url: string, authToken: string): Client {
-  return createClient({ url, authToken });
+export function openSiteDb(
+  url: string,
+  authToken: string,
+  options: { intMode?: "number" | "bigint" } = {},
+): Client {
+  return createClient({ url, authToken, ...options });
 }
 
 /** SQLite's own tables and the migration bookkeeping, which the dashboard leaves out. */
