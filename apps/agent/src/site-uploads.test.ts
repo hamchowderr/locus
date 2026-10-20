@@ -137,6 +137,38 @@ describe("the agent server's site uploads", () => {
     expect((await handle(put("good", new Uint8Array(1000)))).status).toBe(200);
   });
 
+  it("keeps one site from taking every place", async () => {
+    const handle = siteUploads(deps, console.error, { maxActivePerSite: 1 });
+    const slow = stalled(100);
+    const first = handle(put("good", slow.body));
+    await vi.waitFor(() => expect(calls.claimed).toHaveLength(1));
+    expect((await handle(put("good", new Uint8Array(1000)))).status).toBe(503);
+    slow.release();
+    expect((await first).status).toBe(200);
+    expect((await handle(put("good", new Uint8Array(1000)))).status).toBe(200);
+  });
+
+  it("cuts off a sender too slow to finish, even one that never quite stops", async () => {
+    const before = await leftovers();
+    let timer: NodeJS.Timeout | undefined;
+    const trickle = new ReadableStream<Uint8Array>({
+      start(controller) {
+        timer = setInterval(() => controller.enqueue(new Uint8Array(1)), 10);
+      },
+      cancel() {
+        clearInterval(timer);
+      },
+    });
+    const handle = siteUploads(deps, console.error, { graceMs: 100, minBytesPerSecond: 1e9 });
+    try {
+      expect((await handle(put("good", trickle))).status).toBe(400);
+    } finally {
+      clearInterval(timer);
+    }
+    expect(calls.kept).toEqual([]);
+    expect(await leftovers()).toEqual(before);
+  });
+
   it("says plainly, and readably for the browser, when this server takes no uploads", async () => {
     const off = siteUploadsOff(put("good", new Uint8Array(1)));
     expect(off.status).toBe(503);

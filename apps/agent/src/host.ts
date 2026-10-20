@@ -436,8 +436,6 @@ export function createHost({
   const serve = async (request: Request): Promise<Response> => {
     const { pathname } = new URL(request.url);
     if (pathname === "/health") return new Response("ok");
-    // Ticketed, cookie-free and from any site's page: before the origin and JSON rules below.
-    if (pathname === SITE_UPLOAD_PATH) return uploads ? uploads(request) : siteUploadsOff(request);
     if (request.method === "GET" || request.method === "HEAD") {
       return guardStream(request, await api.fetch(request));
     }
@@ -471,6 +469,10 @@ export function createHost({
       const what = `${request.method} ${new URL(request.url).pathname}`;
       let response: Response;
       try {
+        // Its answers carry CORS headers for sites' pages and are logged by the route itself.
+        if (new URL(request.url).pathname === SITE_UPLOAD_PATH) {
+          return uploads ? await uploads(request) : siteUploadsOff(request);
+        }
         response = await serve(request);
       } catch (error) {
         logError(`Agent request failed: ${what}`, error);

@@ -287,6 +287,32 @@ describe("ghlRequest", () => {
     }
   }, 20_000);
 
+  test("turns an odd answer to a streamed upload into an error, not a crash", async () => {
+    let status = 205;
+    const server = createServer((req, res) => {
+      req.resume();
+      res.writeHead(status);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const send = () =>
+        ghlRequest(
+          uploadMedia,
+          { token: "t", tokenKind: "location", locationId: "loc" },
+          { body: { file: new File(["x"], "a.png", { type: "image/png" }) } },
+          { baseUrl: `http://127.0.0.1:${port}` },
+        );
+      // 205 has no body: an empty answer, which is not JSON GHL would send.
+      await expect(send()).resolves.toBeUndefined();
+      status = 103;
+      await expect(send()).rejects.toThrow();
+    } finally {
+      server.close();
+    }
+  }, 20_000);
+
   test("refuses nested values in form and multipart bodies, before sending", async () => {
     const ghl = createFakeGhl({});
     await expect(
