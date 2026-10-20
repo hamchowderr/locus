@@ -475,7 +475,8 @@ export async function chooseSite(form: FormData) {
       console.error("Choosing a site: the client's database didn't answer", error);
       return null;
     });
-    if (!briefs) back("/sites", new Error("Locus couldn't reach this client's sites. Try again."));
+    if (!briefs)
+      return back("/sites", new Error("Locus couldn't reach this client's sites. Try again."));
     hasBrief = briefs.has(wanted);
     if (hasBrief) siteId = await chooseActiveSite(locus().db, ctx, client, wanted);
   } catch (error) {
