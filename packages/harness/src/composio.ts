@@ -9,7 +9,7 @@
  */
 
 import { Composio } from "@composio/core";
-import { APP_TOOLKITS, type AppConnector, type AppTool } from "./apps.ts";
+import { APP_TOOLKITS, type AppConnector, AppServiceError, type AppTool, allowed } from "./apps.ts";
 
 /** The Composio user a Locus client's connections belong to. */
 export function appUserId(clientId: string): string {
@@ -54,39 +54,63 @@ export function createComposioConnector({
     });
     return session;
   };
-  // Tool metadata is Composio's own description of the tool, not anyone's data.
+  /**
+   * Composio's own failures (a 4xx naming an unconnected app, an outage) become data the model
+   * reads through the screen; thrown, Mastra would hand their text to the model unscreened.
+   * The session is dropped too, so one Composio expired or lost is opened again next time.
+   */
+  const service = async <T>(run: () => Promise<T>): Promise<T> => {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof AppServiceError) throw error;
+      session = undefined;
+      throw new AppServiceError(
+        `Composio: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+  // Tool metadata is Composio's own description of the tool, not anyone's data; kept for the
+  // life of the process.
   const readOnly = new Map<string, Promise<boolean>>();
 
   return {
-    async search(query) {
-      const found = await (await current()).search({ query, toolkits: [...APP_TOOLKITS] });
-      const slugs = new Set(
-        found.results.flatMap((r) => [...r.primaryToolSlugs, ...r.relatedToolSlugs]),
-      );
-      const tools: AppTool[] = [...slugs].flatMap((slug) => {
-        const schema = found.toolSchemas[slug];
-        if (!schema) return [];
-        return [
-          {
-            slug,
-            toolkit: schema.toolkit,
-            description: schema.description ?? "",
-            inputSchema: schema.inputSchema ?? {},
-          },
-        ];
-      });
-      const notConnected = found.toolkitConnectionStatuses
-        .filter((status) => !status.hasActiveConnection)
-        .map((status) => status.toolkit);
-      return { tools, notConnected };
-    },
+    search: (query) =>
+      service(async () => {
+        const found = await (await current()).search({ query, toolkits: [...APP_TOOLKITS] });
+        if (!found.success)
+          throw new AppServiceError(`Composio: ${found.error ?? "search failed"}`);
+        const slugs = new Set(
+          found.results.flatMap((r) => [...r.primaryToolSlugs, ...r.relatedToolSlugs]),
+        );
+        const tools: AppTool[] = [...slugs].flatMap((slug) => {
+          const schema = found.toolSchemas[slug];
+          // Without its arguments' schema the model could only guess how to call it.
+          if (!schema?.inputSchema || schema.hasFullSchema === false) return [];
+          return [
+            {
+              slug,
+              toolkit: schema.toolkit,
+              description: schema.description ?? "",
+              inputSchema: schema.inputSchema,
+            },
+          ];
+        });
+        const notConnected = found.toolkitConnectionStatuses
+          .filter((status) => !status.hasActiveConnection)
+          .map((status) => status.toolkit);
+        return { tools, notConnected };
+      }),
 
     readOnly(slug) {
       let known = readOnly.get(slug);
       if (!known) {
         known = composio.tools
           .getRawComposioToolBySlug(slug)
-          .then((tool) => (tool.tags ?? []).includes(READ_ONLY_TAG));
+          .then(
+            (tool) =>
+              allowed(tool.toolkit?.slug ?? "") && (tool.tags ?? []).includes(READ_ONLY_TAG),
+          );
         // Only answers are kept; a failed lookup is asked again next time.
         known.catch(() => readOnly.delete(slug));
         readOnly.set(slug, known);
@@ -94,10 +118,11 @@ export function createComposioConnector({
       return known;
     },
 
-    async execute(slug, args) {
-      const result = await (await current()).execute(slug, args);
-      if (result.resultType === "completed") return { ok: true, data: result.data };
-      return { ok: false, error: result.error || `${slug} failed` };
-    },
+    execute: (slug, args) =>
+      service(async () => {
+        const result = await (await current()).execute(slug, args);
+        if (result.resultType === "completed") return { ok: true, data: result.data };
+        return { ok: false, error: result.error || `${slug} failed` };
+      }),
   };
 }
