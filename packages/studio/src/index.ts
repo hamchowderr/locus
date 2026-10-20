@@ -86,6 +86,26 @@ export {
   withSearchFiles,
 } from "./templates/index.ts";
 export {
+  annotateSource,
+  applyVisualEdits,
+  isAnnotatable,
+  SOURCE_ATTR,
+  safeUrl,
+  stripSourceAttrs,
+  VisualEdit,
+  type VisualEditFailure,
+  type VisualEditResult,
+  VisualEdits,
+} from "./visual-edits.ts";
+export {
+  draftFingerprint,
+  editorOrigin,
+  previewFiles,
+  VISUAL_EDITS_MESSAGE,
+  VISUAL_EDITS_SCRIPT_PATH,
+  visualEditsScript,
+} from "./visual-edits-preview.ts";
+export {
   type FileChanges,
   type FileContent,
   type SiteFile,
