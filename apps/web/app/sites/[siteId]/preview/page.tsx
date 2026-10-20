@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { SitePreview } from "@/components/site-preview/site-preview";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { clientSite, siteNames } from "@/lib/site-builder";
+import { siteNames, siteOfClient } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { previewSite } from "../actions";
 
@@ -26,7 +26,8 @@ export default async function Preview({
     throw e;
   });
   if (!client) redirect("/clients");
-  const found = await clientSite(locus().db, client, siteId).then(
+  // Anyone with the client may look; starting the preview checks the site builder is on.
+  const found = await siteOfClient(locus().db, client, siteId).then(
     () => true,
     (e) => {
       if (e instanceof ClientAccessDenied) return false;
