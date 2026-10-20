@@ -148,13 +148,19 @@ function siteTagRoute(controller: AgentController, getSession: () => Promise<Ses
       if (!store) throw new Error("the controller's store keeps no threads");
       const thread = await store.getThreadById({ threadId: id });
       if (!thread || workThreadOf(thread)) return c.json({ error: "not found" }, 404);
-      const tagged = (thread.metadata as Record<string, unknown> | undefined)?.[SITE_THREAD_KEY];
-      if (tagged !== undefined && tagged !== site) {
-        return c.json({ error: "this conversation is another site's" }, 409);
-      }
-      if (tagged === undefined) {
-        await store.updateThreadMetadata({ id, update: () => ({ [SITE_THREAD_KEY]: site }) });
-      }
+      // Checked inside the store's update, so two tags sent at once can't both win.
+      let other = false;
+      await store.updateThreadMetadata({
+        id,
+        update: (current) => {
+          const tagged = (current.metadata as Record<string, unknown> | undefined)?.[
+            SITE_THREAD_KEY
+          ];
+          other = tagged !== undefined && tagged !== site;
+          return tagged === undefined ? { [SITE_THREAD_KEY]: site } : undefined;
+        },
+      });
+      if (other) return c.json({ error: "this conversation is another site's" }, 409);
       return c.json({ ok: true });
     },
   });

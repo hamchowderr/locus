@@ -71,7 +71,7 @@ export default async function SiteSettings({
   searchParams: Promise<{ error?: string; published?: string; deploys?: string }>;
 }) {
   const { siteId } = await params;
-  const { ctx, client, site, name, refusal, manager } = await siteForPage(
+  const { ctx, client, site, name, unread, refusal, manager } = await siteForPage(
     siteId,
     `/sites/${siteId}/settings`,
   );
@@ -136,6 +136,12 @@ export default async function SiteSettings({
         <Notice tone="info">
           Version {published} sent to GitHub.
           {deploys ? " Vercel deploys it in a minute or two." : ""}
+        </Notice>
+      )}
+      {unread && (
+        <Notice tone="error">
+          Locus couldn't read this site's details just now, so building and publishing are hidden.
+          Reload to try again.
         </Notice>
       )}
       {refusal && <Notice tone="info">{refusal}</Notice>}

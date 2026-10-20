@@ -36,14 +36,16 @@ export function useSiteChat({
     },
   });
   const [problem, setProblem] = useState<string | null>(null);
-  const busy = controller.status === "streaming";
 
-  // Open the site's conversation once, if it has one.
+  // Open the site's conversation once, if it has one. Nothing is sent until this settles, so
+  // a first message can't start a second conversation for the site.
+  const [ready, setReady] = useState(false);
   const tagged = useRef<string | null>(null);
   const { openThread, activeThreadId } = controller;
   useEffect(() => {
     if (!mode) return;
     let stale = false;
+    setReady(false);
     void (async () => {
       try {
         const res = await fetch("/api/agent-controller/threads", { cache: "no-store" });
@@ -55,6 +57,8 @@ export function useSiteChat({
         }
       } catch {
         // No history to show; the first message starts the site's conversation.
+      } finally {
+        if (!stale) setReady(true);
       }
     })();
     return () => {
@@ -62,17 +66,26 @@ export function useSiteChat({
     };
   }, [mode, siteId, openThread]);
 
-  // The first message made a new conversation: tag it as this site's, so it opens here next
-  // time and stays out of the main chat.
+  // A new conversation is tagged as this site's, so it opens here next time and stays out of
+  // the main chat. A tag that didn't go through is tried again after the next turn.
+  const busy = controller.status === "streaming";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `busy` re-runs it when a turn ends, which is the retry.
   useEffect(() => {
     if (!activeThreadId || tagged.current === activeThreadId) return;
-    tagged.current = activeThreadId;
-    void fetch(`/api/agent-controller/threads/${encodeURIComponent(activeThreadId)}`, {
+    const id = activeThreadId;
+    tagged.current = id;
+    void fetch(`/api/agent-controller/threads/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ site: siteId }),
-    }).catch(() => undefined);
-  }, [activeThreadId, siteId]);
+    })
+      .then((res) => {
+        if (!res.ok && tagged.current === id) tagged.current = null;
+      })
+      .catch(() => {
+        if (tagged.current === id) tagged.current = null;
+      });
+  }, [activeThreadId, siteId, busy]);
 
   // When a turn that changed files ends, show the result in the preview.
   const wasBusy = useRef(false);
@@ -89,7 +102,7 @@ export function useSiteChat({
   const { sendMessage } = controller;
   const send = useCallback(
     async (text: string): Promise<boolean> => {
-      if (!mode) return false;
+      if (!mode || !ready) return false;
       setProblem(null);
       // The builder works on the member's chosen site; this page's site is the one meant.
       const chosen = await chooseSiteForChat(siteId);
@@ -99,10 +112,10 @@ export function useSiteChat({
       }
       return sendMessage(text, { mode });
     },
-    [mode, siteId, sendMessage],
+    [mode, ready, siteId, sendMessage],
   );
 
-  return { controller, send, busy, problem };
+  return { controller, send, busy: busy || !ready, problem };
 }
 
 export type SiteChatState = ReturnType<typeof useSiteChat>;
