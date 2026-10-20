@@ -37,4 +37,18 @@ describe("settingsProblems", () => {
       settingsProblems({ ...complete, STRIPE_SECRET_KEY: "x", STRIPE_WEBHOOK_SECRET: "y" }),
     ).toEqual([]);
   });
+
+  it("needs no sandbox token on Vercel, where the deployment's OIDC token opens sandboxes", () => {
+    const env = {
+      ...complete,
+      LOCUS_SANDBOX_TOKEN: undefined,
+      LOCUS_SANDBOX_TEAM_ID: undefined,
+      LOCUS_SANDBOX_PROJECT_ID: undefined,
+    };
+    expect(settingsProblems({ ...env, VERCEL: "1" })).toEqual([]);
+    const missing =
+      "site builder: LOCUS_SANDBOX_TOKEN, LOCUS_SANDBOX_TEAM_ID, LOCUS_SANDBOX_PROJECT_ID not set";
+    expect(settingsProblems(env)).toEqual([missing]);
+    expect(settingsProblems({ ...env, VERCEL: "1", LOCUS_SANDBOX: "off" })).toEqual([missing]);
+  });
 });
