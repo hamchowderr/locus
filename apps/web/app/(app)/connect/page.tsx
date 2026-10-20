@@ -2,10 +2,10 @@ import { ClientAccessDenied, listAccessibleClients, requireAgencyManager } from 
 import { agencyGhlConnection, githubInstallation, hostConnection } from "@locus/db/control";
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
+import { syncClients } from "@/app/actions";
+import { Button, Notice, Page } from "@/app/ui";
 import { serviceMode } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
-import { syncClients } from "../actions";
-import { Button, Notice, Page } from "../ui";
 
 const MESSAGES: Record<string, string> = {
   state: "That sign-in to GoHighLevel expired or didn't match. Try again.",
@@ -56,7 +56,7 @@ export default async function Connect({
   });
   if (!manager) {
     return (
-      <Page title="Connections">
+      <Page title="Integrations">
         <Notice tone="info">Only owners and admins connect GoHighLevel, GitHub and Vercel.</Notice>
       </Page>
     );
@@ -79,7 +79,7 @@ export default async function Connect({
   );
 
   return (
-    <Page title="Connections">
+    <Page title="Integrations">
       {stubs.length > 0 && (
         <Notice tone="info">
           Pretend accounts in use ({stubs.map((v) => `${v}=stub`).join(", ")}) — no real account is

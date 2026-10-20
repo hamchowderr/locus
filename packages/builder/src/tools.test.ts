@@ -542,13 +542,13 @@ describe("versions and brief", () => {
   it("keeps the version when publishing fails, and says why in the person's words", async () => {
     const { call } = await setup();
     t.session.onVersionSaved = async () => {
-      throw new PublishError("Connect GitHub on the Connections page first.");
+      throw new PublishError("Connect GitHub on the Integrations page first.");
     };
     await call("files", { action: "write", path: "a.txt", content: "one" });
     expect(await call("versions", { action: "save", message: "First page" })).toEqual({
       saved: true,
       version: 1,
-      publishError: "Connect GitHub on the Connections page first.",
+      publishError: "Connect GitHub on the Integrations page first.",
     });
   });
 
