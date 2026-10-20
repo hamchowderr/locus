@@ -269,6 +269,20 @@ describe("sandbox tools", () => {
       await t.session.workspace.writeFile("db/schema.ts", "// grown by the agent");
       expect(await call("database", { action: "add" })).toMatchObject({ changed: [] });
       expect(await t.session.workspace.readFile("db/schema.ts")).toBe("// grown by the agent");
+
+      // An older version of the uploads is replaced, and its retired route deleted.
+      await t.session.workspace.writeFile("lib/files.ts", "// old uploads");
+      await t.session.workspace.writeFile("app/api/files/[action]/route.ts", "// old route");
+      const renewed = await call("database", { action: "add" });
+      expect(renewed).toMatchObject({
+        changed: ["lib/files.ts"],
+        removed: ["app/api/files/[action]/route.ts"],
+      });
+      expect(renewed.next).toContain("{ fileId, url }");
+      expect(await t.session.workspace.readFile("lib/files.ts")).toContain("keepFile");
+      expect((await t.session.workspace.snapshot()).map((f) => f.path)).not.toContain(
+        "app/api/files/[action]/route.ts",
+      );
     });
 
     it("applies migrations to the preview's database, and preview does it too", async () => {

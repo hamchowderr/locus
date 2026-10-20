@@ -70,11 +70,21 @@ describe("an app-style site's files", () => {
       "app/api/auth/[...all]/route.ts",
       "lib/files.ts",
       "lib/files-client.ts",
-      "app/api/files/[action]/route.ts",
+      "app/api/files/upload/route.ts",
+      "app/api/files/preview/[fileId]/route.ts",
     ]) {
       expect(app.map((f) => f.path)).toContain(path);
     }
     expect(withBackend(app)).toEqual(app);
+
+    // An older version of the uploads is replaced; Locus's own file code is kept current.
+    const older = [
+      ...app.map((f) => (f.path === "lib/files.ts" ? { ...f, content: "// old" } : f)),
+      { path: "app/api/files/[action]/route.ts", content: "// old" },
+    ];
+    const renewed = withBackend(older);
+    expect(text(renewed, "lib/files.ts")).toContain("keepFile");
+    expect(renewed.map((f) => f.path)).not.toContain("app/api/files/[action]/route.ts");
 
     const grown = app.map((f) =>
       f.path === SITE_SCHEMA_PATH ? { ...f, content: `${f.content}// bookings\n` } : f,
@@ -239,50 +249,32 @@ describe("the generated preview database", () => {
     }
   });
 
-  it("keeps the preview's uploads in the sandbox, and only under its own folder", async () => {
+  it("keeps the preview's uploads in the sandbox, taking what a published site takes", async () => {
     const files = await import(join(root, "lib/files.ts"));
     expect(files.previewFiles).toBe(true);
-    const { pathname, token } = await files.startUpload({
-      name: "../My photo.png",
-      contentType: "image/png",
-      size: 3,
-    });
-    expect(token).toBeNull();
-    expect(pathname).toMatch(/^sites\/preview\/[0-9a-f-]{36}\/My-photo.png$/);
-    const put = (body: BodyInit, contentType = "image/png") =>
-      new Request("http://site.test/api/files/preview", {
-        method: "PUT",
-        headers: { "content-type": contentType },
-        body,
-      });
-    await files.savePreviewFile(pathname, put("png"));
-    const sent = await files.fileResponse(pathname);
+    const kept = await files.keepFile(new File(["png"], "../My photo.png", { type: "image/png" }));
+    expect(kept).toMatchObject({ name: "My-photo.png", contentType: "image/png", size: 3 });
+    expect(kept.url).toBe(`/api/files/preview/${kept.fileId}`);
+    const sent = await files.previewFileResponse(kept.fileId);
     expect(await sent?.text()).toBe("png");
     expect(sent?.headers.get("content-type")).toBe("image/png");
     expect(sent?.headers.get("x-content-type-options")).toBe("nosniff");
-    // A file is kept once; it isn't replaced by a second upload to the same place.
-    await expect(files.savePreviewFile(pathname, put("other"))).rejects.toThrow(/already there/);
-    await expect(files.savePreviewFile("sites/preview/../../etc/x", put("x"))).rejects.toThrow(
-      /isn't a file this preview can keep/,
-    );
-    // The preview takes what a published site takes, and nothing else.
-    const html = await files.startUpload({ name: "a.png", contentType: "image/png", size: 1 });
+    expect(await files.previewFileResponse("../package.json")).toBeNull();
+
     await expect(
-      files.savePreviewFile(html.pathname, put("<script>", "text/html")),
+      files.keepFile(new File(["<svg/>"], "a.svg", { type: "image/svg+xml" })),
     ).rejects.toThrow(/can't be uploaded/);
     await expect(
-      files.startUpload({ name: "a.svg", contentType: "image/svg+xml", size: 1 }),
+      files.keepFile(new File(["<script>"], "a.html", { type: "text/html" })),
     ).rejects.toThrow(/can't be uploaded/);
     await expect(
-      files.startUpload({
-        name: "a.png",
-        contentType: "image/png",
-        size: files.MAX_FILE_BYTES + 1,
-      }),
-    ).rejects.toThrow(/up to 25 MB/);
-    expect(await files.fileResponse("../package.json")).toBeNull();
-    await files.deleteFiles([pathname]);
-    expect(await files.fileResponse(pathname)).toBeNull();
+      files.keepFile(
+        new File([new Uint8Array(files.MAX_FILE_BYTES + 1)], "a.png", { type: "image/png" }),
+      ),
+    ).rejects.toThrow(/up to 4 MB/);
+
+    await files.deleteFiles([kept.fileId]);
+    expect(await files.previewFileResponse(kept.fileId)).toBeNull();
   });
 
   it("lets a check build load the site without its database", async () => {

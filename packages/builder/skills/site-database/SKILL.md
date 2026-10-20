@@ -92,18 +92,21 @@ export const booking = sqliteTable(
 ```
 
 ## Files members upload
-`database add` also adds file uploads (pictures and everyday documents, up to 25 MB):
-- In a "use client" component: `import { uploadFile, fileUrl } from "@/lib/files-client"`.
-  `const { pathname } = await uploadFile(file)` uploads a file the member picked; show it with
-  `<img src={fileUrl(pathname)} />` or a link to `fileUrl(pathname)`.
-- Save each `pathname` in the app's own table with the member's `user_id` (for example a
-  `photo` table), in a server action that checks the member, and only show a member the files
-  your records say they may see.
+`database add` also adds file uploads (pictures and everyday documents, up to 4 MB). A
+published site keeps them in the client's HighLevel Media Library.
+- In a "use client" component: `import { uploadFile } from "@/lib/files-client"`.
+  `const { fileId, url } = await uploadFile(file)` uploads a file the member picked; show it
+  with `<img src={url} />` or a link to `url`.
+- Save `fileId` and `url` in the app's own table with the member's `user_id` (for example a
+  `photo` table), in a server action that checks the member. Anyone with a file's `url` can
+  open it, so only show a member the files your records say they may see.
 - To delete, check the member owns the record in a server action, then
-  `import { deleteFiles } from "@/lib/files"` and `await deleteFiles([pathname])`.
-- Never edit `lib/files.ts`, `lib/files-client.ts` or `app/api/files/[action]/route.ts`.
-  Locus relies on them. In the preview, files stay in the sandbox.
-- A site made before uploads existed gets them by running `database add` again.
+  `import { deleteFiles } from "@/lib/files"` and `await deleteFiles([fileId])`.
+- Never edit `lib/files.ts`, `lib/files-client.ts` or the routes under `app/api/files/`.
+  Locus relies on them and replaces them on `database add`. In the preview, files stay in the
+  sandbox.
+- A site made before uploads existed, or with an older version of them, gets the current ones
+  by running `database add` again.
 
 ## Using it in pages
 - Read and write in server components, server actions or route handlers:
