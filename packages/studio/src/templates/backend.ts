@@ -306,26 +306,78 @@ export async function POST() {
 `,
 });
 
-const authFile = (): SiteFile => ({
-  path: "lib/auth.ts",
-  content: `import { betterAuth } from "better-auth";
+// The site's own logins: email and password, stored in the site's own database. Each new member
+// is also sent to the client's HighLevel contacts (lib/members.ts).
+const authContent = (withMembers: boolean) => `import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as schema from "@/db/schema";
 import { db, isPreviewDatabase } from "@/lib/db";
-
+${withMembers ? 'import { memberSignedUp } from "@/lib/members";\n' : ""}
 // The site's own logins: email and password, stored in the site's own database. Server code
 // only. The published site's secret is set by Locus on its host; the preview uses a fixed one,
-// which is fine because the preview's database is a throwaway file.
+// which is fine because the preview's database is a throwaway file.${
+  withMembers
+    ? `
+// Keep the databaseHooks: each new member becomes a contact in the client's HighLevel.`
+    : ""
+}
 export const auth = betterAuth({
   secret:
     process.env.${SITE_DATABASE_ENV.authSecret} ??
     (isPreviewDatabase ? "locus-preview-only-not-a-secret-at-all" : undefined),
   database: drizzleAdapter(db, { provider: "sqlite", schema }),
-  emailAndPassword: { enabled: true },
+  emailAndPassword: { enabled: true },${
+    withMembers
+      ? `
+  databaseHooks: { user: { create: { after: memberSignedUp } } },`
+      : ""
+  }
   telemetry: { enabled: false },
 });
+`;
+
+const authFile = (): SiteFile => ({ path: "lib/auth.ts", content: authContent(true) });
+
+const membersFile = (): SiteFile => ({
+  path: "lib/members.ts",
+  content: `import { locus } from "@/lib/locus";
+
+// Server code only. Tells Locus about a member who just signed up, so they become a contact in
+// the client's HighLevel sub-account (tagged "website form: sign-up"). The site proves it is the
+// site with its key, set on its host when it is published. In the preview nothing is sent.
+// A failure is logged and never stops the sign-up.
+
+const api = locus.siteApi ? \`\${locus.siteApi}/members\` : null;
+const key = process.env.${SITE_DATABASE_ENV.filesKey};
+
+export async function memberSignedUp(
+  user: { email: string; name?: string | null },
+  context: { headers?: Headers | null } | null,
+): Promise<void> {
+  if (!api || !key) return;
+  const visitorIp = context?.headers?.get("x-forwarded-for")?.split(",")[0]?.trim();
+  try {
+    const res = await fetch(\`\${api}/signup\`, {
+      method: "POST",
+      headers: {
+        authorization: \`Bearer \${key}\`,
+        "content-type": "application/json",
+        ...(visitorIp ? { "x-locus-visitor-ip": visitorIp } : {}),
+      },
+      body: JSON.stringify({ email: user.email, ...(user.name ? { name: user.name } : {}) }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!res.ok) console.error(\`HighLevel didn't get a new member: \${res.status}\`);
+  } catch {
+    console.error("HighLevel didn't get a new member: Locus couldn't be reached");
+  }
+}
 `,
 });
+
+/** lib/auth.ts as sites got it before sign-ups went to HighLevel: replaced when unchanged. */
+const AUTH_BEFORE_MEMBERS = authContent(false);
 
 const authRouteFile = (): SiteFile => ({
   path: "app/api/auth/[...all]/route.ts",
@@ -679,6 +731,7 @@ export async function uploadFile(file: File): Promise<UploadedFile> {
 
 /** Files Locus keeps up to date on every `database add`: the site's skill says never edit them. */
 const LOCUS_FILES = new Set([
+  "lib/members.ts",
   "lib/files.ts",
   "lib/files-client.ts",
   "app/api/files/upload/route.ts",
@@ -697,6 +750,7 @@ export function backendFiles(): SiteFile[] {
     instrumentationFile(),
     previewMigrateRouteFile(),
     authFile(),
+    membersFile(),
     authRouteFile(),
     authClientFile(),
     filesFile(),
@@ -737,6 +791,10 @@ export function withBackend(files: SiteFile[]): SiteFile[] {
   }
   // Files from an earlier version of the uploads, replaced by the current ones.
   for (const path of RETIRED_FILES) byPath.delete(path);
+  // A login file nobody has changed since sign-ups went to HighLevel gets the new one; one the
+  // agent changed is kept, and the site's skill says how to add the hook by hand.
+  const auth = byPath.get("lib/auth.ts");
+  if (auth?.content === AUTH_BEFORE_MEMBERS) byPath.delete("lib/auth.ts");
   for (const file of backendFiles()) {
     if (!byPath.has(file.path) || LOCUS_FILES.has(file.path)) byPath.set(file.path, file);
   }

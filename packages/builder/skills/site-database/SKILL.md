@@ -17,6 +17,7 @@ area, saved items, or the site's own bookings or orders the person asked for.
   - `db/migrations/0000_logins.sql`: the SQL that creates them
   - `lib/db.ts`: the database client, server code only
   - `lib/auth.ts` and `app/api/auth/[...all]/route.ts`: email and password logins (Better Auth)
+  - `lib/members.ts`: sends each new member to the client's HighLevel (see below)
   - `lib/auth-client.ts`: for "use client" components (`authClient.signUp.email`,
     `signIn.email`, `signOut`, `useSession`)
   - `instrumentation.ts`, `lib/local-migrations.ts` and `app/api/locus/preview-migrations`:
@@ -51,7 +52,7 @@ Rules that keep the live site's data safe:
 - Keep the four login tables (`user`, `session`, `account`, `verification`) and their columns
   as they are. To store more about a member, add your own table with a `user_id` column that
   references `user`(`id`).
-- Never edit `lib/db.ts`, `lib/local-migrations.ts`, `instrumentation.ts`,
+- Never edit `lib/db.ts`, `lib/local-migrations.ts`, `lib/members.ts`, `instrumentation.ts`,
   `app/api/locus/preview-migrations` or the auth route. Locus relies on them as written.
 - Never create tables whose names start with `_locus_`, `sqlite_` or `libsql_`.
 - Owners and staff can read the site's tables on its Database page. Give any column that holds
@@ -122,5 +123,13 @@ Media Library.
   "next/headers"`. Check it in every server action and route that reads or writes a member's
   data, and only touch rows whose `user_id` is that member's.
 - Sign-up, sign-in and sign-out forms are "use client" components that use `authClient`.
-  Give them labels and clear error messages.
+  Give them labels and clear error messages. Ask for the member's name on the sign-up form.
+- On the published site, every new member also becomes a contact in the client's HighLevel
+  (tagged `website form: sign-up`), through the `databaseHooks` line in `lib/auth.ts`. Keep it
+  when you change `lib/auth.ts`, and keep `import { memberSignedUp } from "@/lib/members"`. If
+  a site has no `lib/members.ts` yet, run `database add` first. If `lib/auth.ts` has no
+  `memberSignedUp` after that, add the import and, inside its `betterAuth({...})`, add
+  `user: { create: { after: memberSignedUp } }` to its `databaseHooks` (or add
+  `databaseHooks: { user: { create: { after: memberSignedUp } } },` when it has none).
+  The preview sends nothing to HighLevel.
 - Never import `lib/db.ts` or `lib/auth.ts` from a "use client" file.
