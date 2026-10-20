@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
 import { connectApp } from "./actions";
 import { connectedPath } from "./connected-message";
 import { useConnectPopup } from "./use-connect-popup";
@@ -10,7 +11,7 @@ import { useConnectPopup } from "./use-connect-popup";
  * returns. Without JavaScript, or when the browser blocks the window, the form falls back to
  * signing in on this page.
  */
-export function ConnectButton({ toolkit }: { toolkit: string }) {
+export function ConnectButton({ toolkit, name }: { toolkit: string; name?: string }) {
   const router = useRouter();
   const { connect, busy } = useConnectPopup({
     onDone: (message) => {
@@ -30,13 +31,14 @@ export function ConnectButton({ toolkit }: { toolkit: string }) {
       }}
     >
       <input type="hidden" name="toolkit" value={toolkit} />
-      <button
+      <Button
         type="submit"
+        size="sm"
         disabled={busy !== null}
-        className="rounded-md border border-neutral-300 px-3 py-1 text-sm disabled:opacity-60"
+        aria-label={name ? `Connect ${name}` : undefined}
       >
         {busy ? "Connecting…" : "Connect"}
-      </button>
+      </Button>
     </form>
   );
 }

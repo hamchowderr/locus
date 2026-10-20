@@ -6,21 +6,31 @@ export {
   type LocusAgentConfig,
 } from "./agent.ts";
 export {
+  APP_ACCESS,
   APP_TOOL_NAMES,
-  APP_TOOLKITS,
+  type AppAccess,
+  type AppAccessSettings,
   type AppConnector,
   AppError,
   type AppResult,
   type AppSearch,
   AppServiceError,
   type AppTool,
+  accessOf,
   createAppTools,
+  DEFAULT_APP_ACCESS,
 } from "./apps.ts";
 export {
+  type AppCatalog,
   type AppConnection,
   type AppConnections,
   appUserId,
+  CATALOG_TTL_MS,
+  type CatalogApp,
+  type ComposioCatalogConfig,
   type ComposioConnectorConfig,
+  composioCatalog,
+  createComposioCatalog,
   createComposioConnections,
   createComposioConnector,
 } from "./composio.ts";
