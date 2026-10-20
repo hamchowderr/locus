@@ -1,4 +1,6 @@
 import { type ControlDb, type TenantProvisioner, TursoProvisioner } from "@locus/db";
+import { getProviderConfig, parseModelString } from "@mastra/core/llm";
+import { SCRIPTED } from "./scripted-model.ts";
 
 type Env = Record<string, string | undefined>;
 
@@ -21,6 +23,7 @@ export const AGENT_SETTINGS = [
   "LOCUS_PROVISIONER",
   "LOCUS_OPERATORS",
   "ANTHROPIC_API_KEY",
+  "AI_GATEWAY_API_KEY",
   "OPENAI_API_KEY",
   "GOOGLE_GENERATIVE_AI_API_KEY",
 ] as const;
@@ -32,6 +35,31 @@ const UNRESOLVED = /\$\{[^}]*\}|\{\{[^}]*\}\}/;
 /** Settings whose value is a reference left unfilled, by name. */
 export function unresolvedSettings(env: Env): string[] {
   return AGENT_SETTINGS.filter((name) => UNRESOLVED.test(env[name] ?? ""));
+}
+
+/**
+ * What is wrong with `LOCUS_AGENT_MODEL`, if anything, judged against the providers in the
+ * installed Mastra: a provider Mastra doesn't know (staging once ran `gateway/…`, where the
+ * Vercel AI Gateway is `vercel/…`), or a missing key. Model names aren't checked: Mastra's list
+ * is a snapshot, and a newer model works anyway. Only names are logged, never the raw value.
+ */
+export function modelProblems(env: Env): string[] {
+  const id = env.LOCUS_AGENT_MODEL;
+  if (!id || id === SCRIPTED || UNRESOLVED.test(id)) return [];
+  const { provider } = parseModelString(id);
+  if (!provider) return ["LOCUS_AGENT_MODEL is not a Mastra model id (provider/model)"];
+  // Mastra's own gateway routes `mastra/…` but isn't in the provider list.
+  const keys =
+    provider === "mastra"
+      ? ["MASTRA_GATEWAY_API_KEY"]
+      : [getProviderConfig(provider)?.apiKeyEnvVar ?? []].flat();
+  if (keys.length === 0) {
+    return [`LOCUS_AGENT_MODEL names a provider Mastra doesn't know: ${provider}`];
+  }
+  if (!keys.some((key) => env[key])) {
+    return [`LOCUS_AGENT_MODEL needs ${keys.join(" or ")}, which is not set`];
+  }
+  return [];
 }
 
 const MAX_CAUSE = 200;
@@ -52,8 +80,9 @@ function cause(error: unknown) {
 
 /**
  * What would stop the agent serving a chat, one line each, found when it starts rather than on
- * someone's first message: settings left as unfilled references, a control database it cannot
- * query, and Turso refusing the settings every client database is opened with.
+ * someone's first message: settings left as unfilled references, a model Mastra can't reach, a
+ * control database it cannot query, and Turso refusing the settings every client database is
+ * opened with.
  */
 export async function settingsProblems(deps: {
   env: Env;
@@ -65,6 +94,7 @@ export async function settingsProblems(deps: {
   const problems = unresolvedSettings(deps.env).map(
     (name) => `${name} holds an unfilled reference instead of a value`,
   );
+  problems.push(...modelProblems(deps.env));
   try {
     await probe(() => deps.db.$client.execute("select 1"), timeoutMs);
   } catch (error) {
