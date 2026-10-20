@@ -18,13 +18,6 @@ export interface GhlTracking {
 }
 
 const TRACKING_ID = /^tk_[A-Za-z0-9]{8,64}$/;
-const GHL_HOSTS = [/(^|\.)leadconnectorhq\.com$/, /(^|\.)msgsndr\.com$/];
-
-/** Whether the script comes from GHL's own domains (not an agency's white-label one). */
-export function isGhlTrackingHost(src: string): boolean {
-  const host = URL.canParse(src) ? new URL(src).hostname : "";
-  return GHL_HOSTS.some((re) => re.test(host));
-}
 
 /**
  * The script's address and tracking id from the snippet GHL shows (`<script src="…"
@@ -35,11 +28,13 @@ export function parseTrackingSnippet(snippet: string): GhlTracking | null {
   if (snippet.length > 2000) return null;
   const tag = snippet.match(/<script\b[^>]*>/i)?.[0];
   if (!tag) return null;
-  const attr = (name: string) =>
-    tag
-      .match(new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "i"))
-      ?.slice(1)
-      .find((v) => v !== undefined);
+  // Each attribute exactly once, matched as a whole name (`data-src` is not `src`).
+  const attr = (name: string) => {
+    const found = [
+      ...tag.matchAll(new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "gi")),
+    ];
+    return found.length === 1 ? (found[0]?.[1] ?? found[0]?.[2]) : undefined;
+  };
   const src = attr("src")?.trim();
   const trackingId = attr("data-tracking-id")?.trim();
   if (!src || !trackingId || !TRACKING_ID.test(trackingId) || !URL.canParse(src)) return null;
@@ -83,20 +78,50 @@ export function GhlTracking() {
 }
 
 const IMPORT_LINE = 'import { GhlTracking } from "@/components/ghl-tracking";';
+const DIRECTIVE = /^\s*["']use (client|server)["'];?\s*$/;
+const STATEMENT_END = /["'][^"']*["'];?\s*$/;
+
+/** Where the import goes: after the file's last top-level import, else after any directive. */
+function importLine(lines: string[]): number {
+  let after = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    if (DIRECTIVE.test(line)) after = Math.max(after, i + 1);
+    else if (/^import\b/.test(line)) {
+      // An import runs until the line that ends with its module name, with or without `;`.
+      let end = i;
+      while (end < lines.length - 1 && !STATEMENT_END.test(lines[end] ?? "")) end++;
+      after = end + 1;
+      i = end;
+    } else if (line.trim() && !/^\s*(\/\/|\/\*|\*)/.test(line)) break;
+  }
+  return after;
+}
 
 /**
- * The root layout with `<GhlTracking />` at the end of `<body>`, or null when the layout has no
- * `</body>` to put it before. A layout that already renders it is returned unchanged.
+ * The root layout rendering `<GhlTracking />` at the end of `<body>`, or null when the layout
+ * has no `</body>` to put it before. A layout that already has both the import and the tag is
+ * returned unchanged.
  */
 export function layoutWithTracking(layout: string): string | null {
-  if (layout.includes("<GhlTracking")) return layout;
-  const body = layout.lastIndexOf("</body>");
-  if (body === -1) return null;
-  const indent = layout.slice(layout.lastIndexOf("\n", body) + 1, body);
-  const withTag = `${layout.slice(0, body)}  <GhlTracking />\n${indent}${layout.slice(body)}`;
-  const imports = [...withTag.matchAll(/^import\b[^;]*;[^\S\n]*$/gm)];
-  const last = imports.at(-1);
-  if (!last || last.index === undefined) return `${IMPORT_LINE}\n${withTag}`;
-  const end = last.index + last[0].length;
-  return `${withTag.slice(0, end)}\n${IMPORT_LINE}${withTag.slice(end)}`;
+  const hasImport = layout.includes(IMPORT_LINE);
+  const hasTag = layout.includes("<GhlTracking");
+  if (hasImport && hasTag) return layout;
+  let updated = layout;
+  if (!hasTag) {
+    const body = updated.lastIndexOf("</body>");
+    if (body === -1) return null;
+    const lineStart = updated.lastIndexOf("\n", body) + 1;
+    const before = updated.slice(lineStart, body);
+    updated = /^\s*$/.test(before)
+      ? // `</body>` on its own line: the tag on its own line above it, one level in.
+        `${updated.slice(0, lineStart)}${before}  <GhlTracking />\n${updated.slice(lineStart)}`
+      : `${updated.slice(0, body)}<GhlTracking />${updated.slice(body)}`;
+  }
+  if (!hasImport) {
+    const lines = updated.split("\n");
+    lines.splice(importLine(lines), 0, IMPORT_LINE);
+    updated = lines.join("\n");
+  }
+  return updated;
 }

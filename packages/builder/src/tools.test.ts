@@ -1061,17 +1061,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     expect(await t.session.workspace.readFile("components/ghl-tracking.tsx")).toBeNull();
   });
 
-  it("asks a person before adding a script from a domain that isn't GHL's own", async () => {
+  it("asks a person before adding any tracking script", async () => {
     const { tools } = await setup();
     // biome-ignore lint/suspicious/noExplicitAny: the rule takes the tool's input
     const rule = tools.crm.requireApproval as (input: any) => boolean;
-    expect(rule({ action: "add_tracking", snippet: SNIPPET })).toBe(false);
-    expect(
-      rule({
-        action: "add_tracking",
-        snippet: SNIPPET.replace("link.msgsndr.com", "link.myagency.com"),
-      }),
-    ).toBe(true);
+    expect(rule({ action: "add_tracking", snippet: SNIPPET })).toBe(true);
     expect(rule({ action: "calendars" })).toBe(false);
+    expect(rule({ action: "use_media", id: "m1", as: "favicon" })).toBe(false);
   });
 });

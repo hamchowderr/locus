@@ -52,7 +52,6 @@ export {
   GHL_TRACKING_PATH,
   type GhlTracking,
   ghlTrackingFile,
-  isGhlTrackingHost,
   LEAD_ROUTE_PATH,
   LLMS_PATH,
   LOCUS_PROXY_CALLS,

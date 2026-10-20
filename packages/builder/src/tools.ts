@@ -7,7 +7,6 @@ import {
   DesignBrief,
   GHL_TRACKING_PATH,
   ghlTrackingFile,
-  isGhlTrackingHost,
   LOCUS_PROXY_PATH,
   LOCUS_SETTINGS_PATH,
   layoutWithTracking,
@@ -939,13 +938,9 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "external tracking script (`snippet`, the <script> tag the person copies from Settings → " +
       "External Tracking) on every page; it links visitors to contacts and lets CRM workflows " +
       "trigger on page views and forms.",
-    // A tracking script from anywhere but GHL's own domains (an agency's white-label link
-    // domain, or a snippet the agent was talked into) runs on every page: a person says yes.
-    requireApproval: (input) => {
-      if (input?.action !== "add_tracking") return false;
-      const tracking = parseTrackingSnippet(input.snippet ?? "");
-      return tracking !== null && !isGhlTrackingHost(tracking.src);
-    },
+    // A tracking script runs on every page and sends visitors to whichever account its id
+    // names, and a run can be talked into one by text it read: a person says yes each time.
+    requireApproval: (input) => input?.action === "add_tracking",
     inputSchema: z.object({
       action: z.enum(CRM_ACTIONS),
       overwrite: z.boolean().optional(),
