@@ -60,6 +60,9 @@ function taint(requestContext: ContextLike | undefined): void {
   requestContext.set(TAINT_KEY, true);
 }
 
+/** Our own tools, named inside data: they have no business being there. */
+const TOOL_NAMES = /\b(perform_action|query_data|load_skill)\b/;
+
 const PATTERNS: RegExp[] = [
   // "ignore / disregard / forget (all) (your|the) previous instructions", across line breaks.
   /\b(ignore|disregard|forget|override|bypass)\b[\s\S]{0,40}\b(instructions?|prompts?|rules|guidelines|directives?|system)\b/i,
@@ -75,20 +78,47 @@ const PATTERNS: RegExp[] = [
   /<\/?\s*(system|assistant|user|tool|instructions?)\s*>/i,
   /\[\/?(INST|SYS)\]|<<\/?SYS>>|<\|im_(start|end)\|>/i,
   /^\s*(system|assistant)\s*:/im,
-  // Our own tools named inside data have no business being there.
-  /\b(perform_action|query_data|load_skill)\b/,
+  TOOL_NAMES,
 ];
 
 /** Zero-width, soft hyphen, Mongolian vowel separator and bidi controls. */
 const INVISIBLE = /[­᠎​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
 
-export function looksLikeInstructions(text: string): boolean {
+/**
+ * `ownText`: the text is Locus's own (an error our tools wrote, which may quote GHL or the
+ * model's arguments), so naming our tools is expected there and only the other patterns apply.
+ */
+export function looksLikeInstructions(text: string, { ownText = false } = {}): boolean {
   const visible = text.normalize("NFKC").replace(INVISIBLE, "");
-  return PATTERNS.some((pattern) => pattern.test(visible));
+  return PATTERNS.some((pattern) => !(ownText && pattern === TOOL_NAMES) && pattern.test(visible));
+}
+
+/** Marks a tool error as written by Locus, not GoHighLevel. */
+export const LOCUS = "locus";
+
+/**
+ * A mistake the model can fix, in Locus's own words ("query_data pages this operation itself;
+ * remove pageLimit"). The screen still checks it, but lets it name our tools: withholding it
+ * would hide the fix and taint the run over our own text.
+ */
+export function locusError(message: string): { error: string; from: typeof LOCUS } {
+  return { error: message, from: LOCUS };
+}
+
+function isLocusError(value: unknown): value is { error: string; from: typeof LOCUS } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  const { error, from } = value as { error?: unknown; from?: unknown };
+  return keys.length === 2 && from === LOCUS && typeof error === "string";
 }
 
 /** Returns `value` with every instruction-like string or key replaced, and how many were. */
 export function withholdInstructions(value: unknown): { value: unknown; withheld: number } {
+  if (isLocusError(value)) {
+    return looksLikeInstructions(value.error, { ownText: true })
+      ? { value: { ...value, error: WITHHELD }, withheld: 1 }
+      : { value, withheld: 0 };
+  }
   let withheld = 0;
   const walk = (node: unknown): unknown => {
     if (typeof node === "string") {
