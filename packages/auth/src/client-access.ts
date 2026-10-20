@@ -5,6 +5,7 @@ import {
   memberLocation,
   session,
   site,
+  siteBuilderOff,
   siteMemberAccess,
   user,
 } from "@locus/db/control";
@@ -31,7 +32,16 @@ export interface SessionContext {
   activeLocationId?: string | null | undefined;
 }
 
-export type LocationRow = typeof location.$inferSelect;
+export type LocationRow = typeof location.$inferSelect & {
+  /** Whether the agency has the site builder on for this client (the Clients page). */
+  siteBuilder: boolean;
+};
+
+/** A `location` row with whether its site builder is on, from a select of both tables. */
+const located = (r: { location: typeof location.$inferSelect; off: string | null }): LocationRow => ({
+  ...r.location,
+  siteBuilder: r.off === null,
+});
 
 /** A client the session may work on. Only `authorizeClient` creates these. */
 export interface AuthorizedClient {
@@ -87,10 +97,12 @@ export async function authorizeClient(
   const { member: m, organizationId } = await membership(db, ctx);
 
   // Scoped to the session's agency, so another agency's client looks exactly like a missing one.
-  const [loc] = await db
-    .select()
+  const [row] = await db
+    .select({ location, off: siteBuilderOff.locationId })
     .from(location)
+    .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
     .where(and(eq(location.id, locationId), eq(location.organizationId, organizationId)));
+  const loc = row && located(row);
   if (!loc) throw new ClientAccessDenied("no such client in the session's agency");
   if (loc.status !== "active") throw new ClientAccessDenied(`client is ${loc.status}`);
 
@@ -115,14 +127,20 @@ export async function listAccessibleClients(
   const { member: m, organizationId } = await membership(db, ctx);
   const inAgency = and(eq(location.organizationId, organizationId), eq(location.status, "active"));
   if (unrestricted(m.role)) {
-    return db.select().from(location).where(inAgency);
+    const rows = await db
+      .select({ location, off: siteBuilderOff.locationId })
+      .from(location)
+      .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
+      .where(inAgency);
+    return rows.map(located);
   }
   const rows = await db
-    .select({ location })
+    .select({ location, off: siteBuilderOff.locationId })
     .from(memberLocation)
     .innerJoin(location, eq(memberLocation.locationId, location.id))
+    .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
     .where(and(eq(memberLocation.memberId, m.id), inAgency));
-  return rows.map((r) => r.location);
+  return rows.map(located);
 }
 
 /**
@@ -417,17 +435,19 @@ export async function setSiteBuilder(
   const wanted = [...new Set(locationIds)];
   if (wanted.length === 0) return 0;
   const found = await db
-    .select({ id: location.id, siteBuilder: location.siteBuilder })
+    .select({ id: location.id, off: siteBuilderOff.locationId })
     .from(location)
+    .leftJoin(siteBuilderOff, eq(siteBuilderOff.locationId, location.id))
     .where(and(eq(location.organizationId, organizationId), inArray(location.id, wanted)));
   if (found.length !== wanted.length) {
     throw new ClientAccessDenied("no such client in the session's agency");
   }
-  const changing = found.filter((l) => l.siteBuilder !== on).map((l) => l.id);
+  const changing = found.filter((l) => (l.off === null) !== on).map((l) => l.id);
   if (changing.length === 0) return 0;
-  await db
-    .update(location)
-    .set({ siteBuilder: on })
-    .where(and(eq(location.organizationId, organizationId), inArray(location.id, changing)));
+  if (on) {
+    await db.delete(siteBuilderOff).where(inArray(siteBuilderOff.locationId, changing));
+  } else {
+    await db.insert(siteBuilderOff).values(changing.map((locationId) => ({ locationId })));
+  }
   return changing.length;
 }

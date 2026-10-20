@@ -29,8 +29,6 @@ export const location = sqliteTable(
     status: text("status", { enum: ["provisioning", "active", "suspended", "offboarding"] })
       .notNull()
       .default("provisioning"),
-    /** Whether the agency turned the site builder on for this client (the Clients page). */
-    siteBuilder: integer("sites_enabled", { mode: "boolean" }).notNull().default(true),
     createdAt: createdAt(),
   },
   // The unique index leads with organization_id, so it also serves the foreign key.
@@ -87,6 +85,16 @@ export const site = sqliteTable(
     unique("site_repo_full_name_unique").on(t.repoFullName),
   ],
 );
+
+/**
+ * Clients the agency turned the site builder off for, on the Clients page. No row means on. Its
+ * own table (not a `location` column) so its migration can be safely re-run.
+ */
+export const siteBuilderOff = sqliteTable("site_builder_off", {
+  locationId: text("location_id")
+    .primaryKey()
+    .references(() => location.id, { onDelete: "cascade" }),
+});
 
 /**
  * A member's access to one site, for members who don't already reach every client. No row
