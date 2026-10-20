@@ -246,6 +246,63 @@ describe("sandbox tools", () => {
     });
   });
 
+  describe("the site's database", () => {
+    const answers = (status: number, body: unknown) => (command: string, args: string[]) =>
+      command === "node" && args.join(" ").includes("preview-migrations")
+        ? { stdout: JSON.stringify({ status, body: JSON.stringify(body) }) }
+        : undefined;
+
+    it("makes the site app-style once, keeping what it already has", async () => {
+      const { call } = await setup();
+      await startSite(t.session.workspace, { brief: { name: "Acme" }, templateId: "blank" });
+      const first = await call("database", { action: "add" });
+      expect(first.changed).toEqual(
+        expect.arrayContaining([
+          "package.json",
+          "db/schema.ts",
+          "db/migrations/0000_logins.sql",
+          "lib/auth.ts",
+        ]),
+      );
+      const pkg = JSON.parse(String(await t.session.workspace.readFile("package.json")));
+      expect(pkg.dependencies["better-auth"]).toBe("1.7.7");
+      await t.session.workspace.writeFile("db/schema.ts", "// grown by the agent");
+      expect(await call("database", { action: "add" })).toMatchObject({ changed: [] });
+      expect(await t.session.workspace.readFile("db/schema.ts")).toBe("// grown by the agent");
+    });
+
+    it("applies migrations to the preview's database, and preview does it too", async () => {
+      const { call } = await setup({
+        runtime: { handler: answers(200, { applied: ["0001_bookings"] }) },
+      });
+      await startSite(t.session.workspace, { brief: { name: "Acme" }, templateId: "blank" });
+      expect(await call("database", { action: "apply" })).toEqual({
+        error: "This site has no database yet: use database add first.",
+      });
+      await call("database", { action: "add" });
+      expect(await call("database", { action: "apply" })).toEqual({ applied: ["0001_bookings"] });
+      expect(await call("preview")).toMatchObject({
+        ok: true,
+        database: { applied: ["0001_bookings"] },
+      });
+    });
+
+    it("reports a migration the preview refused, and a badly named one before running", async () => {
+      const { call } = await setup({
+        runtime: { handler: answers(422, { error: 'SQLITE_ERROR: near "tabel"' }) },
+      });
+      await startSite(t.session.workspace, { brief: { name: "Acme" }, templateId: "blank" });
+      await call("database", { action: "add" });
+      expect(await call("database", { action: "apply" })).toEqual({
+        error: 'A migration failed in the preview: SQLITE_ERROR: near "tabel"',
+      });
+      await t.session.workspace.writeFile("db/migrations/bookings.sql", "select 1");
+      expect(await call("database", { action: "apply" })).toEqual({
+        error: expect.stringContaining("isn't named like db/migrations/0001_short_name.sql"),
+      });
+    });
+  });
+
   it("keeps preview pages on the preview's origin", async () => {
     const { call } = await setup();
     await startSite(t.session.workspace, { brief: { name: "Acme" }, templateId: "blank" });
