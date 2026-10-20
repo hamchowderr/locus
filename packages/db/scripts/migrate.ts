@@ -3,10 +3,12 @@
 // The URL comes from the argument, else LOCUS_CONTROL_DB_URL, else (outside production) the
 // local development file. Deploys run this before building (apps/web/vercel.json), so a client
 // created before a tenant migration gets it on the next deploy, not only clients created after.
+// A pull request's Preview brings the shared control database up to main's migrations only.
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
   DEV_CONTROL_DB_URL,
+  downloadControlMigrations,
   migrateControlDb,
   migrateTenants,
   openControlDb,
@@ -24,17 +26,44 @@ if (!url) {
 const local = url.startsWith("file:");
 if (local) await mkdir(dirname(url.slice("file:".length)), { recursive: true });
 
+// Only deploys of reviewed code apply this checkout's migrations: Production, or the staging
+// branch's Preview. Other Preview builds share staging's databases, so they must not apply a
+// branch's unmerged migrations to them.
+const vercelEnv = process.env.VERCEL_ENV;
+const branch = process.env.VERCEL_GIT_COMMIT_REF;
+const branchPreview = vercelEnv === "preview" && branch !== "staging";
+
 const db = openControlDb(url, process.env.LOCUS_CONTROL_DB_TOKEN);
 try {
-  await migrateControlDb(db);
-  console.log(`control database migrated: ${url}`);
+  if (branchPreview) {
+    // The branch's migrations must still apply cleanly, so a broken one fails its own build.
+    const scratch = openControlDb(":memory:");
+    try {
+      await migrateControlDb(scratch);
+    } finally {
+      scratch.$client.close();
+    }
+    console.log(`control migrations of ${branch ?? "this branch"} apply to an empty database`);
 
-  // Client databases are migrated only by deploys of reviewed code: Production, or the
-  // staging branch's Preview. Other Preview builds share staging's databases and must not
-  // apply a branch's unmerged migrations to its clients.
-  const vercelEnv = process.env.VERCEL_ENV;
-  const branch = process.env.VERCEL_GIT_COMMIT_REF;
-  if (vercelEnv === "preview" && branch !== "staging") {
+    // The shared database gets main's migrations only: what has been merged.
+    const repo = `${process.env.VERCEL_GIT_REPO_OWNER ?? "hamchowderr"}/${process.env.VERCEL_GIT_REPO_SLUG ?? "locus"}`;
+    let mainFolder: string | undefined;
+    try {
+      mainFolder = await downloadControlMigrations({ repo, ref: "main" });
+    } catch (e) {
+      // Not this branch's fault, so not a failed build; the next build catches up.
+      console.warn(`control database skipped: main's migrations could not be read (${e})`);
+    }
+    if (mainFolder) {
+      await migrateControlDb(db, mainFolder);
+      console.log(`control database migrated to main: ${url}`);
+    }
+  } else {
+    await migrateControlDb(db);
+    console.log(`control database migrated: ${url}`);
+  }
+
+  if (branchPreview) {
     console.log(`client databases skipped: preview of ${branch ?? "a branch"}, not staging`);
   } else {
     // A remote control database lists Turso clients, whatever NODE_ENV the build step has; the

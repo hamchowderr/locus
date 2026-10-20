@@ -1,10 +1,12 @@
 /**
  * A scripted stand-in for the model, for staging: AIMock answers every message with a fixed
- * reply, in-process, so the chat works end to end without an AI provider's key or cost.
+ * reply, in-process, so the chat works end to end without an AI provider's key or cost. Chats
+ * recorded from a real model (`pnpm --filter @locus/agent record:chats`) replay first.
  */
 
 import { LLMock } from "@copilotkit/aimock";
 import type { MastraModelConfig } from "@mastra/core/llm";
+import { changesData, loadRecordedChats, RECORDED_DIR } from "./recorded-fixtures.ts";
 
 /** The `LOCUS_AGENT_MODEL` value that selects the scripted model. */
 export const SCRIPTED = "scripted";
@@ -34,9 +36,48 @@ export const DELETE_TAG_REPLY =
   "The delete test is finished: the tool result above shows what happened.";
 export const MISSING_TAG_ID = "locus-test-tag-that-does-not-exist";
 
+export interface ScriptedOptions {
+  /** Where recorded chats are replayed from; `fixtures/recorded/` by default. */
+  recordedDir?: string;
+  /**
+   * Leave out the scripted test messages and the fixed reply, so any message no recorded chat
+   * answers fails (AIMock's strict mode) instead of getting the fixed reply. For tests.
+   */
+  strict?: boolean;
+  /**
+   * Also replay recorded chats that change data. Off by default: on staging the scripted model
+   * runs against a real sub-account, and a recorded write names the fake sub-account's records.
+   */
+  writes?: boolean;
+}
+
 /** Starts the scripted model on a local port and returns its model config. */
 export async function scriptedModel(): Promise<MastraModelConfig> {
-  const mock = new LLMock({ host: "127.0.0.1", port: 0, journalMaxEntries: 50 });
+  return (await startScriptedModel()).model;
+}
+
+/** Starts the scripted model, and returns the mock too, so a test can read its journal. */
+export async function startScriptedModel(
+  options: ScriptedOptions = {},
+): Promise<{ mock: LLMock; model: MastraModelConfig }> {
+  const mock = new LLMock({
+    host: "127.0.0.1",
+    port: 0,
+    journalMaxEntries: options.strict ? 0 : 50,
+    strict: options.strict ?? false,
+  });
+  for (const chat of loadRecordedChats(options.recordedDir ?? RECORDED_DIR)) {
+    if (options.writes || !changesData(chat.fixtures)) mock.addFixtures(chat.fixtures);
+  }
+  if (!options.strict) scriptTestMessages(mock);
+  await mock.start();
+  return {
+    mock,
+    model: { id: "anthropic/locus-scripted", url: `${mock.url}/v1`, apiKey: SCRIPTED },
+  };
+}
+
+function scriptTestMessages(mock: LLMock) {
   mock.on(
     { userMessage: new RegExp(`^\\s*${SANDBOX_CHECK}\\s*$`, "i"), hasToolResult: false },
     {
@@ -63,8 +104,6 @@ export async function scriptedModel(): Promise<MastraModelConfig> {
     params: { path: { tagId: MISSING_TAG_ID } },
   });
   mock.onMessage(/^/, { content: SCRIPTED_REPLY });
-  await mock.start();
-  return { id: "anthropic/locus-scripted", url: `${mock.url}/v1`, apiKey: SCRIPTED };
 }
 
 /** Answers `message` with one call of `tool`, then answers that call's result with `reply`. */

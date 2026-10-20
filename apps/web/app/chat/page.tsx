@@ -2,7 +2,7 @@ import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
 import { SITE_BUILDER_MODE_ID } from "@locus/builder";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { MinimalChat } from "@/components/chat-minimal/minimal-chat";
+import { ProjectChat } from "@/components/chat-project/project-chat";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
@@ -36,10 +36,12 @@ export default async function ChatPage() {
         · Chat about <strong>{client.location.name}</strong>
       </p>
       {chatKitEnabled() ? (
-        // The chat kit's conversation. Its requests go through this site's
-        // /api/agent-controller routes, which the agent server checks against the sign-in.
+        // The chat kit's project chat: one main chat whose agent hands longer work to threads
+        // of their own, each shown under the message that started it. Its requests go through
+        // this site's /api/agent-controller routes, which the agent server checks against the
+        // sign-in.
         <TooltipProvider>
-          <MinimalChat className="mt-4 min-h-0 flex-1" modes={CHAT_MODES} />
+          <ProjectChat className="mt-4 min-h-0 flex-1" modes={CHAT_MODES} />
         </TooltipProvider>
       ) : (
         <div className="mt-6">

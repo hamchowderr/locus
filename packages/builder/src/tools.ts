@@ -1,11 +1,29 @@
+import { amountText, CrmMediaError, type MediaFormat } from "@locus/connect";
+import { SiteMigrationError, siteMigrationsIn } from "@locus/db";
 import { InvalidPathError, type SiteRuntime } from "@locus/sandbox";
 import {
+  bookingComponentFile,
   briefForAgent,
+  buyButtonFile,
+  calendarEmbedFile,
   DesignBrief,
+  GHL_TRACKING_PATH,
+  ghlTrackingFile,
+  hasBackendFiles,
+  LOCUS_PROXY_PATH,
+  LOCUS_SETTINGS_PATH,
+  layoutWithTracking,
+  locusProxyFile,
+  locusSettingsFile,
   normalizeSitePath,
   openQuestions,
+  parseTrackingSnippet,
   readBrief,
+  SCREENSHOT_TYPES,
+  seoIssues,
+  stripSourceAttrs,
   WorkspaceError,
+  withBackend,
   writeBrief,
 } from "@locus/studio";
 import { createTool } from "@mastra/core/tools";
@@ -93,6 +111,39 @@ function writtenContents(writes: Map<string, string>): string {
 const IMAGE_EXT = /\.(png)$/i;
 
 const FILE_ACTIONS = ["list", "read", "write", "edit", "delete"] as const;
+const CRM_ACTIONS = [
+  "calendars",
+  "add_booking",
+  "add_calendar_embed",
+  "products",
+  "add_checkout",
+  "media",
+  "use_media",
+  "add_tracking",
+] as const;
+const MEDIA_USES = ["favicon", "share", "image"] as const;
+
+/**
+ * Where a Media Library image goes for each use, by format, in Next's own file conventions:
+ * `app/icon.*` / `app/favicon.ico` become the site's icon, `app/opengraph-image.*` its link
+ * preview. A format Next can't use there is missing.
+ */
+const MEDIA_TARGETS: Record<"favicon" | "share", Partial<Record<MediaFormat, string>>> = {
+  favicon: { png: "app/icon.png", jpg: "app/icon.jpg", ico: "app/favicon.ico" },
+  share: {
+    png: "app/opengraph-image.png",
+    jpg: "app/opengraph-image.jpg",
+    gif: "app/opengraph-image.gif",
+  },
+};
+/**
+ * Files that would compete with a new icon or link-preview image (numbered variants, the
+ * preview's alt text, and X's own image, which X shows instead of the Open Graph one).
+ */
+const MEDIA_RIVALS = {
+  favicon: /^app\/(icon\d*\.[a-z]+|favicon\.ico)$/,
+  share: /^app\/(opengraph|twitter)-image\d*(\.alt)?\.[a-z]+$/,
+};
 const VERSION_ACTIONS = ["save", "list", "restore"] as const;
 
 /** A field an action needs, or a fixable error naming it. */
@@ -123,7 +174,9 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
   /** Brings the sandbox up to date with the draft, then hands it over. */
   const ready = async (session: BuilderSession): Promise<SiteRuntime> => {
     const runtime = await session.runtime();
-    await syncRuntime(runtime, await session.workspace.snapshot());
+    await syncRuntime(runtime, await session.workspace.snapshot(), {
+      editorOrigins: session.editorOrigins ?? [],
+    });
     return runtime;
   };
 
@@ -414,7 +467,11 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           case "write": {
             const path = need(input.path, "write needs a path");
-            await ws.writeFile(path, need(input.content, "write needs the file's content"));
+            // The preview's location attributes never belong in the site's own files.
+            await ws.writeFile(
+              path,
+              stripSourceAttrs(need(input.content, "write needs the file's content")),
+            );
             return { written: normalizeSitePath(path) };
           }
           case "edit": {
@@ -423,7 +480,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
               replacements: await ws.editFile(
                 path,
                 need(input.find, "edit needs the text to find"),
-                need(input.replace, "edit needs the replacement text"),
+                stripSourceAttrs(need(input.replace, "edit needs the replacement text")),
                 { all: input.all ?? false },
               ),
             };
@@ -445,7 +502,9 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "latest files (e.g. npx tsc --noEmit, ls public). The site's files in Locus are the " +
       "source of truth: files a command creates or changes stay in the sandbox only and are " +
       "put back to match on the next sync, so change source with the files tool. Never " +
-      "install or remove packages or components here: use add_dependency.",
+      "install or remove packages or components here: use add_dependency. The sandbox's copy " +
+      "of pages carries data-locus-src attributes for the preview's visual editing; they are " +
+      "not in the site's files, so never write them into source.",
     requireApproval: noApproval,
     inputSchema: z.object({
       command: z.string().min(1).describe("The program, e.g. npm"),
@@ -546,7 +605,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     id: "check_site",
     description:
       "Install dependencies and run a production build (next build) of the current files. " +
-      "Returns ok, or the errors to fix. Run it after changes and before saving a version.",
+      "Returns ok, or the errors to fix. Run it after changes and before saving a version. " +
+      "With ok, `seo` lists page titles and descriptions search results would show badly.",
     requireApproval: noApproval,
     inputSchema: z.object({}),
     execute: withSession(async (session) =>
@@ -559,7 +619,11 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         const built = await runtime.run("npx", ["next", "build"], {
           timeoutMs: BUILD_SECONDS * 1000,
         });
-        if (built.exitCode === 0) return { ok: true };
+        if (built.exitCode === 0) {
+          // Built: what search results would show badly, for the agent to fix too.
+          const seo = seoIssues(await session.workspace.snapshot());
+          return seo.length ? { ok: true, seo } : { ok: true };
+        }
         return {
           ok: false,
           step: built.timedOut ? "build (timed out)" : "build",
@@ -598,10 +662,72 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           const { url } = await runtime.startPreview();
           const page = input.path ? previewPage(url, input.path) : url;
-          return { ok: true, url: page, recentLogs: tail(await runtime.previewLogs(), 4_000) };
+          const database = hasBackendFiles(await session.workspace.snapshot())
+            ? await migratePreview(runtime)
+            : undefined;
+          return {
+            ok: true,
+            url: page,
+            ...(database ? { database } : {}),
+            recentLogs: tail(await runtime.previewLogs(), 4_000),
+          };
         });
       },
     ),
+  });
+
+  const database = createTool({
+    id: "database",
+    description:
+      "The site's own database, for app features that keep data (member sign-up and login, " +
+      "the site's own bookings or saved records). Load the site-database skill first. action " +
+      "add: make this an app-style site (its database, logins and the db/ folder); safe to " +
+      "repeat. apply: bring the preview's database up to date with db/migrations/ after you " +
+      "add a migration (preview does this too) and say which ran.",
+    requireApproval: noApproval,
+    inputSchema: z.object({ action: z.enum(["add", "apply"]) }),
+    execute: withSession(async (session, input: { action: "add" | "apply" }) => {
+      const ws = session.workspace;
+      const files = await ws.snapshot();
+      if (input.action === "add") {
+        const before = new Map(files.map((file) => [file.path, file.content]));
+        let app: typeof files;
+        try {
+          app = withBackend(files);
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            throw new BuilderError("package.json isn't valid JSON. Fix it, then add again.");
+          }
+          throw error;
+        }
+        const changed = app.filter((file) => before.get(file.path) !== file.content);
+        if (changed.length > 0) await ws.writeFiles(changed);
+        return {
+          changed: changed.map((file) => file.path),
+          next:
+            "Add the site's own tables as new db/migrations files with matching tables in " +
+            "db/schema.ts, then preview: it installs the new packages and applies them.",
+        };
+      }
+      if (!hasBackendFiles(files)) {
+        throw new BuilderError("This site has no database yet: use database add first.");
+      }
+      try {
+        siteMigrationsIn(files);
+      } catch (error) {
+        if (error instanceof SiteMigrationError) throw new BuilderError(error.message);
+        throw error;
+      }
+      return metered(session, async () => {
+        const runtime = await ready(session);
+        const installed = await runtime.install();
+        if (installed.exitCode !== 0) {
+          return { ok: false, step: "install", output: tail(installed.stderr || installed.stdout) };
+        }
+        await runtime.startPreview();
+        return migratePreview(runtime);
+      });
+    }),
   });
 
   const fetch_reference = createTool({
@@ -675,6 +801,44 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         };
       },
     ),
+  });
+
+  const view_reference = createTool({
+    id: "view_reference",
+    description:
+      "Look at a reference screenshot the brief lists (pass its path). Take layout, colour " +
+      "and mood from it; never copy its words, logos or pictures.",
+    requireApproval: noApproval,
+    inputSchema: z.object({ path: z.string().min(1).max(300) }),
+    execute: withSession(async (session, input: { path: string }) => {
+      const path = normalizeSitePath(input.path);
+      const brief = await readBrief(session.workspace.db, session.workspace.siteId);
+      const listed = brief?.references?.some((r) => r.kind === "screenshot" && r.path === path);
+      if (!listed) {
+        throw new BuilderError(`${path} isn't a screenshot in the brief's references.`);
+      }
+      const mediaType = screenshotType(path);
+      const content = await session.workspace.readFile(path);
+      if (!mediaType || !(content instanceof Uint8Array)) {
+        throw new BuilderError(`${path} isn't a PNG, JPEG or WebP image any more.`);
+      }
+      return { path, mediaType, data: Buffer.from(content).toString("base64") };
+    }),
+    // The model sees the picture itself; the base64 text would only cost tokens. Memory keeps
+    // neither once the run ends (the harness stubs it), so a later turn looks again.
+    toModelOutput: (raw: unknown) => {
+      const output = raw as { path: string; mediaType: string; data: string } | { error: string };
+      return "error" in output
+        ? { type: "json", value: output }
+        : {
+            type: "content",
+            value: [
+              { type: "text", text: `Reference screenshot ${output.path}:` },
+              // Mastra's own image part; it becomes what each model provider expects.
+              { type: "image-data", data: output.data, mediaType: output.mediaType },
+            ],
+          };
+    },
   });
 
   const saveVersion = async (session: BuilderSession, message: string) => {
@@ -768,6 +932,253 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     ),
   });
 
+  /** Writes one of Locus's ready-made site pieces unless the site already has it. */
+  const addPiece = async (
+    session: BuilderSession,
+    piece: { path: string; content: string | Uint8Array },
+    overwrite: boolean,
+  ) => {
+    const existing = await session.workspace.readFile(piece.path);
+    if (existing !== null && !overwrite) return { kept: piece.path };
+    await session.workspace.writeFile(piece.path, piece.content);
+    return { written: piece.path };
+  };
+
+  /** Copies a Media Library image into the site where its use needs it. */
+  const useMedia = async (
+    session: BuilderSession,
+    input: {
+      id: string;
+      as: (typeof MEDIA_USES)[number];
+      path?: string | undefined;
+      search?: string | undefined;
+    },
+  ) => {
+    if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+    let file: Awaited<ReturnType<NonNullable<BuilderSession["crm"]>["mediaFile"]>>;
+    try {
+      file = await session.crm.mediaFile(input.id, input.search);
+    } catch (error) {
+      if (error instanceof CrmMediaError) throw new BuilderError(error.message);
+      throw error;
+    }
+    let path: string;
+    if (input.as === "image") {
+      const name = file.name
+        .toLowerCase()
+        .replace(/\.[a-z0-9]+$/, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "")
+        .slice(0, 60);
+      path = normalizeSitePath(input.path ?? `public/images/${name || input.id}.${file.format}`);
+      const ext = path.split(".").at(-1)?.toLowerCase();
+      const same = ext === file.format || (file.format === "jpg" && ext === "jpeg");
+      if (!path.startsWith("public/") || !same) {
+        throw new BuilderError(`Save it under public/ with a .${file.format} name.`);
+      }
+    } else {
+      const target = MEDIA_TARGETS[input.as][file.format];
+      if (!target) {
+        const formats = Object.keys(MEDIA_TARGETS[input.as]);
+        const fits = `${formats.slice(0, -1).join(", ")} or ${formats.at(-1)}`;
+        throw new BuilderError(
+          `A ${file.format} image can't be the site's ${input.as === "favicon" ? "icon" : "link preview"}; pick a ${fits} image.`,
+        );
+      }
+      path = target;
+      // One icon (or preview image) only, so the new one is the one browsers and apps show.
+      const rivals = (await session.workspace.listFiles())
+        .map((f) => f.path)
+        .filter((p) => MEDIA_RIVALS[input.as as "favicon" | "share"].test(p) && p !== path);
+      if (rivals.length > 0) await session.workspace.deleteFiles(rivals);
+    }
+    await session.workspace.writeFile(path, file.bytes);
+    return {
+      saved: path,
+      ...(path.startsWith("public/") ? { src: `/${path.slice("public/".length)}` } : {}),
+      bytes: file.bytes.byteLength,
+    };
+  };
+
+  const crm = createTool({
+    id: "crm",
+    description:
+      "Wire the site into the client's CRM (GoHighLevel). action calendars: the client's " +
+      "calendars to book on (id, name, type, GHL's booking page). add_booking: write " +
+      "components/booking.tsx, the site's own booking UI (<Booking calendarId=... />). " +
+      "add_calendar_embed: write components/calendar-embed.tsx, GHL's own booking widget " +
+      "(<CalendarEmbed src=embedUrl />). An existing file is kept unless `overwrite`. Load the " +
+      "site-booking skill first. products: the client's products with their one-time prices " +
+      "(productId, priceId, names, amount as GHL lists it). add_checkout: write " +
+      "components/buy-button.tsx (<BuyButton productId=... priceId=... />), which sells one " +
+      "price through a CRM invoice; load the site-checkout skill first. media: the client's " +
+      "Media Library images (id, name, format), " +
+      "newest first; `search` matches names. use_media: copy image `id` into the site `as` " +
+      "favicon (the site's icon), share (the link-preview image) or image (under public/, at " +
+      "`path` if given); pass the same `search` it was found with. add_tracking: put the CRM's " +
+      "external tracking script (`snippet`, the <script> tag the person copies from Settings → " +
+      "External Tracking) on every page; it links visitors to contacts and lets CRM workflows " +
+      "trigger on page views and forms.",
+    // A tracking script runs on every page and sends visitors to whichever account its id
+    // names, and a run can be talked into one by text it read: a person says yes each time.
+    requireApproval: (input) => input?.action === "add_tracking",
+    inputSchema: z.object({
+      action: z.enum(CRM_ACTIONS),
+      overwrite: z.boolean().optional(),
+      search: z.string().max(100).optional(),
+      id: z.string().max(64).optional(),
+      as: z.enum(MEDIA_USES).optional(),
+      path: z.string().optional(),
+      snippet: z.string().max(2000).optional(),
+    }),
+    execute: withSession(
+      async (
+        session,
+        input: {
+          action: (typeof CRM_ACTIONS)[number];
+          overwrite?: boolean | undefined;
+          search?: string | undefined;
+          id?: string | undefined;
+          as?: (typeof MEDIA_USES)[number] | undefined;
+          path?: string | undefined;
+          snippet?: string | undefined;
+        },
+      ) => {
+        switch (input.action) {
+          case "calendars": {
+            if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+            const calendars = await session.crm.calendars();
+            if (calendars.length === 0) {
+              return {
+                calendars: "",
+                note: "The client has no active calendars. Ask them to make one in their CRM.",
+              };
+            }
+            return {
+              // One line each, as text: names are the client's own and are screened as data.
+              calendars: calendars
+                .map(
+                  (c) =>
+                    `id: ${c.id} | name: ${c.name} | type: ${c.type} | embedUrl: ${c.embedUrl}`,
+                )
+                .join("\n"),
+            };
+          }
+          case "add_booking": {
+            const added = await addPiece(session, bookingComponentFile(), input.overwrite ?? false);
+            // A site made before booking lacks Locus's route (and lib/locus.ts its siteApi);
+            // the preview needs both now, not only after the next publish.
+            await session.workspace.writeFile(LOCUS_PROXY_PATH, locusProxyFile().content);
+            const settings = await session.workspace.readFile(LOCUS_SETTINGS_PATH);
+            if (typeof settings !== "string" || !settings.includes("siteApi")) {
+              const { path, content } = locusSettingsFile({ leadEndpoint: null, siteApi: null });
+              await session.workspace.writeFile(path, content);
+            }
+            return {
+              ...added,
+              note: 'Use <Booking calendarId="<id>" /> with the id written out as text: Locus reads it when the site is published and takes bookings on that calendar only.',
+            };
+          }
+          case "add_calendar_embed":
+            return addPiece(session, calendarEmbedFile(), input.overwrite ?? false);
+          case "products": {
+            if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+            const products = await session.crm.products();
+            if (products.length === 0) {
+              return {
+                products: "",
+                note:
+                  "The client has no products with a one-time price. Ask them to add one in " +
+                  "their CRM (Payments → Products).",
+              };
+            }
+            return {
+              // One line per price, as text: names are the client's own and are screened as data.
+              products: products
+                .flatMap((p) =>
+                  p.prices.map(
+                    (price) =>
+                      `productId: ${p.id} | priceId: ${price.id} | product: ${p.name} | ` +
+                      `price: ${price.name} | amount: ${amountText(price.amount, price.currency)}`,
+                  ),
+                )
+                .join("\n"),
+            };
+          }
+          case "add_checkout": {
+            const added = await addPiece(session, buyButtonFile(), input.overwrite ?? false);
+            // As for booking: a site made before checkout lacks Locus's route (and lib/locus.ts
+            // its siteApi); the preview needs both now, not only after the next publish.
+            await session.workspace.writeFile(LOCUS_PROXY_PATH, locusProxyFile().content);
+            const settings = await session.workspace.readFile(LOCUS_SETTINGS_PATH);
+            if (typeof settings !== "string" || !settings.includes("siteApi")) {
+              const { path, content } = locusSettingsFile({ leadEndpoint: null, siteApi: null });
+              await session.workspace.writeFile(path, content);
+            }
+            return {
+              ...added,
+              note: 'Use <BuyButton productId="<productId>" priceId="<priceId>" /> with both ids written out as text, copied from crm products; never invent them. Show the price on the page exactly as products lists it: the invoice charges GHL\'s price, whatever the page says.',
+            };
+          }
+          case "media": {
+            if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+            const media = await session.crm.media(input.search);
+            if (media.length === 0) {
+              return {
+                media: "",
+                note: input.search
+                  ? "No images match that name."
+                  : "The client's Media Library has no images yet.",
+              };
+            }
+            return {
+              media: media
+                .map((m) => `id: ${m.id} | name: ${m.name} | format: ${m.format}`)
+                .join("\n"),
+            };
+          }
+          case "add_tracking": {
+            const tracking = parseTrackingSnippet(
+              need(
+                input.snippet,
+                "add_tracking needs the snippet from the CRM's External Tracking",
+              ),
+            );
+            if (!tracking) {
+              throw new BuilderError(
+                "That isn't the CRM's tracking snippet. Ask for the whole <script> tag from " +
+                  "Settings → External Tracking (its src ends in /js/external-tracking.js and it " +
+                  "has a data-tracking-id starting tk_).",
+              );
+            }
+            const layout = await session.workspace.readFile("app/layout.tsx");
+            const updated = typeof layout === "string" ? layoutWithTracking(layout) : null;
+            if (!updated) {
+              throw new BuilderError(
+                "app/layout.tsx has no <body> to add the script to. Fix the layout first.",
+              );
+            }
+            const file = ghlTrackingFile(tracking);
+            await session.workspace.writeFile(file.path, file.content);
+            if (updated !== layout) await session.workspace.writeFile("app/layout.tsx", updated);
+            return {
+              written: GHL_TRACKING_PATH,
+              layout: updated === layout ? "already had it" : "added <GhlTracking />",
+              note: "It loads on the published site only, never in the preview.",
+            };
+          }
+          case "use_media":
+            return useMedia(session, {
+              id: need(input.id, "use_media needs the image's id from media"),
+              as: need(input.as, "use_media needs `as`: favicon, share or image"),
+              path: input.path,
+              search: input.search,
+            });
+        }
+      },
+    ),
+  });
+
   return {
     ...createSkillTools(),
     brief,
@@ -776,10 +1187,20 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     add_dependency,
     check_site,
     preview,
+    database,
     fetch_reference,
     generate_image,
+    view_reference,
     versions,
+    crm,
   };
+}
+
+/** A screenshot's media type from its extension, or null. */
+function screenshotType(path: string): string | null {
+  const ext = path.split(".").at(-1)?.toLowerCase();
+  if (ext === "jpeg") return "image/jpeg";
+  return Object.entries(SCREENSHOT_TYPES).find(([, e]) => e === ext)?.[0] ?? null;
 }
 
 export type SiteBuilderTools = ReturnType<typeof createSiteBuilderTools>;
@@ -885,6 +1306,52 @@ const text = html.replace(/<script[\\s\\S]*?<\\/script>|<style[\\s\\S]*?<\\/styl
   .replace(/<[^>]+>/g, " ").replace(/\\s+/g, " ").trim().slice(0, 12000);
 console.log(JSON.stringify({ status: res.status, title, headings, colours, text }, null, 1));
 `;
+
+/** The preview's own route that applies db/migrations/ to its local database (preview only). */
+const PREVIEW_MIGRATIONS_URL = "http://localhost:3000/api/locus/preview-migrations";
+
+const PREVIEW_MIGRATIONS_SCRIPT = `
+const res = await fetch(${JSON.stringify(PREVIEW_MIGRATIONS_URL)}, { method: "POST" });
+console.log(JSON.stringify({ status: res.status, body: (await res.text()).slice(0, 8000) }));
+`;
+
+/**
+ * Applies the site's migrations to the preview's database through the preview itself, so the
+ * running dev server sees them without a restart. The answer is the site's own code's output.
+ */
+async function migratePreview(
+  runtime: SiteRuntime,
+): Promise<{ applied: string[] } | { error: string }> {
+  const result = await runtime.run(
+    "node",
+    ["--input-type=module", "-e", PREVIEW_MIGRATIONS_SCRIPT],
+    {
+      timeoutMs: 120_000,
+    },
+  );
+  let answer: { status?: number; body?: string } = {};
+  try {
+    answer = JSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}");
+  } catch {}
+  if (answer.status === 200) {
+    try {
+      const body = JSON.parse(answer.body ?? "{}") as { applied?: unknown };
+      if (Array.isArray(body.applied)) return { applied: body.applied.map(String) };
+    } catch {}
+  }
+  if (answer.status === 422) {
+    try {
+      const body = JSON.parse(answer.body ?? "{}") as { error?: unknown };
+      return { error: `A migration failed in the preview: ${String(body.error)}` };
+    } catch {}
+  }
+  return {
+    error:
+      "The preview didn't apply the migrations" +
+      (answer.status ? ` (it answered ${answer.status})` : "") +
+      `. Check preview with logs. ${tail(result.stderr || result.stdout, 2_000)}`.trimEnd(),
+  };
+}
 
 /**
  * Mistakes the model can fix come back as data so it can correct itself. Anything else (a bug,

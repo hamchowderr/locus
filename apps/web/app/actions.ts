@@ -1,14 +1,21 @@
 "use server";
 
 import {
+  authorizeClient,
   ClientAccessDenied,
+  CREDIT,
+  MAX_OVERAGE_CREDITS,
   NotOperator,
+  OVERAGE_CENTS_PER_CREDIT,
   operatorsFromEnv,
   requireAgencyManager,
   resolveActiveClient,
   selectClient,
   setComped,
   setMemberClients,
+  setSiteAccess,
+  setSiteBuilder,
+  setUsageOverage,
 } from "@locus/auth";
 import {
   attachSiteDomain,
@@ -18,6 +25,7 @@ import {
   refusedQuery,
   removeSiteDomain,
   type SyncResult,
+  setSiteFolder,
   syncLocations,
   unlinkHostProject,
 } from "@locus/connect";
@@ -25,20 +33,30 @@ import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
+import { prepareExtraUsage, sendExtraUsage } from "@/lib/extra-usage";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext } from "@/lib/next-path";
 import {
   ACTIVE_SITE_COOKIE,
   chooseActiveSite,
+  copyClientSite,
   createClientSite,
   deleteClientSite,
+  publishLatestVersion,
   SiteInputError,
+  siteNames,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
-import { giveSiteProject, giveSiteRepo } from "@/lib/site-publish";
+import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
+
+/** An uploaded file's bytes and type, or null when the field was left empty. */
+async function uploaded(value: FormDataEntryValue | null) {
+  if (!(value instanceof File) || value.size === 0) return null;
+  return { bytes: new Uint8Array(await value.arrayBuffer()), mediaType: value.type };
+}
 
 /** Better Auth's API errors carry a readable message in `body.message`. */
 function messageOf(error: unknown): string {
@@ -312,6 +330,44 @@ export async function subscribe(form: FormData) {
   redirect(url);
 }
 
+/**
+ * Turns the session agency's extra usage on or off, with a monthly limit in US dollars. Owners
+ * and admins only (`setUsageOverage`). Turning it on first adds the metered price to the agency's
+ * subscription, so Stripe can bill extra credits from the first one.
+ */
+export async function setExtraUsage(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fbilling");
+  const organizationId = current.session.activeOrganizationId;
+  if (!organizationId) redirect("/onboarding");
+  const enabled = form.get("enabled") === "on";
+  const dollars = Number(text(form, "limitUsd") || "0");
+  const credits = Math.floor((dollars * 100) / OVERAGE_CENTS_PER_CREDIT) * CREDIT;
+  if (!Number.isFinite(dollars) || dollars < 0 || credits > MAX_OVERAGE_CREDITS) {
+    back("/billing", new Error("Enter a monthly limit in dollars, such as 50."));
+  }
+  let refusal: string | null = null;
+  try {
+    const ctx = sessionContext(current);
+    // Only an owner or admin gets as far as Stripe.
+    await requireAgencyManager(locus().db, ctx);
+    refusal = enabled ? await prepareExtraUsage(organizationId) : null;
+    if (!refusal) await setUsageOverage(locus().db, ctx, { enabled, monthlyCreditLimit: credits });
+  } catch (error) {
+    back(
+      "/billing",
+      error instanceof ClientAccessDenied
+        ? new Error("Only the agency's owners and admins manage billing.")
+        : error,
+    );
+  }
+  if (refusal) back("/billing", new Error(refusal));
+  // Usage from before it was turned off is still owed; send it now rather than at the next run.
+  if (!enabled) await sendExtraUsage({ organizationId });
+  revalidatePath("/billing");
+  redirect("/billing?saved=1");
+}
+
 /** Opens Stripe's billing portal for the session's agency. Owners and admins only. */
 export async function openBillingPortal() {
   const current = await currentSession();
@@ -347,12 +403,15 @@ async function siteAction(
     client: Awaited<ReturnType<typeof resolveActiveClient>>,
   ) => Promise<unknown>,
   notConfigured = "Vercel isn't set up here yet.",
+  /** Where to land afterwards, from what the change returned; the Sites page by default. */
+  landing: (result: unknown) => string = () => "/sites",
 ) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   const ctx = sessionContext(current);
+  let result: unknown;
   try {
-    await change(ctx, await resolveActiveClient(locus().db, ctx));
+    result = await change(ctx, await resolveActiveClient(locus().db, ctx));
   } catch (error) {
     if (error instanceof ClientAccessDenied || error instanceof ConnectError) back("/sites", error);
     if (error instanceof NotConfigured) back("/sites", new Error(notConfigured));
@@ -360,7 +419,7 @@ async function siteAction(
   }
   // The redirect lands on the page the form was on, so drop its cached render.
   revalidatePath("/sites");
-  redirect("/sites");
+  redirect(landing(result));
 }
 
 /** Makes a project on the agency's Vercel team the active client's site. */
@@ -401,6 +460,15 @@ export async function createSite(form: FormData) {
       name: text(form, "name"),
       kind: text(form, "kind"),
       templateId: text(form, "templateId"),
+      description: text(form, "description"),
+      goal: text(form, "goal"),
+      audience: text(form, "audience"),
+      palette: text(form, "palette"),
+      fonts: text(form, "fonts"),
+      layout: text(form, "layout"),
+      pages: form.getAll("pages").map(String),
+      referenceUrl: text(form, "referenceUrl"),
+      screenshot: await uploaded(form.get("screenshot")),
     });
     // The site just made is the one the person means to build next, in the chat too. The site
     // exists either way, so failing to choose it doesn't fail the creation.
@@ -422,9 +490,109 @@ export async function createSite(form: FormData) {
 }
 
 /**
- * Deletes one of the active client's draft sites, with everything Locus keeps for it. Owners
- * and admins only; the client is the session's, and a site with a repository or Vercel project
- * is refused (`deleteClientSite`).
+ * Copies one of the active client's sites into a new draft, for this client or another one.
+ * The source is the session's client; the target from the form goes through the same staff
+ * check as choosing a client, so a member can only copy into clients they work on.
+ */
+export async function copySite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  let elsewhere = false;
+  try {
+    const from = await resolveActiveClient(locus().db, ctx);
+    const targetId = text(form, "targetClientId") || from.location.id;
+    const to =
+      targetId === from.location.id ? from : await authorizeClient(locus().db, ctx, targetId);
+    elsewhere = to !== from;
+    const { siteId } = await copyClientSite(
+      siteBuilderDeps(),
+      ctx,
+      from,
+      text(form, "siteId"),
+      to,
+      {
+        name: text(form, "name"),
+      },
+    );
+    if (!elsewhere) {
+      try {
+        await rememberActiveSite(await chooseActiveSite(locus().db, ctx, from, siteId));
+      } catch (error) {
+        console.error("copySite: could not choose the copy", error);
+      }
+    }
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Client databases aren't set up here yet."));
+    }
+    throw error;
+  }
+  revalidatePath("/sites");
+  redirect(`/sites?copied=${elsewhere ? "elsewhere" : "here"}`);
+}
+
+/**
+ * Sets which members may only view one of the active client's sites; the rest of the members
+ * who work on the client manage it. Owners and admins only.
+ */
+export async function saveSiteAccess(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      setSiteAccess(
+        locus().db,
+        ctx,
+        client,
+        text(form, "siteId"),
+        form.getAll("viewOnly").map(String),
+      ),
+    "Locus isn't set up here yet.",
+  );
+}
+
+/**
+ * Turns the site builder on or off for the clients ticked on the Clients page. Owners and admins
+ * only; every client must be the agency's (`setSiteBuilder`).
+ */
+export async function switchSiteBuilder(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fclients");
+  const on = form.get("on") === "yes";
+  let changed = 0;
+  try {
+    changed = await setSiteBuilder(
+      locus().db,
+      sessionContext(current),
+      form.getAll("locationId").map(String),
+      on,
+    );
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) back("/clients", error);
+    throw error;
+  }
+  revalidatePath("/clients");
+  redirect(`/clients?builder=${on ? "on" : "off"}&changed=${changed}`);
+}
+
+/** Files one of the active client's sites under a folder, or under none. */
+export async function fileSite(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      setSiteFolder(locus().db, ctx, client, {
+        siteId: text(form, "siteId"),
+        folder: text(form, "folder"),
+      }),
+    "Locus isn't set up here yet.",
+  );
+}
+
+/**
+ * Deletes one of the active client's sites, with everything Locus keeps for it; its repository
+ * stays. Owners and admins only; the client is the session's, and a site with a Vercel project
+ * or domain is refused (`deleteClientSite`).
  */
 export async function deleteSite(form: FormData) {
   const current = await currentSession();
@@ -459,13 +627,33 @@ export async function chooseSite(form: FormData) {
   if (!current) redirect("/sign-in?next=%2Fsites");
   const ctx = sessionContext(current);
   let siteId = "";
+  let hasBrief = false;
   try {
     const client = await resolveActiveClient(locus().db, ctx);
-    siteId = await chooseActiveSite(locus().db, ctx, client, text(form, "siteId"));
+    const wanted = text(form, "siteId");
+    // Only a site started in Locus has a brief (in this client's own database) and versions
+    // for the builder to work on.
+    const briefs = await siteNames(siteBuilderDeps(), client, [wanted]).catch((error) => {
+      if (error instanceof NotConfigured) throw error;
+      console.error("Choosing a site: the client's database didn't answer", error);
+      return null;
+    });
+    if (!briefs)
+      return back("/sites", new Error("Locus couldn't reach this client's sites. Try again."));
+    hasBrief = briefs.has(wanted);
+    if (hasBrief) siteId = await chooseActiveSite(locus().db, ctx, client, wanted);
   } catch (error) {
-    if (error instanceof ClientAccessDenied) back("/sites", error);
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
     if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
     throw error;
+  }
+  if (!hasBrief) {
+    back(
+      "/sites",
+      new Error("That site wasn't made in Locus, so the site builder can't work on it."),
+    );
   }
   await rememberActiveSite(siteId);
   redirect("/sites?chosen=1");
@@ -496,13 +684,48 @@ export async function unlinkSiteProject(form: FormData) {
 export async function giveSiteRepository(form: FormData) {
   await siteAction(
     (ctx, client) =>
-      giveSiteRepo(publishDeps(), ctx, client, {
+      giveSiteRepoAndPublish(publishDeps(), siteBuilderDeps, ctx, client, {
         siteId: text(form, "siteId"),
         repo: text(form, "repo"),
         name: text(form, "name"),
       }),
     "Publishing to GitHub isn't set up here yet.",
+    (result) => {
+      const { version } = result as Awaited<ReturnType<typeof giveSiteRepoAndPublish>>;
+      return version === null ? "/sites" : `/sites?published=${version}`;
+    },
   );
+}
+
+/**
+ * Sends one of the active client's sites' latest saved version to its repository, so Vercel
+ * deploys it. The client is the session's (after the staff check), never the form's.
+ */
+export async function publishSite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  let done: string;
+  try {
+    const client = await resolveActiveClient(locus().db, ctx);
+    const { version } = await publishLatestVersion(
+      siteBuilderDeps(),
+      ctx,
+      client,
+      text(form, "siteId"),
+    );
+    done = `published=${version}${form.get("deploys") === "yes" ? "&deploys=1" : ""}`;
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Publishing to GitHub isn't set up here yet."));
+    }
+    throw error;
+  }
+  revalidatePath("/sites");
+  redirect(`/sites?${done}`);
 }
 
 /** Gives one of the active client's sites a Vercel project that builds its repository. */

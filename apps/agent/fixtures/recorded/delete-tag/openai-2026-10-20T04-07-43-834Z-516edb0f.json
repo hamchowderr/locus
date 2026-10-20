@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Delete the old-promo tag. Nobody uses it any more.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 5,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "ask_user",
+            "arguments": "{\"question\": \"The \\\"old-promo\\\" tag (fake-tag-03) is still on one contact: Casey Placeholder (casey@example.net). If I delete the tag, it comes off that contact too. Should I go ahead?\", \"options\": [{\"label\": \"Delete anyway\", \"description\": \"Delete the tag. It comes off Casey as well.\"}, {\"label\": \"Don't delete\", \"description\": \"Keep the tag for now\"}]}",
+            "id": "toolu_01RsRU3Ya9ofCNDUHiEWSzb6"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 10827,
+          "completion_tokens": 363,
+          "total_tokens": 11190,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.050568,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 167,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.050568
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1108,
+        "interChunkDelaysMs": [
+          1841, 21, 0, 82, 47, 62, 38, 49, 63, 40, 55, 48, 51, 49, 47, 51, 55, 152, 45, 50, 52, 52,
+          54, 46, 48, 47, 54, 58, 67, 1, 0
+        ],
+        "totalDurationMs": 4433
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

@@ -13,6 +13,7 @@
     "test:live-writes": "vitest run src/live-writes.test.ts"
   },
   "dependencies": {
+    "@composio/core": "0.25.0",
     "@libsql/client": "0.18.0",
     "@locus/ghl": "workspace:*",
     "@locus/skills": "workspace:*",

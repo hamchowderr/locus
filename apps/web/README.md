@@ -27,6 +27,7 @@ Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hos
 | `EMAIL_MODE` | `console` | `resend`, with `RESEND_API_KEY` and `EMAIL_FROM` |
 | `GHL_MODE` | `stub` (a pretend agency with three sub-accounts) | `live` |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | — | the Marketplace app's. Its scopes are `GHL_SCOPES` in `@locus/connect`, never a setting |
+| `LOCUS_GHL_LIVE_PAYMENTS` | unset: a site's checkout makes GHL test-mode invoices (with `GHL_MODE=live`, it warns once) | `true` once sites may take real money through their clients' GHL invoices |
 | `GITHUB_MODE` | `stub` (a pretend org with Locus installed) | `live` |
 | `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | — | the GitHub App's (`locus-ghl`) |
 | `GITHUB_WEBHOOK_SECRET` | only to test webhooks | the App's webhook secret |
@@ -43,6 +44,7 @@ Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hos
 | `STRIPE_WEBHOOK_SECRET` | from `stripe listen` | the signing secret of the webhook endpoint `https://<host>/api/auth/stripe/webhook` |
 | `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID`, `LOCUS_SANDBOX_PROJECT_ID` | unset: the site builder uses the in-memory fake sandbox (commands succeed and run nothing) | Otaku's own Vercel team, for site sandboxes. Not needed on Vercel, where the deployment's OIDC token is used; `LOCUS_SANDBOX=off` turns sandboxes off |
 | `LOCUS_IMAGE_API_KEY` (+ optional `LOCUS_IMAGE_BASE_URL`, `LOCUS_IMAGE_MODEL`) | — | the site builder's image API. Unset means no image generation |
+| `COMPOSIO_API_KEY` | — | Otaku's Composio project, for the Apps page (connect Gmail, Google Calendar, Slack per client). Unset means the page says it isn't set up. The agent server needs the same key to use the apps in chat |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
 auth API answers 503 — it never falls back to development defaults.
@@ -60,6 +62,14 @@ Preview the development one), and a migration that fails stops the deployment. T
 then brings every client's database up to date with `migrateTenants`: on Production, and on
 the `staging` branch's Preview. Other Preview builds skip it, so a branch's unmerged migration
 never reaches staging's clients.
+
+Other Preview builds (pull requests) don't apply their own control migrations to the shared
+development database either: they check them on an empty in-memory database, then bring the
+shared one up to `main`'s migrations, read from GitHub. A pull request's migrations change
+under review (renumbered, regenerated), and each version that reached the shared database
+used to fail later builds ("duplicate column") or make Drizzle skip `main`'s older-dated
+migrations. So a Preview of a branch with a new control table runs without that table until
+the branch is merged.
 
 Agencies' own tokens are not in Infisical: they are sealed in the control database with
 `LOCUS_SECRETS_KEY`, which is itself one of those Infisical values.

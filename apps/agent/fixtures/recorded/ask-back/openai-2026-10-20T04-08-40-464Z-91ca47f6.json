@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Tag one of my contacts for me, but check with me which one and which tag first.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 4,
+        "hasToolResult": true
+      },
+      "response": {
+        "toolCalls": [
+          {
+            "name": "ask_user",
+            "arguments": "{\"question\": \"Which contact should I tag?\", \"options\": [{\"label\": \"Avery Example\", \"description\": \"avery@example.com — tags: vip, newsletter\"}, {\"label\": \"Jordan Sample\", \"description\": \"jordan@example.org — tags: newsletter\"}, {\"label\": \"Casey Placeholder\", \"description\": \"casey@example.net — tags: old-promo\"}, {\"label\": \"Riley Demo\", \"description\": \"riley@example.org — tags: vip (Morgan Testcase and Quinn Mockridge also available — type their name)\"}]}",
+            "id": "toolu_016RqZpRf8DYCYteYbAcB7Jb"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 7772,
+          "completion_tokens": 239,
+          "total_tokens": 8011,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.035868,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.035868
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 1197,
+        "interChunkDelaysMs": [
+          0, 287, 10, 0, 0, 0, 42, 51, 66, 48, 64, 147, 11, 0, 36, 31, 49, 50, 51, 49, 50, 48, 101,
+          49, 54, 44, 51, 105, 2, 0
+        ],
+        "totalDurationMs": 2693
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

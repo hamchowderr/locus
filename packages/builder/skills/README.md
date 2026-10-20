@@ -26,3 +26,6 @@ path), components through `add_dependency` instead of the shadcn CLI.
 | Skill | Why |
 |---|---|
 | `site-forms` | Forms on a Locus site post to its own `/api/lead` route, which forwards to Locus and the client's CRM, with the fields and spam checks Locus expects and never a key: a contract no public skill covers. |
+| `site-media` | The client's own images come from their CRM's Media Library through the `crm` tool, copied into the site (favicon and link-preview image in Next's file conventions), never hot-linked. |
+| `site-booking` | Booking on a Locus site uses the client's own CRM calendars through the `crm` tool and Locus's ready-made components, never an invented link or a third-party service. |
+| `site-checkout` | Selling on a Locus site uses the client's own CRM products and prices through the `crm` tool and Locus's buy button, paid through a CRM invoice at the CRM's price, never an invented price or a third-party shop. |
