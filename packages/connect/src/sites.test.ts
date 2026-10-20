@@ -11,6 +11,7 @@ import {
   memberLocation,
   organization,
   site,
+  siteBackend,
   user,
 } from "@locus/db/control";
 import { MemorySecretStore } from "@locus/secrets";
@@ -285,6 +286,24 @@ describe("linking a Vercel project to a client", () => {
     expect(await listSites(db, client)).toEqual([
       expect.objectContaining({ id: row.id, repoFullName: "acme/site", hostProjectId: null }),
     ]);
+  });
+
+  it("keeps a site with its own database when its project is unlinked", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    const row = await linkHostProject(deps(), ctx("owner"), client, {
+      projectId: STUB_VERCEL_PROJECT.id,
+    });
+    await db.insert(siteBackend).values({
+      siteId: row.id,
+      locationId: "client-1",
+      tursoDbName: `site-${row.id}`,
+      tursoDbHostname: `site-${row.id}.turso.test`,
+    });
+    await unlinkHostProject(deps(), ctx("owner"), client, row.id);
+    expect(await listSites(db, client)).toEqual([
+      expect.objectContaining({ id: row.id, hostProjectId: null, status: "draft" }),
+    ]);
+    expect(await db.select().from(siteBackend)).toHaveLength(1);
   });
 
   it("never removes a site that has no linked project", async () => {
