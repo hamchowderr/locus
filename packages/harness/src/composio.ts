@@ -184,6 +184,9 @@ export interface ComposioConnectorConfig {
 }
 
 const READ_ONLY_TAG = "readOnlyHint";
+const DESTRUCTIVE_TAG = "destructiveHint";
+/** A tool named for deleting, should its app not tag it so: GMAIL_DELETE_MESSAGE, X_REMOVE_Y. */
+const DELETING_NAME = /(^|_)(DELETE|DELETES|REMOVE|REMOVES|TRASH|DESTROY|PURGE|ERASE|WIPE)(_|$)/i;
 
 export function createComposioConnector({
   apiKey,
@@ -285,6 +288,16 @@ export function createComposioConnector({
       service(
         async () => (await offered(slug)) && (await describe(slug)).tags.includes(READ_ONLY_TAG),
       ),
+
+    toolkit: (slug) =>
+      service(async () => ((await offered(slug)) ? (await describe(slug)).toolkit : null)),
+
+    deletes: (slug) =>
+      service(async () => {
+        if (!(await offered(slug))) return true;
+        const { tags } = await describe(slug);
+        return tags.includes(DESTRUCTIVE_TAG) || DELETING_NAME.test(slug);
+      }),
 
     execute: (slug, args) =>
       service(async () => {

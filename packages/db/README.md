@@ -6,7 +6,7 @@ Drizzle schema and migrations for the two kinds of database. Design: vault notes
 | Database | Holds | Migrated by |
 |---|---|---|
 | **control** (one) | Better Auth's tables, the client registry (`location`), staff client access (`member_location`), site index, the three connections (each names its credential by path), agencies' credentials sealed with AES-256-GCM (`secret`, via `DbSecretStore`), audit log, AI usage metering (`usage_event`, its monthly rollup `usage_month`, `usage_limit`, `usage_alert`), each tenant's schema state | Drizzle's migrator — `migrateControlDb` |
-| **tenant** (one per client) | Generated sites' source: `site_blob`, `site_draft_file`, `site_version`, `site_version_file`, `site_brief`, `generation_run` (see `@locus/studio`). Never any GHL data | our runner — `migrateTenants` |
+| **tenant** (one per client) | Generated sites' source: `site_blob`, `site_draft_file`, `site_version`, `site_version_file`, `site_brief`, `generation_run` (see `@locus/studio`); how the chat may use each connected app (`app_access`, see `app-access.ts`). Never any GHL data | our runner — `migrateTenants` |
 
 ## Changing a schema
 

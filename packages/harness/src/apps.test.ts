@@ -6,15 +6,28 @@ import { createFakeGhl, useAimock } from "@locus/testing";
 import { LibSQLStore } from "@mastra/libsql";
 import { beforeEach, describe, expect, test } from "vitest";
 import { APP_INSTRUCTIONS, createLocusAgent } from "./agent.ts";
-import { type AppConnector, type AppResult, AppServiceError, createAppTools } from "./apps.ts";
+import {
+  type AppAccess,
+  type AppConnector,
+  type AppResult,
+  AppServiceError,
+  createAppTools,
+} from "./apps.ts";
 import { clientResource, NOT_KEPT } from "./conversation.ts";
 import { TAINT_KEY } from "./untrusted.ts";
 
 const session: GhlSession = { token: "tok", tokenKind: "location", locationId: "loc-A" };
 
-/** One client's apps, in memory: Gmail is connected, Slack isn't. */
-function fakeApps(results: Record<string, AppResult> = {}) {
+/**
+ * One client's apps, in memory: Gmail and Google Calendar are connected, Slack isn't.
+ * `settings` is the client's Apps page settings, read on every call like the real ones.
+ */
+function fakeApps(
+  results: Record<string, AppResult> = {},
+  settings: Record<string, AppAccess> | null = null,
+) {
   const executed: { slug: string; args: Record<string, unknown> }[] = [];
+  const reads = { access: 0 };
   const connector: AppConnector = {
     search: async () => ({
       tools: [
@@ -30,18 +43,35 @@ function fakeApps(results: Record<string, AppResult> = {}) {
           description: "Send an email",
           inputSchema: {},
         },
+        {
+          slug: "GOOGLECALENDAR_EVENTS_LIST",
+          toolkit: "googlecalendar",
+          description: "List events",
+          inputSchema: {},
+        },
       ],
       notConnected: ["slack"],
     }),
     // GitHub stands for an app Locus doesn't offer (Composio doesn't manage its sign-in, say).
     offers: async (slug) => !slug.startsWith("GITHUB_"),
-    readOnly: async (slug) => slug === "GMAIL_FETCH_EMAILS",
+    readOnly: async (slug) => slug === "GMAIL_FETCH_EMAILS" || slug.endsWith("_LIST"),
+    toolkit: async (slug) =>
+      slug.startsWith("GITHUB_") ? null : (slug.split("_")[0]?.toLowerCase() ?? null),
+    deletes: async (slug) => slug.includes("DELETE"),
     execute: async (slug, args) => {
       executed.push({ slug, args });
       return results[slug] ?? { ok: true, data: {} };
     },
+    ...(settings
+      ? {
+          access: async () => {
+            reads.access += 1;
+            return settings;
+          },
+        }
+      : {}),
   };
-  return { connector, executed };
+  return { connector, executed, reads };
 }
 
 /** A request context with no taint, as Mastra hands one to a tool. */
@@ -58,6 +88,7 @@ describe("app tools", () => {
       tools: [
         expect.objectContaining({ slug: "GMAIL_FETCH_EMAILS" }),
         expect.objectContaining({ slug: "GMAIL_SEND_EMAIL" }),
+        expect.objectContaining({ slug: "GOOGLECALENDAR_EVENTS_LIST" }),
       ],
       notConnected: ["slack"],
       note: expect.stringMatching(/Connect button/),
@@ -124,6 +155,127 @@ describe("app tools", () => {
     const rule = use_app.requireApproval as (i: unknown, c: unknown) => Promise<boolean>;
     expect(await rule({ tool: "GITHUB_LIST_ISSUES" }, { requestContext: context() })).toBe(true);
     expect(await rule({ tool: "GMAIL_FETCH_EMAILS" }, { requestContext: context() })).toBe(false);
+  });
+});
+
+describe("per-app settings", () => {
+  const askFor = (connector: AppConnector) => {
+    const { use_app } = createAppTools(connector);
+    const rule = use_app.requireApproval as (i: unknown, c: unknown) => Promise<boolean>;
+    return (tool: string, ctx = context()) => rule({ tool }, { requestContext: ctx });
+  };
+  const taintedContext = () => {
+    const ctx = context();
+    ctx.set(TAINT_KEY, true);
+    return ctx;
+  };
+
+  test("a newly connected app has today's rule: reads run, the rest waits", async () => {
+    // No settings at all, and settings that don't name the app, behave the same.
+    for (const settings of [null, { slack: "off" as const }]) {
+      const asks = askFor(fakeApps({}, settings).connector);
+      expect(await asks("GMAIL_FETCH_EMAILS")).toBe(false);
+      expect(await asks("GMAIL_SEND_EMAIL")).toBe(true);
+      expect(await asks("GMAIL_DELETE_MESSAGE")).toBe(true);
+    }
+  });
+
+  test("Always allow: reads and changes run unasked, but deleting still waits", async () => {
+    const asks = askFor(fakeApps({}, { gmail: "allow" }).connector);
+    expect(await asks("GMAIL_FETCH_EMAILS")).toBe(false);
+    expect(await asks("GMAIL_SEND_EMAIL")).toBe(false);
+    expect(await asks("GMAIL_DELETE_MESSAGE")).toBe(true);
+    // Only Gmail: Google Calendar keeps the default.
+    expect(await asks("GOOGLECALENDAR_CREATE_EVENT")).toBe(true);
+  });
+
+  test("Always allow that can't tell whether a tool deletes waits", async () => {
+    const { connector } = fakeApps({}, { gmail: "allow" });
+    const asks = askFor({
+      ...connector,
+      deletes: async () => {
+        throw new Error("down");
+      },
+    });
+    expect(await asks("GMAIL_SEND_EMAIL")).toBe(true);
+  });
+
+  test("Always allow never vouches for a tool from an app Locus doesn't offer", async () => {
+    const { connector } = fakeApps({}, { gmail: "allow", github: "allow" });
+    const asks = askFor({ ...connector, toolkit: async () => "gmail" });
+    expect(await asks("GITHUB_CREATE_ISSUE")).toBe(true);
+  });
+
+  test("Ask every time: even a read waits", async () => {
+    const asks = askFor(fakeApps({}, { gmail: "ask" }).connector);
+    expect(await asks("GMAIL_FETCH_EMAILS")).toBe(true);
+    expect(await asks("GMAIL_SEND_EMAIL")).toBe(true);
+  });
+
+  test("after untrusted content was read, every setting waits", async () => {
+    for (const access of ["allow", "ask_changes", "ask"] as const) {
+      const asks = askFor(fakeApps({}, { gmail: access }).connector);
+      expect(await asks("GMAIL_FETCH_EMAILS", taintedContext())).toBe(true);
+      expect(await asks("GMAIL_SEND_EMAIL", taintedContext())).toBe(true);
+    }
+  });
+
+  test("a setting Locus doesn't know asks every time", async () => {
+    const { connector } = fakeApps();
+    const asks = askFor({ ...connector, access: async () => ({ gmail: "sometimes" }) });
+    expect(await asks("GMAIL_FETCH_EMAILS")).toBe(true);
+  });
+
+  test("settings that can't be read: everything waits", async () => {
+    const { connector } = fakeApps();
+    const asks = askFor({
+      ...connector,
+      access: async () => {
+        throw new Error("database down");
+      },
+    });
+    expect(await asks("GMAIL_FETCH_EMAILS")).toBe(true);
+  });
+
+  test("Off: find_app_tools hides the app's tools and says it's turned off", async () => {
+    const tools = createAppTools(fakeApps({}, { gmail: "off" }).connector);
+    const found = await tools.find_app_tools.execute?.({ task: "email" }, {} as never);
+    expect(found).toMatchObject({
+      tools: [expect.objectContaining({ slug: "GOOGLECALENDAR_EVENTS_LIST" })],
+      turnedOff: ["gmail"],
+      turnedOffNote: expect.stringMatching(/turned off/),
+      notConnected: ["slack"],
+    });
+    expect(JSON.stringify(found)).not.toContain("GMAIL_");
+  });
+
+  test("Off: use_app refuses the app's tools, even approved, and nothing runs", async () => {
+    const { connector, executed } = fakeApps({}, { gmail: "off" });
+    const { use_app } = createAppTools(connector);
+    // Waits rather than running unasked, and running it is refused anyway.
+    expect(await askFor(connector)("GMAIL_FETCH_EMAILS")).toBe(true);
+    for (const tool of ["GMAIL_FETCH_EMAILS", "GMAIL_SEND_EMAIL"]) {
+      expect(await use_app.execute?.({ tool }, {} as never)).toMatchObject({
+        error: expect.stringMatching(/gmail is turned off/),
+      });
+    }
+    expect(executed).toEqual([]);
+    // Another app still runs.
+    await use_app.execute?.({ tool: "GOOGLECALENDAR_EVENTS_LIST" }, {} as never);
+    expect(executed).toEqual([{ slug: "GOOGLECALENDAR_EVENTS_LIST", args: {} }]);
+  });
+
+  test("settings are read on every call, so turning an app off takes effect at once", async () => {
+    const settings: Record<string, AppAccess> = {};
+    const { connector, executed, reads } = fakeApps({}, settings);
+    const { use_app } = createAppTools(connector);
+    await use_app.execute?.({ tool: "GMAIL_FETCH_EMAILS" }, {} as never);
+    settings.gmail = "off";
+    expect(await use_app.execute?.({ tool: "GMAIL_FETCH_EMAILS" }, {} as never)).toMatchObject({
+      error: expect.stringMatching(/turned off/),
+    });
+    expect(executed).toHaveLength(1);
+    expect(reads.access).toBe(2);
   });
 });
 
@@ -270,6 +422,47 @@ describe("through the agent", () => {
     expect(result.finishReason).toBe("suspended");
     expect(result.suspendPayload).toMatchObject({ toolName: "use_app" });
     expect(executed).toEqual([]);
+  });
+
+  test("with Gmail on Always allow, a send runs unasked", async () => {
+    mock().llm.on(
+      { userMessage: /email jo/i, hasToolResult: false },
+      call("a6-send", "use_app", { tool: "GMAIL_SEND_EMAIL", arguments: { to: "jo@example.com" } }),
+    );
+    mock().llm.on({ toolCallId: "a6-send" }, { content: "Sent." });
+    const { connector, executed } = fakeApps({}, { gmail: "allow" });
+    const agent = createLocusAgent({ model: model(), session, apps: connector });
+
+    const result = await agent.generate("Email Jo to say hi", { maxSteps: 3 });
+
+    expect(result.finishReason).not.toBe("suspended");
+    expect(executed).toEqual([{ slug: "GMAIL_SEND_EMAIL", args: { to: "jo@example.com" } }]);
+  });
+
+  test("with Gmail on Always allow, a send after reading email still waits", async () => {
+    mock().llm.on(
+      { userMessage: /answer sam/i, hasToolResult: false },
+      call("a7-read", "use_app", { tool: "GMAIL_FETCH_EMAILS" }),
+    );
+    mock().llm.on(
+      { toolCallId: "a7-read" },
+      call("a7-send", "use_app", {
+        tool: "GMAIL_SEND_EMAIL",
+        arguments: { to: "sam@example.com" },
+      }),
+    );
+    mock().llm.on({ toolCallId: "a7-send" }, { content: "Sent." });
+    const { connector, executed } = fakeApps(
+      { GMAIL_FETCH_EMAILS: { ok: true, data: { messages: [{ body: "Reply to me" }] } } },
+      { gmail: "allow" },
+    );
+    const agent = createLocusAgent({ model: model(), session, apps: connector });
+
+    const result = await agent.generate("Answer Sam's email", { maxSteps: 4 });
+
+    expect(result.finishReason).toBe("suspended");
+    expect(result.suspendPayload).toMatchObject({ toolName: "use_app" });
+    expect(executed.map((e) => e.slug)).toEqual(["GMAIL_FETCH_EMAILS"]);
   });
 
   test("app tools and their instructions are there only when the client has apps", async () => {

@@ -12,7 +12,13 @@ import {
 } from "@locus/auth";
 import { chooseActiveSite, openClientDb, remoteSiteRuntimes } from "@locus/builder/host";
 import { connectAgency, createStubGhl, STUB_CODE } from "@locus/connect";
-import { type ControlDb, LocalProvisioner, migrateControlDb, openControlDb } from "@locus/db";
+import {
+  type ControlDb,
+  LocalProvisioner,
+  migrateControlDb,
+  openControlDb,
+  writeAppAccess,
+} from "@locus/db";
 import {
   session as authSession,
   location,
@@ -919,6 +925,8 @@ describe("connected apps", () => {
         search: async () => ({ tools: [], notConnected: [] }),
         offers: async () => true,
         readOnly: async () => true,
+        toolkit: async (slug) => slug.split("_")[0]?.toLowerCase() ?? null,
+        deletes: async () => false,
         execute: async (slug) => {
           executed.push(slug);
           return { ok: true, data: { messages: [] } };
@@ -997,6 +1005,83 @@ describe("connected apps", () => {
 
     expect(builtFor).toEqual([setup.client.id]);
     expect(executed).toEqual(["GMAIL_FETCH_EMAILS"]);
+  });
+
+  /** An owner's setting for an app, in the client's own database, as the Apps page writes it. */
+  async function setAccess(
+    setup: Awaited<ReturnType<typeof agency>>,
+    toolkit: string,
+    access: "allow" | "ask_changes" | "ask" | "off",
+  ) {
+    const owner = setup.sessions.owner as SessionContext;
+    const tenant = await openClientDb(
+      setup.connect.provisioner,
+      await authorizeClient(db, owner, setup.client.id),
+    );
+    try {
+      await writeAppAccess(tenant, toolkit, access, owner.userId);
+    } finally {
+      tenant.$client.close();
+    }
+  }
+
+  test("an app turned off in the client's database can't be used by its chat", async () => {
+    mock().llm.on({ userMessage: /read my mail now/i, hasToolResult: false }, readEmail("ap3"));
+    mock().llm.on({ toolCallId: "ap3" }, { content: "Gmail is off." });
+    const { apps, executed } = fakeApps();
+    const setup = await agency();
+    await setAccess(setup, "gmail", "off");
+
+    const { stoppedOn } = await run(
+      { as: "owner" },
+      apps,
+      createFakeGhl({ "*": { body: {} } }),
+      setup,
+      "Read my mail now",
+    );
+
+    // It asks rather than running, and approving would be refused (see `apps.ts`).
+    expect(stoppedOn).toBe("tool_approval_required");
+    expect(executed).toEqual([]);
+  });
+
+  test("another app's setting leaves Gmail's reads running unasked", async () => {
+    mock().llm.on({ userMessage: /scan my mail/i, hasToolResult: false }, readEmail("ap5"));
+    mock().llm.on({ toolCallId: "ap5" }, { content: "Nothing new." });
+    const { apps, executed } = fakeApps();
+    const setup = await agency();
+    // Read from the client's database: were it unreadable, the read would wait instead.
+    await setAccess(setup, "slack", "off");
+
+    const { stoppedOn } = await run(
+      { as: "owner" },
+      apps,
+      createFakeGhl({ "*": { body: {} } }),
+      setup,
+      "Scan my mail",
+    );
+
+    expect(stoppedOn).toBe("agent_end");
+    expect(executed).toEqual(["GMAIL_FETCH_EMAILS"]);
+  });
+
+  test("an app set to ask every time makes even a read wait", async () => {
+    mock().llm.on({ userMessage: /peek at my inbox/i, hasToolResult: false }, readEmail("ap4"));
+    mock().llm.on({ toolCallId: "ap4" }, { content: "Done." });
+    const { apps, executed } = fakeApps();
+    const setup = await agency();
+    await setAccess(setup, "gmail", "ask");
+
+    const { stoppedOn } = await run(
+      { as: "owner" },
+      apps,
+      createFakeGhl({ "*": { body: {} } }),
+      setup,
+      "Peek at my inbox",
+    );
+
+    expect(stoppedOn).toBe("tool_approval_required");
+    expect(executed).toEqual([]);
   });
 
   test("a member removed mid-run reaches none of the client's apps", async () => {

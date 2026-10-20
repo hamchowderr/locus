@@ -45,10 +45,10 @@ const fold = (text: string) => text.toLowerCase().normalize("NFKD").replace(/[̀
  * catalog's own order (most used first). Every word searched must appear in the app's name,
  * slug or description; a match in the name ranks above one in the description.
  */
-export function filterApps(
-  apps: AppConnection[],
+export function filterApps<T extends AppConnection>(
+  apps: T[],
   { q, category }: Pick<DirectoryQuery, "q" | "category">,
-): AppConnection[] {
+): T[] {
   const words = fold(q).split(/\s+/).filter(Boolean);
   const scored = apps.flatMap((app, index) => {
     if (category && !app.categories.some((c) => c.id === category)) return [];

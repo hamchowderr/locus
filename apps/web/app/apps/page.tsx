@@ -1,14 +1,21 @@
 import { ClientAccessDenied } from "@locus/auth";
-import type { AppConnection } from "@locus/harness";
 import { CheckIcon } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardAction, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { appConnectionsFromEnv, clientApps } from "@/lib/apps";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { appConnectionsFromEnv, type ClientApp, clientApps, clientDbFromEnv } from "@/lib/apps";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { Notice } from "../ui";
+import { AccessPicker } from "./access-picker";
 import { disconnectApp } from "./actions";
 import { ConnectButton } from "./connect-button";
 import { categoriesOf, directoryHref, filterApps, pageOf, readQuery } from "./directory";
@@ -48,7 +55,7 @@ export default async function Apps({ searchParams }: { searchParams: Promise<Sea
     );
   }
   const ctx = sessionContext(current);
-  const listing = await clientApps(locus().db, ctx, connections).catch((e) => {
+  const listing = await clientApps(locus().db, ctx, connections, clientDbFromEnv()).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
     console.error("Apps page: listing failed", e);
     return { problem: true as const };
@@ -61,9 +68,13 @@ export default async function Apps({ searchParams }: { searchParams: Promise<Sea
       {connected && <Notice tone="info">Back from the app's sign-in. Its status is below.</Notice>}
       {disconnected && <Notice tone="info">App disconnected.</Notice>}
       <p className="max-w-2xl text-neutral-600">
-        The chat can use the apps connected for this client. Reading runs right away; sending or
-        changing anything waits for someone to approve it.
-        {!("problem" in listing) && !listing.manager && " Only owners and admins can connect apps."}
+        The chat can use the apps connected for this client. For each one, choose whether it runs
+        without asking, asks before changes (the default) or asks every time, or turn it off. After
+        the chat reads an email or message, everything it does next waits for approval, whatever the
+        setting.
+        {!("problem" in listing) &&
+          !listing.manager &&
+          " Only owners and admins can connect apps or change these settings."}
       </p>
       {"problem" in listing ? (
         <Notice tone="error">Locus couldn't load the apps just now. Reload to try again.</Notice>
@@ -79,7 +90,7 @@ function Directory({
   manager,
   query,
 }: {
-  apps: AppConnection[];
+  apps: ClientApp[];
   manager: boolean;
   query: ReturnType<typeof readQuery>;
 }) {
@@ -161,7 +172,7 @@ function PageLink({
   );
 }
 
-function AppGrid({ apps, manager }: { apps: AppConnection[]; manager: boolean }) {
+function AppGrid({ apps, manager }: { apps: ClientApp[]; manager: boolean }) {
   return (
     <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {apps.map((app) => (
@@ -173,7 +184,7 @@ function AppGrid({ apps, manager }: { apps: AppConnection[]; manager: boolean })
   );
 }
 
-function AppCard({ app, manager }: { app: AppConnection; manager: boolean }) {
+function AppCard({ app, manager }: { app: ClientApp; manager: boolean }) {
   const category = app.categories[0]?.name;
   return (
     <Card size="sm" className="h-full">
@@ -218,12 +229,22 @@ function AppCard({ app, manager }: { app: AppConnection; manager: boolean }) {
           <CardDescription className="line-clamp-2">{app.description}</CardDescription>
         )}
       </CardHeader>
+      {app.connected && (
+        <CardContent>
+          <AccessPicker
+            toolkit={app.toolkit}
+            name={app.name}
+            access={app.access}
+            manager={manager}
+          />
+        </CardContent>
+      )}
     </Card>
   );
 }
 
 /** The app's logo from Composio, loaded only as it scrolls into view; its initial without one. */
-function Logo({ app }: { app: AppConnection }) {
+function Logo({ app }: { app: ClientApp }) {
   if (!app.logo.startsWith("https://")) {
     return (
       <span

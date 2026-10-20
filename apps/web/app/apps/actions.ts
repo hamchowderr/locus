@@ -3,19 +3,24 @@
 import { ClientAccessDenied } from "@locus/auth";
 import { redirect } from "next/navigation";
 import {
+  AppAccessInputError,
   AppServiceError,
   appConnectionsFromEnv,
+  clientDbFromEnv,
   connectClientApp,
   disconnectClientApp,
+  setClientAppAccess,
 } from "@/lib/apps";
 import { baseUrl } from "@/lib/connect";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 
 function message(error: unknown): string {
   if (error instanceof ClientAccessDenied) {
-    return "Only owners and admins can connect or disconnect apps.";
+    return "Only owners and admins can connect or disconnect apps, or change how the chat uses them.";
   }
-  if (error instanceof AppServiceError) return error.message;
+  if (error instanceof AppServiceError || error instanceof AppAccessInputError) {
+    return error.message;
+  }
   console.error("Apps page: Composio failed", error);
   return "Composio couldn't do that just now. Try again.";
 }
@@ -82,9 +87,43 @@ export async function connectAppLink(
 export async function disconnectApp(form: FormData) {
   const { ctx, connections } = await signedIn();
   try {
-    await disconnectClientApp(locus().db, ctx, connections, String(form.get("toolkit") ?? ""));
+    await disconnectClientApp(
+      locus().db,
+      ctx,
+      connections,
+      clientDbFromEnv(),
+      String(form.get("toolkit") ?? ""),
+    );
   } catch (error) {
     failed(error);
   }
   redirect("/apps?disconnected=1");
+}
+
+/**
+ * How the chat may use one connected app, from the app's settings menu. The client is the
+ * session's; only the app and the setting come from the page.
+ */
+export async function setAppAccess(
+  toolkit: string,
+  access: string,
+): Promise<{ ok: true } | { error: string }> {
+  const current = await currentSession();
+  if (!current) return { error: "You're signed out. Sign in again, then change the setting." };
+  try {
+    await setClientAppAccess(
+      locus().db,
+      sessionContext(current),
+      clientDbFromEnv(),
+      String(toolkit),
+      String(access),
+    );
+    return { ok: true };
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof AppAccessInputError) {
+      return { error: message(error) };
+    }
+    console.error("Apps page: saving a setting failed", error);
+    return { error: "Locus couldn't save that just now. Try again." };
+  }
 }
