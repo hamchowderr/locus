@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { GHL_SCOPES } from "./ghl-scopes.ts";
 
 describe("GHL_SCOPES", () => {
-  it("lists the 144 scopes ticked on the app, once each", () => {
-    expect(GHL_SCOPES).toHaveLength(144);
+  it("lists the 148 scopes ticked on the app, once each", () => {
+    expect(GHL_SCOPES).toHaveLength(148);
     expect(new Set(GHL_SCOPES).size).toBe(GHL_SCOPES.length);
   });
 
