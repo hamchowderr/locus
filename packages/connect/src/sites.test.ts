@@ -23,6 +23,7 @@ import {
   listHostProjects,
   listSites,
   normalizeDomain,
+  pairedDomain,
   removeSiteDomain,
   type SiteDeps,
   siteDomainStatus,
@@ -144,6 +145,13 @@ describe("domain names", () => {
       expect(() => normalizeDomain(bad)).toThrow(ConnectError);
     }
     expect(() => normalizeDomain("my-site.vercel.app")).toThrow(/already a Vercel address/);
+  });
+
+  it("pairs an apex with its www, and nothing else", () => {
+    expect(pairedDomain("example.co.uk", "example.co.uk")).toBe("www.example.co.uk");
+    expect(pairedDomain("www.example.co.uk", "example.co.uk")).toBe("example.co.uk");
+    expect(pairedDomain("shop.example.co.uk", "example.co.uk")).toBeNull();
+    expect(pairedDomain("www.shop.example.com", "example.com")).toBeNull();
   });
 });
 
@@ -336,10 +344,102 @@ describe("a site's domain", () => {
       domain: "https://www.acme.example/",
     });
     // The stub verifies on the first check, and www.acme.example already points at Vercel.
-    expect(added).toEqual({ domain: "www.acme.example", state: "live", records: [] });
+    // acme.example comes along, sending visitors to www.
+    expect(added).toEqual({
+      domain: "www.acme.example",
+      state: "live",
+      records: [],
+      redirect: { domain: "acme.example", state: "live", records: [] },
+    });
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.customDomain).toBe("www.acme.example");
     expect(await siteDomainStatus(deps(stub), client, siteId)).toMatchObject({ state: "live" });
+  });
+
+  it("pairs an apex with its www, and removes the pair together", async () => {
+    const { client, siteId } = await linkedSite();
+    const added = await attachSiteDomain(deps(stub), ctx("owner"), client, {
+      siteId,
+      domain: "acme.example",
+    });
+    expect(added).toMatchObject({
+      domain: "acme.example",
+      redirect: { domain: "www.acme.example" },
+    });
+    expect(added.partner).toBeUndefined();
+    await removeSiteDomain(deps(stub), ctx("owner"), client, siteId);
+    // Both are off the project: adding www now pairs it with the apex again, from scratch.
+    const again = await attachSiteDomain(deps(stub), ctx("owner"), client, {
+      siteId,
+      domain: "www.acme.example",
+    });
+    expect(again.redirect?.domain).toBe("acme.example");
+  });
+
+  it("leaves a single subdomain unpaired", async () => {
+    const { client, siteId } = await linkedSite();
+    const added = await attachSiteDomain(deps(stub), ctx("owner"), client, {
+      siteId,
+      domain: "shop.acme.example",
+    });
+    expect(added).toEqual({ domain: "shop.acme.example", state: "live", records: [] });
+  });
+
+  it("offers the partner Vercel refused, and says why when asked again", async () => {
+    const { client, siteId } = await linkedSite();
+    const taken = {
+      error: { code: "domain_already_in_use", message: "acme.com is used by another project" },
+    };
+    const fake = fakeVercel({
+      "POST /v10/projects/prj_stub/domains": (call) =>
+        (call.body as { name: string }).name === "acme.com" ? [409, taken] : [200, {}],
+      "GET /v9/projects/prj_stub/domains/www.acme.com": () => [
+        200,
+        { name: "www.acme.com", apexName: "acme.com", verified: true },
+      ],
+      "GET /v6/domains/www.acme.com/config": () => [200, { misconfigured: false }],
+    });
+    const status = await attachSiteDomain(deps(fake.fetch), ctx("owner"), client, {
+      siteId,
+      domain: "www.acme.com",
+    });
+    expect(status).toEqual({
+      domain: "www.acme.com",
+      state: "live",
+      records: [],
+      partner: "acme.com",
+    });
+    await expect(
+      attachSiteDomain(deps(fake.fetch), ctx("owner"), client, { siteId, domain: "www.acme.com" }),
+    ).rejects.toThrow("acme.com is used by another project");
+  });
+
+  it("never adopts or removes a partner that doesn't redirect to the site's domain", async () => {
+    const { client, siteId } = await linkedSite();
+    const fake = fakeVercel({
+      "POST /v10/projects/prj_stub/domains": () => [200, {}],
+      "GET /v9/projects/prj_stub/domains/www.acme.com": () => [
+        200,
+        { name: "www.acme.com", apexName: "acme.com", verified: true },
+      ],
+      "GET /v9/projects/prj_stub/domains/acme.com": () => [
+        200,
+        { name: "acme.com", apexName: "acme.com", verified: true, redirect: null },
+      ],
+      "GET /v6/domains/www.acme.com/config": () => [200, { misconfigured: false }],
+      "DELETE /v9/projects/prj_stub/domains/www.acme.com": () => [200, {}],
+    });
+    const status = await attachSiteDomain(deps(fake.fetch), ctx("owner"), client, {
+      siteId,
+      domain: "www.acme.com",
+    });
+    expect(status).toEqual({ domain: "www.acme.com", state: "live", records: [] });
+    await removeSiteDomain(deps(fake.fetch), ctx("owner"), client, siteId);
+    const writes = fake.calls.filter((c) => c.method !== "GET");
+    expect(writes.map((c) => `${c.method} ${c.url.pathname}`)).toEqual([
+      "POST /v10/projects/prj_stub/domains",
+      "DELETE /v9/projects/prj_stub/domains/www.acme.com",
+    ]);
   });
 
   it("asks for the TXT record while Vercel hasn't verified the domain", async () => {
@@ -369,6 +469,8 @@ describe("a site's domain", () => {
     expect(status).toEqual({
       domain: "www.acme.com",
       state: "verify",
+      // Added (the fake said yes) but not on the project when asked: offered again.
+      partner: "acme.com",
       records: [
         {
           type: "TXT",
@@ -380,7 +482,20 @@ describe("a site's domain", () => {
       ],
     });
     expect(fake.calls[0]?.body).toEqual({ name: "www.acme.com" });
-    expect(fake.calls.map((c) => c.method)).toEqual(["POST", "GET", "POST"]);
+    expect(fake.calls[3]?.body).toEqual({
+      name: "acme.com",
+      redirect: "www.acme.com",
+      redirectStatusCode: 308,
+    });
+    expect(fake.calls.map((c) => `${c.method} ${c.url.pathname.split("/").pop()}`)).toEqual([
+      "POST domains",
+      "GET www.acme.com",
+      "GET acme.com",
+      "POST domains",
+      "GET www.acme.com",
+      "POST verify",
+      "GET acme.com",
+    ]);
   });
 
   it("gives the CNAME for a subdomain and the A record for an apex", async () => {
