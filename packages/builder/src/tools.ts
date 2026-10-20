@@ -701,12 +701,23 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           throw error;
         }
         const changed = app.filter((file) => before.get(file.path) !== file.content);
+        // Locus's own code from an earlier version of a feature, which the new files replace.
+        const kept = new Set(app.map((file) => file.path));
+        const removed = files.map((file) => file.path).filter((path) => !kept.has(path));
         if (changed.length > 0) await ws.writeFiles(changed);
+        if (removed.length > 0) await ws.deleteFiles(removed);
+        const filesRenewed =
+          changed.some((file) => file.path === "lib/files.ts") && before.has("lib/files.ts");
         return {
           changed: changed.map((file) => file.path),
+          ...(removed.length > 0 ? { removed } : {}),
           next:
             "Add the site's own tables as new db/migrations files with matching tables in " +
-            "db/schema.ts, then preview: it installs the new packages and applies them.",
+            "db/schema.ts, then preview: it installs the new packages and applies them." +
+            (filesRenewed
+              ? " File uploads were updated: uploadFile now returns { fileId, url }. Change any " +
+                "code that used pathname or fileUrl to store and show url, and delete by fileId."
+              : ""),
         };
       }
       if (!hasBackendFiles(files)) {
