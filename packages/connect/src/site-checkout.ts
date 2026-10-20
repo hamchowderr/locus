@@ -116,12 +116,18 @@ function operation(id: string) {
   return op;
 }
 
+/** A GHL invoice id: 24 hex digits, so it can't match an ordinary word in a link's path. */
+const INVOICE_ID = /^[a-f0-9]{24}$/i;
+/** A host name of two or more labels whose last is letters (`link.agency.com`): no IP address. */
+const DOMAIN_NAME = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
 /** The scope that reads the sub-account's invoice settings (the invoice number's prefix). */
 const SETTINGS_SCOPE = "invoices.readonly";
 
 /**
- * Whether an invoice's payment page is safe to send the visitor to: an https address on one of
- * GHL's own domains, or, on an agency's white-label domain, one whose path names this invoice.
+ * Whether an invoice's payment page is one the site may send the visitor to: an https address on
+ * one of GHL's own domains, or, on an agency's white-label domain, one whose path names this
+ * invoice. Both come from GHL's answer, so the invoice check only keeps out an unrelated link.
  */
 export function isGhlPayUrl(value: unknown, invoiceId?: string): value is string {
   if (typeof value !== "string" || value.length > 2_000) return false;
@@ -134,8 +140,9 @@ export function isGhlPayUrl(value: unknown, invoiceId?: string): value is string
   if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
   const host = url.hostname.toLowerCase();
   if (PAY_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`))) return true;
-  // A white-label domain: GHL put it there, but only a link to this very invoice is taken.
-  if (!invoiceId || !GHL_ID.test(invoiceId) || !host.includes(".")) return false;
+  // A white-label domain: GHL put it there, but only a link to this very invoice is taken, on a
+  // real domain name (not an IP address, `localhost` or a name ending in a dot).
+  if (!invoiceId || !INVOICE_ID.test(invoiceId) || !DOMAIN_NAME.test(host)) return false;
   return url.pathname.split("/").includes(invoiceId);
 }
 
@@ -281,9 +288,13 @@ async function invoicingUser(ghl: SiteGhl): Promise<string | null> {
 const refusedByGhl = (error: unknown) =>
   error instanceof GhlError && error.status >= 400 && error.status < 500;
 
-/** The invoice number as GHL shows it: the sub-account's prefix (`INV-`) and the number. */
-async function invoiceLabel(ghl: SiteGhl, number: string): Promise<string> {
-  if (!ghl.scopes.includes(SETTINGS_SCOPE)) return number;
+/**
+ * The sub-account's invoice number prefix (`INV-`), for the note to name the invoice as GHL shows
+ * it; empty when the connection can't read invoice settings or GHL doesn't answer. Read before
+ * anything is written, so it can't hold up or confuse an invoice that was already made.
+ */
+async function invoicePrefix(ghl: SiteGhl): Promise<string> {
+  if (!ghl.scopes.includes(SETTINGS_SCOPE)) return "";
   try {
     const settings = await ghlRequest<{ invoiceNumberPrefix?: unknown }>(
       operation("invoices.get-invoice-settings"),
@@ -292,11 +303,11 @@ async function invoiceLabel(ghl: SiteGhl, number: string): Promise<string> {
       ghl.options,
     );
     const prefix = settings.invoiceNumberPrefix;
-    return typeof prefix === "string" ? oneLine(`${prefix}${number}`, 50) : number;
+    return typeof prefix === "string" ? oneLine(prefix, 10) : "";
   } catch (error) {
-    // Only the note's wording depends on it; the invoice is made either way.
+    // Only the note's wording depends on it.
     logGhlFailure("Invoice settings", error);
-    return number;
+    return "";
   }
 }
 
@@ -310,6 +321,7 @@ async function invoiceFor(
   userId: string,
   liveMode: boolean,
   now: number,
+  prefix: string,
 ): Promise<{ id: string; number: string; url: unknown }> {
   const today = new Date(now).toISOString().slice(0, 10);
   const created = await ghlRequest<{
@@ -357,7 +369,7 @@ async function invoiceFor(
     id,
     number:
       typeof number === "number" || typeof number === "string"
-        ? await invoiceLabel(ghl, oneLine(String(number), 40))
+        ? `${prefix}${oneLine(String(number), 40)}`
         : id,
     url: created.invoiceUrl,
   };
@@ -465,6 +477,7 @@ export async function startSiteCheckout(
   let ghl: SiteGhl;
   let sale: Sale;
   let userId: string | null;
+  let prefix = "";
   try {
     ghl = await siteGhl(deps, row.location);
     // The invoice needs a scope the connection may not have been granted (GHL answers 401):
@@ -477,6 +490,7 @@ export async function startSiteCheckout(
     if ("refused" in found) return refuse(422, found.refused);
     sale = found;
     userId = await invoicingUser(ghl);
+    if (userId) prefix = await invoicePrefix(ghl);
   } catch (error) {
     logGhlFailure(`Checkout check for site ${row.site.id}`, error);
     return refuse(502, NOT_STARTED);
@@ -510,6 +524,7 @@ export async function startSiteCheckout(
           userId,
           deps.liveMode,
           now,
+          prefix,
         );
       } catch (error) {
         done.invoiceFailure = error;

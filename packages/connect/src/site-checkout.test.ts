@@ -39,6 +39,8 @@ const DAY = 24 * 3_600_000;
 const IP_KEY = Buffer.alloc(32, 7);
 const GHL_LOCATION = "ghl-loc-sunrise";
 const PAY_URL = "https://link.msgsndr.com/invoice/inv1";
+/** An invoice id as GHL makes them: 24 hex digits. */
+const INVOICE_ID = "6ad79320c2411466f2dbd8a1";
 /** What the agency's connection was granted, as GHL's token response said. */
 const GRANTED = "products.readonly users.readonly contacts.write invoices.write oauth.write";
 
@@ -475,12 +477,12 @@ describe("checkout on a published site", () => {
   });
 
   it("opens the payment page on an agency's white-label domain when it links to this invoice", async () => {
-    const whiteLabel = "https://link.agency.test/invoice/inv1?locale=en";
+    const whiteLabel = `https://link.agency.test/invoice/${INVOICE_ID}?locale=en`;
     const result = await checkout(
       deps({
         ...okRoutes,
         "POST /invoices/text2pay": {
-          body: { invoice: { _id: "inv1", invoiceNumber: 7 }, invoiceUrl: whiteLabel },
+          body: { invoice: { _id: INVOICE_ID, invoiceNumber: 7 }, invoiceUrl: whiteLabel },
         },
       }),
       order,
@@ -497,6 +499,10 @@ describe("checkout on a published site", () => {
       order,
     );
     expect(result.status).toBe(200);
+    // Read before anything is written, so it can't hold up an invoice that was already made.
+    expect(paths().indexOf("GET /invoices/settings")).toBeLessThan(
+      paths().indexOf("POST /contacts/upsert"),
+    );
     const settings = fake.requests.find((r) => r.url.pathname === "/invoices/settings");
     expect(settings?.url.searchParams.get("altId")).toBe(GHL_LOCATION);
     expect(settings?.url.searchParams.get("altType")).toBe("location");
@@ -506,13 +512,27 @@ describe("checkout on a published site", () => {
   it("keeps the bare invoice number when the settings can't be read", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     await grant(`${GRANTED} invoices.readonly`);
-    const result = await checkout(
-      deps({ ...okRoutes, "GET /invoices/settings": { status: 500, body: { message: "no" } } }),
-      order,
-    );
-    // The invoice is made and answered all the same.
-    expect(result).toEqual({ status: 200, body: { ok: true, payUrl: PAY_URL } });
-    expect(noteBody()).toContain("(test mode), invoice 1001");
+    for (const settings of [
+      { status: 500, body: { message: "no" } },
+      { body: { invoiceNumberPrefix: 42 } },
+      { body: {} },
+    ]) {
+      const result = await checkout(
+        deps({ ...okRoutes, "GET /invoices/settings": settings }),
+        another(),
+        "site-live",
+        nextIp(),
+      );
+      // The invoice is made and answered all the same.
+      expect(result).toEqual({ status: 200, body: { ok: true, payUrl: PAY_URL } });
+      expect(noteBody()).toContain("(test mode), invoice 1001");
+    }
+  });
+
+  it("doesn't read invoice settings without the scope for it", async () => {
+    await checkout(deps(), order);
+    expect(paths()).not.toContain("GET /invoices/settings");
+    expect(noteBody()).toContain("invoice 1001");
   });
 
   it("says the invoice may not have been made when GHL doesn't answer clearly", async () => {
@@ -688,11 +708,21 @@ describe("a payment page's address", () => {
   });
 
   it("is on an agency's own domain only when it links to this very invoice", () => {
-    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1", "inv1")).toBe(true);
-    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1")).toBe(false);
-    expect(isGhlPayUrl("https://link.agency.test/invoice/inv2", "inv1")).toBe(false);
-    expect(isGhlPayUrl("https://link.agency.test/?invoice=inv1", "inv1")).toBe(false);
-    expect(isGhlPayUrl("http://link.agency.test/invoice/inv1", "inv1")).toBe(false);
-    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1", "../x")).toBe(false);
+    const id = INVOICE_ID;
+    expect(isGhlPayUrl(`https://link.agency.test/invoice/${id}`, id)).toBe(true);
+    expect(isGhlPayUrl(`https://link.flowsper.io/invoice/${id}`, id)).toBe(true);
+    expect(isGhlPayUrl(`https://link.agency.test/invoice/${id}`)).toBe(false);
+    expect(isGhlPayUrl(`https://link.agency.test/invoice/${id}0`, id)).toBe(false);
+    expect(isGhlPayUrl(`https://link.agency.test/?invoice=${id}`, id)).toBe(false);
+    expect(isGhlPayUrl(`http://link.agency.test/invoice/${id}`, id)).toBe(false);
+    // Only a real invoice id counts, not a word that could be any link's path.
+    expect(isGhlPayUrl("https://link.agency.test/invoice/x", "invoice")).toBe(false);
+    expect(isGhlPayUrl("https://link.agency.test/invoice/inv1", "inv1")).toBe(false);
+    // Never an IP address, localhost or a name ending in a dot.
+    for (const host of ["127.0.0.1", "2130706433", "0x7f.1", "10.0.0.1", "[::1]", "localhost"]) {
+      expect(isGhlPayUrl(`https://${host}/invoice/${id}`, id)).toBe(false);
+    }
+    expect(isGhlPayUrl(`https://localhost./invoice/${id}`, id)).toBe(false);
+    expect(isGhlPayUrl(`https://link.agency.test./invoice/${id}`, id)).toBe(false);
   });
 });
