@@ -1,4 +1,11 @@
 export {
+  clearAppAccess,
+  isStoredAppAccess,
+  readAppAccess,
+  type StoredAppAccess,
+  writeAppAccess,
+} from "./app-access.ts";
+export {
   CONTROL_MIGRATIONS,
   type ControlDb,
   DEV_CONTROL_DB_URL,
@@ -7,6 +14,7 @@ export {
   openTenantDb,
   TENANT_MIGRATIONS,
   type TenantDb,
+  tenantDbOver,
 } from "./client.ts";
 export { type DownloadMigrationsOptions, downloadControlMigrations } from "./control-migrations.ts";
 export {
