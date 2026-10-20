@@ -43,6 +43,7 @@ import {
   deleteClientSite,
   publishLatestVersion,
   SiteInputError,
+  siteNames,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
@@ -582,13 +583,31 @@ export async function chooseSite(form: FormData) {
   if (!current) redirect("/sign-in?next=%2Fsites");
   const ctx = sessionContext(current);
   let siteId = "";
+  let hasBrief = false;
   try {
     const client = await resolveActiveClient(locus().db, ctx);
-    siteId = await chooseActiveSite(locus().db, ctx, client, text(form, "siteId"));
+    const wanted = text(form, "siteId");
+    // Only a site started in Locus has a brief (in this client's own database) and versions
+    // for the builder to work on.
+    const briefs = await siteNames(siteBuilderDeps(), client, [wanted]).catch((error) => {
+      if (error instanceof NotConfigured) throw error;
+      console.error("Choosing a site: the client's database didn't answer", error);
+      return null;
+    });
+    if (!briefs)
+      return back("/sites", new Error("Locus couldn't reach this client's sites. Try again."));
+    hasBrief = briefs.has(wanted);
+    if (hasBrief) siteId = await chooseActiveSite(locus().db, ctx, client, wanted);
   } catch (error) {
     if (error instanceof ClientAccessDenied) back("/sites", error);
     if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
     throw error;
+  }
+  if (!hasBrief) {
+    back(
+      "/sites",
+      new Error("That site wasn't made in Locus, so the site builder can't work on it."),
+    );
   }
   await rememberActiveSite(siteId);
   redirect("/sites?chosen=1");

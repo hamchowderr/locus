@@ -161,12 +161,14 @@ export default async function Sites({
   );
   // Names live in the brief, in the client's own database. A site with a brief was started
   // in Locus (so it has a version) and can be built; a linked project without one can't.
-  const briefs = await softly(() =>
-    siteNames(
-      siteBuilderDeps(),
-      client,
-      sites.map((s) => s.id),
-    ),
+  const briefs = await softly(
+    () =>
+      siteNames(
+        siteBuilderDeps(),
+        client,
+        sites.map((s) => s.id),
+      ),
+    "Site building isn't set up here yet.",
   );
   const briefNames = isProblem(briefs) ? new Map<string, string>() : briefs;
   // What each published site's forms sent to the CRM lately, counted in the client's database.
@@ -223,6 +225,12 @@ export default async function Sites({
         </Notice>
       )}
       {chosen && <Notice tone="info">The site builder now works on that site.</Notice>}
+      {isProblem(briefs) && sites.length > 0 && (
+        <Notice tone="error">
+          Building and publishing are hidden because Locus couldn't read this client's site details.{" "}
+          {briefs.problem}
+        </Notice>
+      )}
       {isProblem(projects) && (
         <Notice tone="error">
           {projects.problem}{" "}
