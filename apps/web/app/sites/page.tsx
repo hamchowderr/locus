@@ -3,6 +3,7 @@ import {
   ConnectError,
   type DomainStatus,
   type HostProject,
+  type HostProjectList,
   type InstallationRepo,
   latestDeployment,
   listHostProjects,
@@ -110,13 +111,16 @@ export default async function Sites({
     },
   );
   const sites = await listSites(locus().db, client);
-  const projects: HostProject[] | { problem: string } = manager
+  const listing: HostProjectList | { problem: string } = manager
     ? await softly(() => listHostProjects(siteDeps(), ctx))
-    : [];
+    : { projects: [], complete: false };
+  const projects: HostProject[] | { problem: string } = isProblem(listing)
+    ? listing
+    : listing.projects;
   const names = new Map(isProblem(projects) ? [] : projects.map((p) => [p.id, p.name]));
-  // Only known once the team's projects were listed.
+  // Only known once every one of the team's projects was listed.
   const gone = (projectId: string | null) =>
-    !isProblem(projects) && manager && !!projectId && !names.has(projectId);
+    !isProblem(listing) && listing.complete && manager && !!projectId && !names.has(projectId);
   const linked = new Set(sites.map((s) => s.hostProjectId));
   const linkable = isProblem(projects) ? [] : projects.filter((p) => !linked.has(p.id));
   const statuses = await Promise.all(

@@ -73,6 +73,7 @@ export {
   type DnsRecord,
   type DomainStatus,
   type HostProject,
+  type HostProjectList,
   linkHostProject,
   listHostProjects,
   listSites,
