@@ -1,7 +1,13 @@
 import { InvalidPathError, type SiteRuntime } from "@locus/sandbox";
 import {
+  bookingComponentFile,
   briefForAgent,
+  calendarEmbedFile,
   DesignBrief,
+  LOCUS_PROXY_PATH,
+  LOCUS_SETTINGS_PATH,
+  locusProxyFile,
+  locusSettingsFile,
   normalizeSitePath,
   openQuestions,
   readBrief,
@@ -96,6 +102,7 @@ function writtenContents(writes: Map<string, string>): string {
 const IMAGE_EXT = /\.(png)$/i;
 
 const FILE_ACTIONS = ["list", "read", "write", "edit", "delete"] as const;
+const CRM_ACTIONS = ["calendars", "add_booking", "add_calendar_embed"] as const;
 const VERSION_ACTIONS = ["save", "list", "restore"] as const;
 
 /** A field an action needs, or a fixable error naming it. */
@@ -822,6 +829,76 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     ),
   });
 
+  /** Writes one of Locus's ready-made site pieces unless the site already has it. */
+  const addPiece = async (
+    session: BuilderSession,
+    piece: { path: string; content: string | Uint8Array },
+    overwrite: boolean,
+  ) => {
+    const existing = await session.workspace.readFile(piece.path);
+    if (existing !== null && !overwrite) return { kept: piece.path };
+    await session.workspace.writeFile(piece.path, piece.content);
+    return { written: piece.path };
+  };
+
+  const crm = createTool({
+    id: "crm",
+    description:
+      "Wire the site into the client's CRM (GoHighLevel). action calendars: the client's " +
+      "calendars to book on (id, name, type, GHL's booking page). add_booking: write " +
+      "components/booking.tsx, the site's own booking UI (<Booking calendarId=... />). " +
+      "add_calendar_embed: write components/calendar-embed.tsx, GHL's own booking widget " +
+      "(<CalendarEmbed src=embedUrl />). An existing file is kept unless `overwrite`. Load the " +
+      "site-booking skill first.",
+    requireApproval: noApproval,
+    inputSchema: z.object({ action: z.enum(CRM_ACTIONS), overwrite: z.boolean().optional() }),
+    execute: withSession(
+      async (
+        session,
+        input: { action: (typeof CRM_ACTIONS)[number]; overwrite?: boolean | undefined },
+      ) => {
+        switch (input.action) {
+          case "calendars": {
+            if (!session.crm) throw new BuilderError("The CRM isn't reachable from here.");
+            const calendars = await session.crm.calendars();
+            if (calendars.length === 0) {
+              return {
+                calendars: "",
+                note: "The client has no active calendars. Ask them to make one in their CRM.",
+              };
+            }
+            return {
+              // One line each, as text: names are the client's own and are screened as data.
+              calendars: calendars
+                .map(
+                  (c) =>
+                    `id: ${c.id} | name: ${c.name} | type: ${c.type} | embedUrl: ${c.embedUrl}`,
+                )
+                .join("\n"),
+            };
+          }
+          case "add_booking": {
+            const added = await addPiece(session, bookingComponentFile(), input.overwrite ?? false);
+            // A site made before booking lacks Locus's route (and lib/locus.ts its siteApi);
+            // the preview needs both now, not only after the next publish.
+            await session.workspace.writeFile(LOCUS_PROXY_PATH, locusProxyFile().content);
+            const settings = await session.workspace.readFile(LOCUS_SETTINGS_PATH);
+            if (typeof settings !== "string" || !settings.includes("siteApi")) {
+              const { path, content } = locusSettingsFile({ leadEndpoint: null, siteApi: null });
+              await session.workspace.writeFile(path, content);
+            }
+            return {
+              ...added,
+              note: 'Use <Booking calendarId="<id>" /> with the id written out as text: Locus reads it when the site is published and takes bookings on that calendar only.',
+            };
+          }
+          case "add_calendar_embed":
+            return addPiece(session, calendarEmbedFile(), input.overwrite ?? false);
+        }
+      },
+    ),
+  });
+
   return {
     ...createSkillTools(),
     brief,
@@ -834,6 +911,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     generate_image,
     view_reference,
     versions,
+    crm,
   };
 }
 
