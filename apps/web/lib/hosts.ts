@@ -5,6 +5,7 @@ import {
   InstallationTokenCache,
   type PublishDeps,
   type SiteDeps,
+  type SiteRestoreDeps,
   STUB_GITHUB_CODE,
   STUB_GITHUB_INSTALLATION,
   STUB_VERCEL_CODE,
@@ -83,6 +84,11 @@ export function vercelDeps(): VercelConnectDeps {
 export function siteDeps(): SiteDeps {
   const { db, secrets, http } = vercelDeps();
   return { db, secrets, ...(http ? { http } : {}) };
+}
+
+/** For restoring an app-style site's database and pointing its Vercel project at the copy. */
+export function siteRestoreDeps(): SiteRestoreDeps {
+  return { ...siteDeps(), provisioner: configured(() => provisionerFromEnv(".data/tenants")) };
 }
 
 /**

@@ -22,7 +22,7 @@ import {
   type TenantProvisioner,
   TursoError,
 } from "@locus/db";
-import { auditLog, site, siteBackend } from "@locus/db/control";
+import { auditLog, site, siteBackend, siteBackendRestore } from "@locus/db/control";
 import { and, eq, sql } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { audit } from "./sites.ts";
@@ -43,7 +43,7 @@ export type SiteBackendRow = typeof siteBackend.$inferSelect;
 /** How long a dashboard token lives: one page load. */
 const DASHBOARD_TTL = "5m";
 
-async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
+export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
   const [row] = await db
     .select()
     .from(site)
@@ -185,6 +185,15 @@ export async function removeSiteBackend(
         throw refused(gone, "Vercel didn't remove the site's database settings. Try again.");
       }
     }
+  }
+  // The database a restore replaced, kept for undo, goes with it.
+  const [restore] = await deps.db
+    .select()
+    .from(siteBackendRestore)
+    .where(eq(siteBackendRestore.siteId, row.siteId));
+  if (restore?.keptDbName) await deps.provisioner.destroy(restore.keptDbName);
+  if (restore) {
+    await deps.db.delete(siteBackendRestore).where(eq(siteBackendRestore.siteId, row.siteId));
   }
   await deps.provisioner.destroy(row.tursoDbName);
   await deps.db.delete(siteBackend).where(eq(siteBackend.siteId, row.siteId));
@@ -420,7 +429,7 @@ type EnvVar = { id?: string; key?: string; target?: string[] | string; gitBranch
 
 const OUR_KEYS = new Set<string>(Object.values(SITE_DATABASE_ENV));
 
-async function siteProjectId(
+export async function siteProjectId(
   db: ControlDb,
   client: AuthorizedClient,
   siteId: string,
@@ -433,7 +442,11 @@ async function siteProjectId(
 }
 
 /** The project's variables, and which of them are the site database's. */
-async function projectEnv(deps: VercelCallDeps, client: AuthorizedClient, projectId: string) {
+export async function projectEnv(
+  deps: VercelCallDeps,
+  client: AuthorizedClient,
+  projectId: string,
+) {
   const grant = await hostGrant(deps, client.location.organizationId);
   const path = `/v10/projects/${encodeURIComponent(projectId)}/env`;
   const listed = await vercel<{ envs?: EnvVar[] }>(deps, grant, "GET", path);
@@ -446,7 +459,7 @@ async function projectEnv(deps: VercelCallDeps, client: AuthorizedClient, projec
 }
 
 /** A variable the live site reads: one for production on every branch. */
-const servesProduction = (env: EnvVar) =>
+export const servesProduction = (env: EnvVar) =>
   !env.gitBranch && [env.target ?? []].flat().includes("production");
 
 /**
