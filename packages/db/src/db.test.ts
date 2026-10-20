@@ -100,6 +100,7 @@ describe("provisioning", () => {
       { organizationId: "org-1", ghlLocationId: "ghl-a", name: "Client A" },
     );
     expect(await tables(hostname)).toEqual([
+      "app_access",
       "generation_run",
       "site_blob",
       "site_brief",

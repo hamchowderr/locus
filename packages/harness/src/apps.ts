@@ -8,8 +8,14 @@
  * - Only apps in Locus's catalog are offered: Composio's apps whose sign-in Composio manages (see
  *   `composio.ts`). The connector says whether a tool is from one (`offers`), by the tool's own
  *   metadata, and `use_app` runs nothing else.
- * - `use_app` waits for a person unless the app's own metadata marks the tool read-only and the
- *   run is not tainted. An unknown tool counts as a write.
+ * - Owners and admins choose, per app, how the chat may use it (`AppAccess`, on the Apps page):
+ *   - `allow`: everything runs unasked, except a tool that deletes;
+ *   - `ask_changes` (the default): reads run unasked, anything else waits for a person;
+ *   - `ask`: every call waits;
+ *   - `off`: `find_app_tools` hides the app's tools and `use_app` refuses them.
+ *   The setting is read on every call, so a change takes effect on the chat's next step.
+ * - Whatever the setting, `use_app` waits for a person once the run is tainted, for a tool the
+ *   connector won't vouch for, and whenever it can't tell. An unknown tool counts as a write.
  * - Everything an app returns is written by other people (emails, messages, events), so every
  *   `use_app` result taints the run and is screened like GHL data (see `untrusted.ts`), and
  *   memory forgets it like GHL data (see `conversation.ts`).
@@ -37,6 +43,14 @@ export interface AppSearch {
 
 export type AppResult = { ok: true; data: unknown } | { ok: false; error: string };
 
+/** How the chat may use one connected app. See the top of this file. */
+export const APP_ACCESS = ["allow", "ask_changes", "ask", "off"] as const;
+export type AppAccess = (typeof APP_ACCESS)[number];
+/** A newly connected app: reads run, anything else waits for a person. */
+export const DEFAULT_APP_ACCESS: AppAccess = "ask_changes";
+/** The client's settings by toolkit slug; apps it doesn't name use `DEFAULT_APP_ACCESS`. */
+export type AppAccessSettings = Readonly<Record<string, string>>;
+
 /**
  * One client's connected apps. Implementations bind the client when they are built (see
  * `composio.ts`); none of these methods takes a client, an account or a user.
@@ -47,6 +61,18 @@ export interface AppConnector {
   offers(slug: string): Promise<boolean>;
   /** Whether the app's own metadata marks the tool as only reading. */
   readOnly(slug: string): Promise<boolean>;
+  /**
+   * The tool's app (toolkit slug, lower case), by the tool's own metadata; null when it isn't
+   * from an app Locus offers.
+   */
+  toolkit(slug: string): Promise<string | null>;
+  /** Whether the tool deletes, by the app's own metadata or the tool's name. Unsure means yes. */
+  deletes(slug: string): Promise<boolean>;
+  /**
+   * The client's settings for its apps (Apps page), read fresh on every call. Without it,
+   * every app has the default.
+   */
+  access?(): Promise<AppAccessSettings>;
   execute(slug: string, args: Record<string, unknown>): Promise<AppResult>;
 }
 
@@ -82,9 +108,27 @@ export function createAppTools(
     requireApproval: () => false,
     execute: async ({ task }, context) =>
       recoverable(async () => {
-        const { tools, notConnected } = await (await resolve(context?.requestContext)).search(task);
+        const apps = await resolve(context?.requestContext);
+        const found = await apps.search(task);
+        const settings = (await apps.access?.()) ?? {};
+        // An app turned off is hidden: the model never sees its tools.
+        const turnedOff = new Set<string>();
+        const tools = found.tools.filter((tool) => {
+          const off = accessOf(settings, tool.toolkit) === "off";
+          if (off) turnedOff.add(tool.toolkit);
+          return !off;
+        });
+        const { notConnected } = found;
         return {
           tools,
+          ...(turnedOff.size > 0
+            ? {
+                turnedOff: [...turnedOff],
+                turnedOffNote:
+                  "These apps are connected but turned off for the chat on the Apps page, so their " +
+                  "tools can't be used. An owner or admin can turn them back on there.",
+              }
+            : {}),
           ...(notConnected.length > 0
             ? {
                 notConnected,
@@ -100,8 +144,8 @@ export function createAppTools(
   const useApp = createTool({
     id: "use_app",
     description:
-      "Run one tool from a connected app, found with find_app_tools. Anything that sends, " +
-      "changes or deletes waits for a person to approve it.",
+      "Run one tool from a connected app, found with find_app_tools. Depending on how the app " +
+      "is set up on the Apps page, the call may wait for a person to approve it.",
     inputSchema: z.object({
       tool: z.string().describe("Tool slug from find_app_tools, e.g. GMAIL_FETCH_EMAILS"),
       arguments: z.record(z.string(), z.unknown()).optional(),
@@ -110,8 +154,18 @@ export function createAppTools(
       try {
         if (isTainted(ctx?.requestContext) || !isSlug(tool)) return true;
         const apps = await resolve(asRunContext(ctx?.requestContext));
-        if (!(await apps.offers(tool))) return true;
-        return !(await apps.readOnly(tool));
+        const toolkit = await apps.toolkit(tool);
+        if (!toolkit || !(await apps.offers(tool))) return true;
+        switch (accessOf((await apps.access?.()) ?? {}, toolkit)) {
+          case "allow":
+            return await apps.deletes(tool);
+          case "ask_changes":
+            return !(await apps.readOnly(tool));
+          default:
+            // `ask`, and `off` too: `execute` refuses an app turned off, and asking first means
+            // it can't slip through if the app is turned back on meanwhile.
+            return true;
+        }
       } catch {
         // Can't tell: ask.
         return true;
@@ -120,9 +174,16 @@ export function createAppTools(
     execute: async ({ tool, arguments: args }, context) =>
       recoverable(async () => {
         const apps = await resolve(context?.requestContext);
-        if (!isSlug(tool) || !(await apps.offers(tool))) {
+        const toolkit = isSlug(tool) ? await apps.toolkit(tool) : null;
+        if (!toolkit || !(await apps.offers(tool))) {
           throw new AppError(
             `${tool} isn't from an app Locus offers. Find tools with find_app_tools.`,
+          );
+        }
+        if (accessOf((await apps.access?.()) ?? {}, toolkit) === "off") {
+          throw new AppError(
+            `${toolkit} is turned off for the chat on the Apps page, so its tools can't run. ` +
+              "An owner or admin can turn it back on there.",
           );
         }
         const result = await apps.execute(tool, args ?? {});
@@ -131,6 +192,14 @@ export function createAppTools(
   });
 
   return { find_app_tools: findAppTools, use_app: useApp };
+}
+
+/** The app's setting; one Locus doesn't know (a newer build wrote it, say) asks every time. */
+export function accessOf(settings: AppAccessSettings, toolkit: string): AppAccess {
+  const key = toolkit.toLowerCase();
+  const value = Object.hasOwn(settings, key) ? settings[key] : undefined;
+  if (value === undefined) return DEFAULT_APP_ACCESS;
+  return (APP_ACCESS as readonly string[]).includes(value) ? (value as AppAccess) : "ask";
 }
 
 /**
