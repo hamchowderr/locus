@@ -32,7 +32,7 @@ import { type ConnectDeps, clientGhlSession } from "@locus/connect";
 import { type ControlDb, DbSecretStore, openControlDb, provisionerFromEnv } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
-import { createLocusController } from "@locus/harness";
+import { type AppConnector, createComposioConnector, createLocusController } from "@locus/harness";
 import { secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { LibSQLStore } from "@mastra/libsql";
@@ -105,6 +105,11 @@ export interface HostDeps {
    * saved versions are published through it too (`remotePublish`). Null leaves the builder out.
    */
   siteBuilder?: Omit<SiteBuilderDeps, "db"> | null;
+  /**
+   * Each client's connected apps (Gmail, Slack...), built for that client. Null, the default,
+   * leaves app tools out of the chat.
+   */
+  apps?: ((clientId: string) => AppConnector) | null;
 }
 
 /** The agent holds no sandbox credentials: every sandbox goes through the web app. */
@@ -169,6 +174,10 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
       publishVersion: remotePublish(webApp),
       locusUrl: config.authUrl,
     },
+    // Connected apps are on once Otaku's Composio key is set.
+    apps: env.COMPOSIO_API_KEY
+      ? (clientId) => createComposioConnector({ apiKey: env.COMPOSIO_API_KEY as string, clientId })
+      : null,
   };
 }
 
@@ -221,6 +230,7 @@ export function createHost({
   logError = (message, error) =>
     error === undefined ? console.error(message) : console.error(message, error),
   siteBuilder = null,
+  apps = null,
 }: HostDeps) {
   // Per client, the sessions that opened it, newest last: its database token is the client's,
   // not one run's, so any of them still allowed in will do.
@@ -337,6 +347,8 @@ export function createHost({
             },
           )
         : null;
+      // One connector per client, so its Composio session is reused across runs.
+      const clientApps = apps ? apps(clientId) : null;
       return createLocusController({
         model,
         locationId,
@@ -344,6 +356,15 @@ export function createHost({
           clientGhlSession(connect, await runClient(requestContext)),
         storage,
         ...(fetch ? { fetch } : {}),
+        ...(clientApps
+          ? {
+              // The same staff check as GHL, before any app is reached.
+              apps: async (requestContext) => {
+                await runClient(requestContext);
+                return clientApps;
+              },
+            }
+          : {}),
         ...(builder
           ? {
               modes: builder.modes,
