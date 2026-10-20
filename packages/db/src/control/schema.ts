@@ -73,6 +73,12 @@ export const site = sqliteTable(
     status: text("status", { enum: ["draft", "pushed", "deployed", "failed"] })
       .notNull()
       .default("draft"),
+    /**
+     * The client's calendars the published site books on, as a JSON array of GHL calendar ids,
+     * read from the site's code each time it is published. A booking on any other calendar is
+     * refused, so a visitor can't book a calendar the site doesn't offer.
+     */
+    bookingCalendars: text("booking_calendars", { mode: "json" }).$type<string[]>(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -83,6 +89,49 @@ export const site = sqliteTable(
     unique("site_repo_full_name_unique").on(t.repoFullName),
   ],
 );
+
+/**
+ * Clients the agency turned the site builder off for, on the Clients page. No row means on. Its
+ * own table (not a `location` column) so its migration can be safely re-run.
+ */
+export const siteBuilderOff = sqliteTable("site_builder_off", {
+  locationId: text("location_id")
+    .primaryKey()
+    .references(() => location.id, { onDelete: "cascade" }),
+});
+
+/**
+ * A member's access to one site, for members who don't already reach every client. No row
+ * means "manage": anyone who may work on the client may build its sites unless an owner or
+ * admin made them view-only here.
+ */
+export const siteMemberAccess = sqliteTable(
+  "site_member_role",
+  {
+    siteId: text("site_id")
+      .notNull()
+      .references(() => site.id, { onDelete: "cascade" }),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => member.id, { onDelete: "cascade" }),
+    level: text("level", { enum: ["view", "manage"] }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.siteId, t.memberId] }),
+    index("site_member_role_member_idx").on(t.memberId),
+  ],
+);
+
+/**
+ * The folder the agency filed a site under on the Sites page. No row means no folder. Its own
+ * table (not a `site` column) so its migration can be safely re-run.
+ */
+export const siteFolder = sqliteTable("site_folder", {
+  siteId: text("site_id")
+    .primaryKey()
+    .references(() => site.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+});
 
 /**
  * The database of an app-style site (member logins, bookings, its own records), on Otaku's

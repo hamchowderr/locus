@@ -12,6 +12,7 @@ const SOURCE: Record<SiteHistory["versions"][number]["source"], string> = {
   agent: "Site builder",
   restore: "Restore",
   edit: "Edit",
+  copy: "Copy",
 };
 
 const when = new Intl.DateTimeFormat("en-US", {
@@ -72,7 +73,8 @@ export default async function Versions({
       )}
       {number(bookmarked) && <Notice tone="info">Version {number(bookmarked)} bookmarked.</Notice>}
       {unbookmarked && <Notice tone="info">Bookmark removed.</Notice>}
-      {history.unsaved && (
+      {history.refusal && <Notice tone="info">{history.refusal}</Notice>}
+      {history.unsaved && !history.refusal && (
         <Notice tone="info">
           The site builder has changes it hasn't saved yet. Restoring keeps them as a version first.
         </Notice>
@@ -101,15 +103,17 @@ export default async function Versions({
               <Link href={`/sites/${siteId}/preview?version=${v.number}`} className="underline">
                 Preview
               </Link>
-              <form action={bookmarkVersion}>
-                <input type="hidden" name="siteId" value={siteId} />
-                <input type="hidden" name="number" value={v.number} />
-                <input type="hidden" name="bookmarked" value={v.bookmarked ? "no" : "yes"} />
-                <button type="submit" className="underline">
-                  {v.bookmarked ? "Remove bookmark" : "Bookmark"}
-                </button>
-              </form>
-              {v.number !== latest && (
+              {!history.refusal && (
+                <form action={bookmarkVersion}>
+                  <input type="hidden" name="siteId" value={siteId} />
+                  <input type="hidden" name="number" value={v.number} />
+                  <input type="hidden" name="bookmarked" value={v.bookmarked ? "no" : "yes"} />
+                  <button type="submit" className="underline">
+                    {v.bookmarked ? "Remove bookmark" : "Bookmark"}
+                  </button>
+                </form>
+              )}
+              {v.number !== latest && !history.refusal && (
                 <form action={restoreVersion}>
                   <input type="hidden" name="siteId" value={siteId} />
                   <input type="hidden" name="number" value={v.number} />
