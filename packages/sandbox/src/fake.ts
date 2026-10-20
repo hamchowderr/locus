@@ -177,4 +177,10 @@ export class FakeRuntimeProvider implements RuntimeProvider {
     this.runtimes.set(key, runtime);
     return runtime;
   }
+
+  async destroy(key: string): Promise<void> {
+    const runtime = this.runtimes.get(key);
+    if (runtime) runtime.stopped = true;
+    this.runtimes.delete(key);
+  }
 }
