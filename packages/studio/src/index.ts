@@ -37,12 +37,17 @@ export {
 } from "./seo.ts";
 export { startSite } from "./start.ts";
 export {
+  BACKEND_STACK,
+  backendFiles,
   baseFiles,
   DEFAULT_PALETTE,
   defaultTemplate,
+  FIRST_MIGRATION_PATH,
+  hasBackendFiles,
   LEAD_ROUTE_PATH,
   LLMS_PATH,
   LOCUS_SETTINGS_PATH,
+  LOGINS_MIGRATION,
   type LocusSettings,
   leadEndpoint,
   leadRouteFile,
@@ -52,12 +57,15 @@ export {
   readableOn,
   renderTemplate,
   SHADCN_COMPONENTS,
+  SITE_DATABASE_ENV,
+  SITE_SCHEMA_PATH,
   SITE_STACK,
   SITEMAP_PATH,
   type SiteTemplate,
   searchFiles,
   TEMPLATES,
   templateById,
+  withBackend,
   withLocusSettings,
   withSearchFiles,
 } from "./templates/index.ts";
