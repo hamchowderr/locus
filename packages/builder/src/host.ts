@@ -23,7 +23,7 @@ import {
   siteDomainStatus,
 } from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
-import { auditLog, member, session, site } from "@locus/db/control";
+import { auditLog, member, session, site, siteBackend } from "@locus/db/control";
 import {
   generationRun,
   siteBlob,
@@ -55,7 +55,7 @@ import {
   WorkspaceError,
   withLocusSettings,
 } from "@locus/studio";
-import { and, count, eq, gte, inArray, isNull, notInArray, sum } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, notExists, notInArray, sum } from "drizzle-orm";
 import {
   BuilderError,
   type BuilderSession,
@@ -70,8 +70,10 @@ import {
   UntrustedOutputProcessor,
   type UsageMeter,
 } from "./index.ts";
+import { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
 
 export * from "./site-history.ts";
+export { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
 
 // Host wiring for the site-builder agent. Everything here starts from an `AuthorizedClient`
 // (the session's client, after the staff check) and never takes a client or agency id from a
@@ -783,7 +785,7 @@ export async function openClientDb(
 
 export type SiteKind = (typeof SITE_KINDS)[number];
 
-export interface NewSite {
+export interface NewSite extends NewSiteDesign {
   name: string;
   kind: string;
   /** Empty means the template that fits the kind. */
@@ -870,6 +872,13 @@ export async function createClientSite(
   if (templateId && !templateById(templateId)) {
     throw new SiteInputError("Pick one of the templates.");
   }
+  let design: ReturnType<typeof designFromForm>;
+  try {
+    design = designFromForm(input);
+  } catch (error) {
+    if (error instanceof DesignInputError) throw new SiteInputError(error.message);
+    throw error;
+  }
   if (deps.billing) {
     const refusal = await newSiteRefusal(deps.db, client.location.organizationId);
     if (refusal) throw new SiteInputError(refusal);
@@ -893,7 +902,8 @@ export async function createClientSite(
   try {
     ({ db: tenant, release } = await leaseClientDb(deps.openClientDb, client));
     const { version } = await startSite(new SiteWorkspace(tenant, siteId), {
-      brief: { name, kind: input.kind as SiteKind },
+      brief: { ...design.brief, name, kind: input.kind as SiteKind },
+      files: design.files,
       ...(templateId ? { templateId } : {}),
       userId: ctx.userId,
     });
@@ -937,6 +947,15 @@ export async function deleteClientSite(
     throw new SiteInputError(
       "This site may be live on Vercel. Remove its domain and unlink its Vercel project first, then delete the site.",
     );
+  }
+  const [backend] = await deps.db
+    .select({ siteId: siteBackend.siteId })
+    .from(siteBackend)
+    .where(eq(siteBackend.siteId, row.id));
+  if (backend) {
+    // Its database holds the site's own records (sign-ups, bookings), which a draft delete
+    // must not take with it unasked.
+    throw new SiteInputError("This site has its own database, so it can't be deleted here.");
   }
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
@@ -985,6 +1004,13 @@ export async function deleteClientSite(
           eq(site.locationId, client.location.id),
           isNull(site.hostProjectId),
           isNull(site.customDomain),
+          // Nor if it got its own database meanwhile: that database must not be orphaned.
+          notExists(
+            deps.db
+              .select({ siteId: siteBackend.siteId })
+              .from(siteBackend)
+              .where(eq(siteBackend.siteId, site.id)),
+          ),
         ),
       )
       .returning({ id: site.id }),
