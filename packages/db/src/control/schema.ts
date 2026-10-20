@@ -29,6 +29,8 @@ export const location = sqliteTable(
     status: text("status", { enum: ["provisioning", "active", "suspended", "offboarding"] })
       .notNull()
       .default("provisioning"),
+    /** Whether the agency turned the site builder on for this client (the Clients page). */
+    siteBuilder: integer("site_builder", { mode: "boolean" }).notNull().default(true),
     createdAt: createdAt(),
   },
   // The unique index leads with organization_id, so it also serves the foreign key.
@@ -83,6 +85,28 @@ export const site = sqliteTable(
     unique("site_host_project_unique").on(t.hostProjectId),
     // Each save replaces the whole repository, so a repository is one site.
     unique("site_repo_full_name_unique").on(t.repoFullName),
+  ],
+);
+
+/**
+ * A member's access to one site, for members who don't already reach every client. No row
+ * means "manage": anyone who may work on the client may build its sites unless an owner or
+ * admin made them view-only here.
+ */
+export const siteMemberAccess = sqliteTable(
+  "site_member_access",
+  {
+    siteId: text("site_id")
+      .notNull()
+      .references(() => site.id, { onDelete: "cascade" }),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => member.id, { onDelete: "cascade" }),
+    level: text("level", { enum: ["view", "manage"] }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.siteId, t.memberId] }),
+    index("site_member_access_member_idx").on(t.memberId),
   ],
 );
 

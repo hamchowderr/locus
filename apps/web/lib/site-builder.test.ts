@@ -9,9 +9,14 @@ import {
   authorizeClient,
   ClientAccessDenied,
   creditsFor,
+  listSiteMembers,
   mintAgentToWebToken,
   type SessionContext,
   selectClient,
+  setSiteAccess,
+  setSiteBuilder,
+  siteAccessLevel,
+  viewOnlySites,
 } from "@locus/auth";
 import { BuilderError, PublishError } from "@locus/builder";
 import {
@@ -23,6 +28,7 @@ import {
   type PublishDeps,
   STUB_GITHUB_INSTALLATION,
   type StubGithub,
+  setSiteFolder,
 } from "@locus/connect";
 import {
   type ControlDb,
@@ -41,6 +47,7 @@ import {
   organization,
   session,
   site,
+  siteMemberAccess,
   subscription,
   usageEvent,
   usageLimit,
@@ -845,6 +852,144 @@ describe("copying a site", () => {
       copyClientSite(deps({ billing: true }), ctx("owner"), client, siteId, client, { name: "X" }),
     ).rejects.toThrow(/Choose a Locus plan/);
     expect(await db.select().from(site)).toHaveLength(1);
+  });
+});
+
+describe("turning the site builder off for clients", () => {
+  it("is for owners and admins, only for the agency's clients, and counts what changed", async () => {
+    await expect(setSiteBuilder(db, ctx("staff"), [clientA], false)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    await expect(
+      setSiteBuilder(db, ctx("owner"), [clientA, "someone-elses"], false),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(await setSiteBuilder(db, ctx("owner"), [clientA, clientB, clientA], false)).toBe(2);
+    expect(await setSiteBuilder(db, ctx("owner"), [clientA], false)).toBe(0);
+    expect(await setSiteBuilder(db, ctx("owner"), [clientB], true)).toBe(1);
+    expect((await authorized("owner", clientA)).location.siteBuilder).toBe(false);
+    expect((await authorized("owner", clientB)).location.siteBuilder).toBe(true);
+  });
+
+  it("stops creating, copying in, choosing and building, but not deleting a draft", async () => {
+    const owner = await authorized("owner", clientA);
+    const { siteId } = await createClientSite(deps(), ctx("owner"), owner, {
+      name: "A",
+      kind: "website",
+      templateId: "blank",
+    });
+    const intoB = await createClientSite(deps(), ctx("owner"), await authorized("owner", clientB), {
+      name: "B",
+      kind: "website",
+      templateId: "blank",
+    });
+    await db.insert(session).values({
+      id: "s-owner",
+      token: "t-owner",
+      userId: "owner",
+      expiresAt: new Date(Date.now() + 3_600_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await chooseActiveSite(db, ctx("owner"), owner, siteId);
+    await setSiteBuilder(db, ctx("owner"), [clientA], false);
+
+    // A fresh staff check sees the switch.
+    const off = await authorized("owner", clientA);
+    await expect(
+      createClientSite(deps(), ctx("owner"), off, { name: "X", kind: "website" }),
+    ).rejects.toThrow(/turned off for this client/);
+    const b = await authorized("owner", clientB);
+    await expect(
+      copyClientSite(deps(), ctx("owner"), b, intoB.siteId, off, { name: "X" }),
+    ).rejects.toThrow(/turned off for this client/);
+    await expect(chooseActiveSite(db, ctx("owner"), off, siteId)).rejects.toThrow(
+      /turned off for this client/,
+    );
+    expect(await activeSiteIdForSession(db, ctx("owner"), off)).toBeNull();
+    const builder = createSiteBuilder(deps(), { client: off });
+    await expect(
+      builder.resolve(context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: off })),
+    ).rejects.toThrow(/turned off for this client/);
+
+    await deleteClientSite(deps(), ctx("owner"), off, siteId);
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+  });
+});
+
+describe("view-only access to a site", () => {
+  async function siteWithStaff() {
+    const owner = await authorized("owner", clientA);
+    const { siteId } = await createClientSite(deps(), ctx("owner"), owner, {
+      name: "A",
+      kind: "website",
+      templateId: "blank",
+    });
+    const other = await createClientSite(deps(), ctx("owner"), owner, {
+      name: "Other",
+      kind: "website",
+      templateId: "blank",
+    });
+    return { owner, siteId, otherId: other.siteId };
+  }
+
+  it("lists the members restricted to this client, and only an owner or admin sets them", async () => {
+    const { owner, siteId } = await siteWithStaff();
+    const staff = await authorized("staff", clientA);
+    expect(await listSiteMembers(db, ctx("owner"), owner, siteId)).toEqual([
+      { memberId: "staff@agency-a", name: "staff", email: "staff@agency.test", level: "manage" },
+    ]);
+    await expect(
+      setSiteAccess(db, ctx("staff"), staff, siteId, ["staff@agency-a"]),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    // Owners always manage, so they can't be made view-only, nor can a stranger.
+    await expect(
+      setSiteAccess(db, ctx("owner"), owner, siteId, ["owner@agency-a"]),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    await setSiteAccess(db, ctx("owner"), owner, siteId, ["staff@agency-a"]);
+    expect(await listSiteMembers(db, ctx("owner"), owner, siteId)).toMatchObject([
+      { level: "view" },
+    ]);
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("view");
+    expect(await siteAccessLevel(db, owner, siteId)).toBe("manage");
+    await setSiteAccess(db, ctx("owner"), owner, siteId, []);
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("manage");
+  });
+
+  it("refuses a view-only member building, choosing, copying and filing that site only", async () => {
+    const { owner, siteId, otherId } = await siteWithStaff();
+    await setSiteAccess(db, ctx("owner"), owner, siteId, ["staff@agency-a"]);
+    const staff = await authorized("staff", clientA);
+    expect([...(await viewOnlySites(db, staff))]).toEqual([siteId]);
+    expect((await viewOnlySites(db, owner)).size).toBe(0);
+
+    const builder = createSiteBuilder(deps(), { client: staff });
+    await expect(
+      builder.resolve(context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: staff })),
+    ).rejects.toThrow(/view this site but not change it/);
+    await expect(chooseActiveSite(db, ctx("staff"), staff, siteId)).rejects.toThrow(
+      /view this site/,
+    );
+    await expect(
+      copyClientSite(deps(), ctx("staff"), staff, siteId, staff, { name: "X" }),
+    ).rejects.toThrow(/view this site/);
+    await expect(
+      setSiteFolder(db, ctx("staff"), staff, { siteId, folder: "Mine" }),
+    ).rejects.toThrow(/view this site/);
+
+    // Their other site, and the owner on this one, work as before.
+    const session = await builder.resolve(context({ [SITE_ID_KEY]: otherId, [CLIENT_KEY]: staff }));
+    session.release?.();
+    const ownerSession = await createSiteBuilder(deps(), { client: owner }).resolve(
+      context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: owner }),
+    );
+    ownerSession.release?.();
+  });
+
+  it("is forgotten when the site is deleted", async () => {
+    const { owner, siteId } = await siteWithStaff();
+    await setSiteAccess(db, ctx("owner"), owner, siteId, ["staff@agency-a"]);
+    await deleteClientSite(deps(), ctx("owner"), owner, siteId);
+    expect(await db.select().from(siteMemberAccess)).toEqual([]);
   });
 });
 
