@@ -62,9 +62,8 @@ import {
 } from "./index.ts";
 import { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
 
-export { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
-
 export * from "./site-history.ts";
+export { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
 
 // Host wiring for the site-builder agent. Everything here starts from an `AuthorizedClient`
 // (the session's client, after the staff check) and never takes a client or agency id from a
