@@ -1,5 +1,4 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
-import { SITE_BUILDER_MODE_ID } from "@locus/builder";
 import { redirect } from "next/navigation";
 import { Notice } from "@/app/ui";
 import { ProjectChat } from "@/components/chat-project/project-chat";
@@ -7,13 +6,10 @@ import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 
 /**
- * The modes the agent server's controller has for every client: Locus's default "act"
- * mode and the site builder, which works on the site chosen on the Sites page.
+ * The main chat always runs in Locus's "act" mode, with no picker. Each turn names it, since
+ * a site's chat (on its page under Sites) runs the same session in the site builder's mode.
  */
-const CHAT_MODES = [
-  { id: "act", name: "Chat" },
-  { id: SITE_BUILDER_MODE_ID, name: "Site builder" },
-] as const;
+const CHAT_MODES = [{ id: "act", name: "Chat" }] as const;
 
 export default async function ChatPage() {
   const current = await currentSession();

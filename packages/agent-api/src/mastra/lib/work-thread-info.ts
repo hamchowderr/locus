@@ -57,3 +57,19 @@ export const START_THREAD_TOOL = 'start_thread';
 export function threadLink(threadId: string, title: string): string {
   return `[${title.replace(/[[\]]/g, '')}](#thread=${encodeURIComponent(threadId)})`;
 }
+
+/**
+ * The thread-metadata key naming the site a conversation is about: the host's site chat tags
+ * its conversations so they stay apart from the main chat. A label for listing only; nothing
+ * on the server acts on it.
+ */
+export const SITE_THREAD_KEY = 'site';
+
+/** The site ids a host may tag a conversation with. */
+export const SITE_TAG = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** The site a conversation is tagged with, or undefined for any other conversation. */
+export function siteOf(thread: { metadata?: unknown } | null | undefined): string | undefined {
+  const value = (thread?.metadata as Record<string, unknown> | undefined)?.[SITE_THREAD_KEY];
+  return typeof value === 'string' && SITE_TAG.test(value) ? value : undefined;
+}

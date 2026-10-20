@@ -1,12 +1,9 @@
 "use client";
 
 import { MousePointerClick, Save, Sparkles, Undo2 } from "lucide-react";
-import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
-import { chooseSiteForChat } from "@/app/(app)/sites/[siteId]/visual-edits-actions";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { useAgentControllerChat } from "@/lib/agent-controller/use-agent-controller-chat";
 import { cn } from "@/lib/utils";
 import { currentOf, groupsFor, type StyleGroup, setGroup } from "./classes";
 import {
@@ -23,13 +20,14 @@ const field = "w-full rounded-md border border-neutral-300 px-2 py-1 text-sm";
  * to select it (Shift-click for more), double-click text to type over it, or change it in this
  * panel. Changes show in the preview at once and cost nothing; Save keeps them as a new
  * version, Discard throws them away. "Ask the site builder" sends the selection and a request
- * to the chat's site builder, which uses AI credits.
+ * to the site's chat beside the preview, which uses AI credits.
  */
 export function VisualEditor({
   siteId,
   frame,
   previewUrl,
-  chatMode,
+  ask,
+  asking: chatBusy,
   editable,
   onSaved,
   className,
@@ -37,8 +35,10 @@ export function VisualEditor({
   siteId: string;
   frame: HTMLIFrameElement | null;
   previewUrl: string | null;
-  /** The chat's site-builder mode id. */
-  chatMode: string;
+  /** Sends a request to the site's chat; false when it wasn't sent. */
+  ask: (text: string) => Promise<boolean>;
+  /** The site's chat is working on a turn. */
+  asking: boolean;
   /** False when the preview shows an older version, which can't be edited in place. */
   editable: boolean;
   onSaved?: (result: SaveResult) => void;
@@ -98,12 +98,11 @@ export function VisualEditor({
         <>
           <Separator />
           <AskBuilder
-            siteId={siteId}
-            chatMode={chatMode}
+            ask={ask}
+            busy={chatBusy}
             selection={edits.selection}
             page={edits.path}
             unsaved={count > 0}
-            onChanged={edits.reload}
           />
         </>
       )}
@@ -404,51 +403,22 @@ export function describeSelection(items: SelectedItem[], page: string): string {
   return `On the ${page === "/" ? "home" : page} page, I selected:\n${lines.join("\n")}`;
 }
 
-/** Sends the selection and a request to the chat's site builder (uses AI credits). */
+/** Sends the selection and a request to the site's chat (uses AI credits). */
 function AskBuilder({
-  siteId,
-  chatMode,
+  ask,
+  busy,
   selection,
   page,
   unsaved,
-  onChanged,
 }: {
-  siteId: string;
-  chatMode: string;
+  ask: (text: string) => Promise<boolean>;
+  busy: boolean;
   selection: SelectedItem[];
   page: string;
   /** Unsaved visual edits: the builder works on saved files, so they go first. */
   unsaved: boolean;
-  onChanged: () => void;
 }) {
   const [request, setRequest] = useState("");
-  const [problem, setProblem] = useState<string | null>(null);
-  const changed = useRef(false);
-  const chat = useAgentControllerChat({
-    onToolEnd: (tool) => {
-      if (!tool.isError && ["files", "versions", "add_dependency"].includes(tool.toolName)) {
-        changed.current = true;
-      }
-    },
-  });
-  const busy = chat.status === "streaming";
-
-  // When the builder's turn ends after changing files, show the result in the preview.
-  const wasBusy = useRef(false);
-  useEffect(() => {
-    if (wasBusy.current && !busy && changed.current) {
-      changed.current = false;
-      onChanged();
-    }
-    wasBusy.current = busy;
-  }, [busy, onChanged]);
-
-  const last = [...chat.transcript.messages].reverse().find((m) => m.role === "assistant");
-  const answer = last?.content
-    .flatMap((part) => (part.type === "text" ? [part.text] : []))
-    .join("\n")
-    .trim();
-  const waiting = chat.transcript.pendingSuspension || chat.transcript.pendingApproval;
 
   return (
     <form
@@ -457,18 +427,10 @@ function AskBuilder({
         e.preventDefault();
         const text = request.trim();
         if (!text || busy || unsaved || selection.length === 0) return;
-        setProblem(null);
-        const chosen = await chooseSiteForChat(siteId);
-        if ("problem" in chosen) {
-          setProblem(chosen.problem);
-          return;
-        }
-        const sent = await chat.sendMessage(
+        const sent = await ask(
           `${describeSelection(selection, page)}\n\nPlease change ${selection.length === 1 ? "it" : "them"}: ${text}`,
-          { mode: chatMode },
         );
         if (sent) setRequest("");
-        else setProblem(chat.transcript.error ?? "The site builder couldn't be reached.");
       }}
     >
       <label className="flex flex-col gap-1">
@@ -500,19 +462,9 @@ function AskBuilder({
             ? "Save or discard your changes first"
             : selection.length === 0
               ? "Select items to ask about"
-              : "Uses AI credits"}
+              : "The answer shows in the chat"}
         </span>
       </div>
-      {problem && <p className="text-red-700">{problem}</p>}
-      {waiting && (
-        <p className="text-neutral-600">
-          The site builder needs an answer from you.{" "}
-          <Link href="/chat" className="underline">
-            Open the chat
-          </Link>
-        </p>
-      )}
-      {answer && !busy && <p className="whitespace-pre-wrap text-neutral-700">{answer}</p>}
     </form>
   );
 }
