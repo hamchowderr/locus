@@ -83,6 +83,7 @@ export {
 export {
   attachSiteDomain,
   type DnsRecord,
+  type DomainState,
   type DomainStatus,
   type HostProject,
   type HostProjectList,
@@ -90,6 +91,7 @@ export {
   listHostProjects,
   listSites,
   normalizeDomain,
+  pairedDomain,
   removeSiteDomain,
   type SiteDeps,
   type SiteRow,
