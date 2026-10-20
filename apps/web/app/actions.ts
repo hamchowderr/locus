@@ -13,6 +13,8 @@ import {
   selectClient,
   setComped,
   setMemberClients,
+  setSiteAccess,
+  setSiteBuilder,
   setUsageOverage,
 } from "@locus/auth";
 import {
@@ -533,6 +535,48 @@ export async function copySite(form: FormData) {
   redirect(`/sites?copied=${elsewhere ? "elsewhere" : "here"}`);
 }
 
+/**
+ * Sets which members may only view one of the active client's sites; the rest of the members
+ * who work on the client manage it. Owners and admins only.
+ */
+export async function saveSiteAccess(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      setSiteAccess(
+        locus().db,
+        ctx,
+        client,
+        text(form, "siteId"),
+        form.getAll("viewOnly").map(String),
+      ),
+    "Locus isn't set up here yet.",
+  );
+}
+
+/**
+ * Turns the site builder on or off for the clients ticked on the Clients page. Owners and admins
+ * only; every client must be the agency's (`setSiteBuilder`).
+ */
+export async function switchSiteBuilder(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fclients");
+  const on = form.get("on") === "yes";
+  let changed = 0;
+  try {
+    changed = await setSiteBuilder(
+      locus().db,
+      sessionContext(current),
+      form.getAll("locationId").map(String),
+      on,
+    );
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) back("/clients", error);
+    throw error;
+  }
+  revalidatePath("/clients");
+  redirect(`/clients?builder=${on ? "on" : "off"}&changed=${changed}`);
+}
+
 /** Files one of the active client's sites under a folder, or under none. */
 export async function fileSite(form: FormData) {
   await siteAction(
@@ -599,7 +643,9 @@ export async function chooseSite(form: FormData) {
     hasBrief = briefs.has(wanted);
     if (hasBrief) siteId = await chooseActiveSite(locus().db, ctx, client, wanted);
   } catch (error) {
-    if (error instanceof ClientAccessDenied) back("/sites", error);
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
     if (error instanceof NotConfigured) back("/sites", new Error("Locus isn't set up here yet."));
     throw error;
   }

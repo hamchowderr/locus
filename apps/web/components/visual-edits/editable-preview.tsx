@@ -9,9 +9,10 @@ import { VisualEditor } from "./visual-editor";
 export function EditablePreview({
   siteId,
   chatMode,
+  canEdit,
   className,
   ...preview
-}: ComponentProps<typeof SitePreview> & { siteId: string; chatMode: string }) {
+}: ComponentProps<typeof SitePreview> & { siteId: string; chatMode: string; canEdit: boolean }) {
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   return (
@@ -30,7 +31,7 @@ export function EditablePreview({
         frame={frame}
         previewUrl={url}
         chatMode={chatMode}
-        editable={preview.version === null}
+        editable={canEdit && preview.version === null}
         className="border-l border-neutral-200 pl-4"
       />
     </div>

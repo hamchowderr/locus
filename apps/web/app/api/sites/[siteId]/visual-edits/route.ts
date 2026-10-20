@@ -1,4 +1,5 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
+import { BuilderError } from "@locus/builder";
 import { VisualEdits, WorkspaceError } from "@locus/studio";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { saveVisualEdits } from "@/lib/site-builder";
@@ -44,6 +45,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ sit
   } catch (error) {
     if (error instanceof ClientAccessDenied) {
       return Response.json({ error: "You can't edit this site." }, { status: 403 });
+    }
+    if (error instanceof BuilderError) {
+      // The site builder is off for the client, or the member is view-only on this site.
+      return Response.json({ error: error.message }, { status: 403 });
     }
     if (error instanceof WorkspaceError) {
       return Response.json({ error: error.message }, { status: 400 });
