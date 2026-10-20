@@ -1,9 +1,11 @@
 import { ClientAccessDenied, requireAgencyManager, resolveActiveClient } from "@locus/auth";
 import {
+  agencyGithubAccount,
   ConnectError,
   type DomainStatus,
   type HostProject,
   type HostProjectList,
+  type InstallationAccount,
   type InstallationRepo,
   latestDeployment,
   listHostProjects,
@@ -150,6 +152,12 @@ export default async function Sites({
         )
       : [];
   const repoChoices = isProblem(repos) ? [] : linkableRepos(repos, sites);
+  // On a personal account Locus can't create repositories, so the form only links one.
+  const githubAccount =
+    manager && !isProblem(repos) && sites.some(needsRepo)
+      ? await softly(() => agencyGithubAccount(publishDeps(), ctx))
+      : undefined;
+  const account = githubAccount && !isProblem(githubAccount) ? githubAccount : undefined;
   const deployments = await Promise.all(
     sites.map((s) =>
       s.host === "vercel" && s.hostProjectId && !gone(s.hostProjectId)
@@ -249,6 +257,7 @@ export default async function Sites({
                 suggested={suggestedRepoName(briefNames.get(s.id))}
                 repos={repos}
                 choices={repoChoices}
+                account={account}
               />
             )}
             {manager && s.repoFullName && briefNames.has(s.id) && (
@@ -438,19 +447,51 @@ function ConnectFirst({ problem }: { problem: string }) {
   );
 }
 
-/** Gives a draft site a GitHub repository: a new private one, or an existing empty one. */
+/**
+ * Gives a draft site a GitHub repository: a new private one, or an existing empty one. On a
+ * personal GitHub account it can only link one, since GitHub Apps can't create repositories there.
+ */
 function RepoForm({
   siteId,
   suggested,
   repos,
   choices,
+  account,
 }: {
   siteId: string;
   suggested: string;
   repos: InstallationRepo[] | { problem: string };
   choices: InstallationRepo[];
+  account: InstallationAccount | undefined;
 }) {
   if (isProblem(repos)) return <ConnectFirst problem={repos.problem} />;
+  const personal = account?.personal === true;
+  const howTo = account && personal && (
+    <p className="text-sm text-neutral-600">
+      Locus can't create repositories in your personal GitHub account {account.login}.{" "}
+      <a href="https://github.com/new" className="underline" target="_blank" rel="noreferrer">
+        Create an empty private repository
+      </a>{" "}
+      (leave out the README),{" "}
+      <a
+        href={`https://github.com/settings/installations/${encodeURIComponent(account.installationId)}`}
+        className="underline"
+        target="_blank"
+        rel="noreferrer"
+      >
+        give the Locus app access to it
+      </a>
+      , then reload this page and pick it here.
+    </p>
+  );
+  if (personal && choices.length === 0) {
+    return (
+      <div className="space-y-2">
+        <p className="text-sm text-neutral-700">This site needs a GitHub repository.</p>
+        {howTo}
+      </div>
+    );
+  }
   return (
     <form action={giveSiteRepository} className="space-y-2">
       <input type="hidden" name="siteId" value={siteId} />
@@ -458,10 +499,10 @@ function RepoForm({
         <span className="text-neutral-700">GitHub repository</span>
         <select
           name="repo"
-          defaultValue=""
+          defaultValue={personal ? choices[0]?.fullName : ""}
           className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
         >
-          <option value="">Create a new private repository</option>
+          {!personal && <option value="">Create a new private repository</option>}
           {choices.map((r) => (
             <option key={r.fullName} value={r.fullName}>
               Link {r.fullName}
@@ -469,13 +510,16 @@ function RepoForm({
           ))}
         </select>
       </label>
-      <Field
-        label="New repository name"
-        name="name"
-        defaultValue={suggested}
-        maxLength={100}
-        autoComplete="off"
-      />
+      {!personal && (
+        <Field
+          label="New repository name"
+          name="name"
+          defaultValue={suggested}
+          maxLength={100}
+          autoComplete="off"
+        />
+      )}
+      {howTo}
       <p className="text-sm text-neutral-600">
         Each saved version replaces everything in the repository, so Locus only links an empty one
         and refuses a repository that already has code.

@@ -20,6 +20,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConnectError } from "./errors.ts";
 import {
+  agencyGithubAccount,
   checkSitePaths,
   commitSiteVersion,
   createAppJwt,
@@ -350,6 +351,25 @@ describe("giving a site a repository", () => {
     ).rejects.toThrow(/personal account acme\. Create an empty private repository/);
     expect(gh.of("POST", "/orgs/acme/repos")).toHaveLength(0);
     expect((await siteRow("site-1"))?.repoFullName).toBeNull();
+  });
+
+  it("tells the Sites page whether the installation is on a personal account", async () => {
+    for (const [type, personal] of [
+      ["User", true],
+      ["Organization", false],
+    ] as const) {
+      const gh = fakeFetch(orgRoutes(type));
+      expect(await agencyGithubAccount(deps({ github: gh.fetch }), ctx("owner"))).toEqual({
+        login: "acme",
+        personal,
+        installationId: String(STUB_GITHUB_INSTALLATION.id),
+      });
+    }
+    const gh = fakeFetch(orgRoutes("User"));
+    await expect(
+      agencyGithubAccount(deps({ github: gh.fetch }), ctx("staff")),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(gh.calls).toHaveLength(0);
   });
 
   it("refuses a repository name GitHub wouldn't take, or one that's taken", async () => {
