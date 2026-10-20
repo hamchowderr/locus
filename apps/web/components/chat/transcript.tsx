@@ -1,7 +1,7 @@
 'use client';
 
 import { CheckIcon, XIcon } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Attachment, AttachmentPreview, Attachments } from '@/components/ai-elements/attachments';
 import {
   Confirmation,
@@ -34,6 +34,7 @@ import {
   useApprovalViews,
 } from '@/components/chat/approval-view';
 import { ChatMarkdown } from '@/components/chat/chat-markdown';
+import { appName, ConnectAppsCard } from '@/components/chat/connect-apps-card';
 import { GeneratedImage } from '@/components/chat/tool-views';
 import { Button } from '@/components/ui/button';
 import type { AgentControllerContentPart, PendingApproval } from '@/lib/agent-controller/events';
@@ -255,6 +256,32 @@ function ApprovalCardBody({
 }
 
 /**
+ * The Connect card in the chat. A sign-in can finish while the AI is still answering, so the
+ * connected apps wait here and are told to the AI in one message once the turn has ended.
+ */
+function ConnectAppsInChat({
+  toolkits,
+  controller,
+}: {
+  toolkits: string[];
+  controller: UseAgentControllerChat;
+}) {
+  const [waiting, setWaiting] = useState<string[]>([]);
+  const { status, sendMessage } = controller;
+  useEffect(() => {
+    if (waiting.length === 0 || status === 'streaming') return;
+    setWaiting([]);
+    void sendMessage(`I've connected ${waiting.map(appName).join(' and ')}. Please carry on.`);
+  }, [waiting, status, sendMessage]);
+  return (
+    <ConnectAppsCard
+      toolkits={toolkits}
+      onConnected={(toolkit) => setWaiting((list) => [...list, toolkit])}
+    />
+  );
+}
+
+/**
  * One transcript content part → its element: text, reasoning, a generated image, a
  * submitted plan (with Approve / Reject while it waits), or a tool with its input and
  * output. `tool_result` parts render with their `tool_call`, so they return null here.
@@ -335,7 +362,7 @@ export function TranscriptPart({
         />
       );
     }
-    return (
+    const tool = (
       <Tool>
         <ToolHeader
           type={`tool-${call.name}`}
@@ -356,6 +383,20 @@ export function TranscriptPart({
         </ToolContent>
       </Tool>
     );
+    // find_app_tools names the apps the client hasn't connected: offer to connect them here.
+    const notConnected = (result?.result as { notConnected?: unknown } | undefined)?.notConnected;
+    if (call.name === 'find_app_tools' && Array.isArray(notConnected) && notConnected.length > 0) {
+      return (
+        <>
+          {tool}
+          <ConnectAppsInChat
+            toolkits={notConnected.filter((t): t is string => typeof t === 'string')}
+            controller={controller}
+          />
+        </>
+      );
+    }
+    return tool;
   }
   return null;
 }
