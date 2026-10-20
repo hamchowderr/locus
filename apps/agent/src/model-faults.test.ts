@@ -1,4 +1,4 @@
-import { LLMock } from "@copilotkit/aimock";
+import { type ChaosConfig, LLMock } from "@copilotkit/aimock";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   runSampleChat,
@@ -17,9 +17,13 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function setUp() {
+async function setUp(helloChaos?: ChaosConfig) {
   const mock = new LLMock({ host: "127.0.0.1", port: 0, logLevel: "silent", strict: true });
-  mock.on({ userMessage: "Say hello.", hasToolResult: false }, { content: "Hello there." });
+  mock.on(
+    { userMessage: "Say hello.", hasToolResult: false },
+    { content: "Hello there." },
+    helloChaos ? { chaos: helloChaos } : {},
+  );
   mock.on({ userMessage: "Are you back?", hasToolResult: false }, { content: "I'm back." });
   await mock.start();
   cleanups.push(() => mock.stop());
@@ -31,6 +35,9 @@ async function setUp() {
   cleanups.push(host.close);
   return { mock, host };
 }
+
+/** Under the test's own timeout, so a hang fails as "no reply" with the host still open. */
+const CHAT_TIMEOUT_MS = 30_000;
 
 const hello: SampleChat = { id: "hello", messages: ["Say hello."] };
 
@@ -49,7 +56,7 @@ describe("when the model fails", { timeout: 60_000 }, () => {
     const { mock, host } = await setUp();
     mock.nextRequestError(status, { message: "try again" });
 
-    const events = await runSampleChat(host, hello);
+    const events = await runSampleChat(host, hello, CHAT_TIMEOUT_MS);
 
     expect(statuses(mock)).toEqual([status, 200]);
     expect(errors(events)).toEqual([]);
@@ -61,21 +68,23 @@ describe("when the model fails", { timeout: 60_000 }, () => {
     ["keeps rate-limiting", { rateLimitRate: 1 }],
     ["keeps dropping the connection", { disconnectRate: 1 }],
   ])(
-    "a model that %s ends the run with one error, and the next message works",
+    "a model that %s ends the run with one error, and the next message in the thread works",
     async (_what, chaos) => {
-      const { mock, host } = await setUp();
-      mock.setChaos(chaos);
+      // Only the first message's replies fail, so the second one, in the same thread, can succeed.
+      const { mock, host } = await setUp(chaos);
 
-      const failed = await runSampleChat(host, hello);
+      const events = await runSampleChat(
+        host,
+        { id: "outage", messages: ["Say hello.", "Are you back?"] },
+        CHAT_TIMEOUT_MS,
+      );
 
-      expect(errors(failed)).toHaveLength(1);
-      expect(failed.at(-1)?.type).toBe("agent_end");
-      // The model client tries three times, then gives up instead of waiting on the provider.
-      expect(statuses(mock)).toHaveLength(3);
-      mock.clearChaos();
-      const next = await runSampleChat(host, { id: "after", messages: ["Are you back?"] });
-      expect(errors(next)).toEqual([]);
-      expect(said(next, "I'm back.")).toBe(true);
+      expect(errors(events)).toHaveLength(1);
+      // Three tries for the first message (the AI SDK's default retries), then one for the second.
+      expect(statuses(mock)).toHaveLength(4);
+      expect(statuses(mock).at(-1)).toBe(200);
+      expect(said(events, "I'm back.")).toBe(true);
+      expect(events.at(-1)?.type).toBe("agent_end");
     },
   );
 
@@ -83,17 +92,19 @@ describe("when the model fails", { timeout: 60_000 }, () => {
     const { mock, host } = await setUp();
     mock.setChaos({ malformedRate: 1 });
 
-    const events = await runSampleChat(host, hello);
+    const events = await runSampleChat(host, hello, CHAT_TIMEOUT_MS);
 
     expect(errors(events)).toHaveLength(1);
-    expect(said(events, "Hello there.")).toBe(false);
+    expect(events.at(-1)?.type).toBe("agent_end");
+    // A reply that parses is not a transport fault, so it is not retried.
+    expect(statuses(mock)).toEqual([200]);
   });
 
   test("a slow model still gets its answer to the member", async () => {
     const { mock, host } = await setUp();
     mock.setChaos({ latencyMs: 2_000 });
 
-    const events = await runSampleChat(host, hello);
+    const events = await runSampleChat(host, hello, CHAT_TIMEOUT_MS);
 
     expect(errors(events)).toEqual([]);
     expect(said(events, "Hello there.")).toBe(true);
@@ -120,7 +131,7 @@ describe("when the model fails", { timeout: 60_000 }, () => {
     // The model fails on every try at the step after the change.
     mock.on({ toolCallId: "fault-write" }, { content: "Tagged." }, { chaos: { dropRate: 1 } });
 
-    const events = await runSampleChat(host, { id: "tag", messages: [message] });
+    const events = await runSampleChat(host, { id: "tag", messages: [message] }, CHAT_TIMEOUT_MS);
 
     expect(errors(events)).toHaveLength(1);
     expect(statuses(mock)).toEqual([200, 500, 500, 500]);
