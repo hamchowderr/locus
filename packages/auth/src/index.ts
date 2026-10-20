@@ -41,6 +41,18 @@ export {
   requireOperator,
   setComped,
 } from "./operator.ts";
+export {
+  billableSubscription,
+  createStripe,
+  ensureOverageItem,
+  findOveragePrice,
+  OVERAGE_CENTS_PER_CREDIT,
+  OVERAGE_METER_EVENT,
+  OVERAGE_PRICE_LOOKUP_KEY,
+  type OverageReport,
+  reportOverage,
+  setupOverageBilling,
+} from "./overage-billing.ts";
 export { CREDIT, PLANS, type Plan, type PlanLimits, planNamed } from "./plans.ts";
 export { type AttemptRule, consumeAttempt } from "./rate-limit.ts";
 export {
@@ -51,15 +63,19 @@ export {
   creditsFor,
   type ImageSize,
   MARKUP,
+  MAX_OVERAGE_CREDITS,
   monthOf,
   providerCostUsd,
   recordUsage,
   setUsageLimit,
+  setUsageOverage,
   USD_PER_CREDIT,
   type UsageAlert,
   type UsageLimitChange,
   type UsageMeasurement,
+  type UsageOverageChange,
   type UsageRecord,
   type UsageSummary,
+  usageOverageOf,
   usageSummary,
 } from "./usage.ts";
