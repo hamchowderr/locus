@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import { organization, subscription, usageEvent } from "@locus/db/control";
-import { eq, isNull } from "drizzle-orm";
+import { eq, isNotNull, isNull } from "drizzle-orm";
 import type Stripe from "stripe";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   OVERAGE_METER_EVENT,
   OVERAGE_PRICE_LOOKUP_KEY,
@@ -16,7 +16,9 @@ import {
 const NOW = new Date("2026-10-20T12:00:00Z");
 
 /** Just enough of Stripe for extra usage, recording every call. */
-function fakeStripe(opts: { price?: boolean; failFor?: string; alreadyHas?: string } = {}) {
+function fakeStripe(
+  opts: { price?: boolean; failFor?: string; alreadyHas?: string; onSend?: () => void } = {},
+) {
   const calls: { method: string; params: unknown }[] = [];
   const meters: Stripe.Billing.Meter[] = [];
   const prices: Stripe.Price[] = opts.price === false ? [] : [priceObject("price_extra")];
@@ -49,6 +51,7 @@ function fakeStripe(opts: { price?: boolean; failFor?: string; alreadyHas?: stri
       },
       meterEvents: {
         create: async (params: Stripe.Billing.MeterEventCreateParams) => {
+          opts.onSend?.();
           if (params.payload.stripe_customer_id === opts.failFor) throw new Error("Stripe is down");
           if (params.identifier === opts.alreadyHas) {
             // Stripe's own wording, seen in test mode.
@@ -265,6 +268,26 @@ describe("reportOverage", () => {
       pending: 1,
     });
     expect(sent(calls)).toEqual([]);
+  });
+
+  it("stops at the deadline mid-page, with everything it sent marked", async () => {
+    for (let i = 0; i < 6; i++) await event(`e${i}`, "agency-a", 10, i);
+    // Each send takes 100 ms of a fake clock; the deadline allows three.
+    let clock = 1_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const { stripe, calls } = fakeStripe({ onSend: () => (clock += 100) });
+    try {
+      const r = await reportOverage(db, stripe, { now: NOW, deadline: new Date(1_250) });
+      expect(r).toEqual({ reported: 3, pending: 3 });
+    } finally {
+      now.mockRestore();
+    }
+    const marked = await db
+      .select({ id: usageEvent.id })
+      .from(usageEvent)
+      .where(isNotNull(usageEvent.overageReportedAt));
+    expect(marked.map((m) => m.id).sort()).toEqual(["e0", "e1", "e2"]);
+    expect(sent(calls)).toHaveLength(3);
   });
 
   it("reports one agency only when asked to", async () => {
