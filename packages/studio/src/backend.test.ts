@@ -68,6 +68,9 @@ describe("an app-style site's files", () => {
       "lib/local-migrations.ts",
       "instrumentation.ts",
       "app/api/auth/[...all]/route.ts",
+      "lib/files.ts",
+      "lib/files-client.ts",
+      "app/api/files/[action]/route.ts",
     ]) {
       expect(app.map((f) => f.path)).toContain(path);
     }
@@ -99,6 +102,7 @@ describe("an app-style site's files", () => {
       .join("\n");
     expect(all).not.toMatch(/libsql:\/\/|eyJ[a-zA-Z0-9_-]{10,}/);
     expect(text(withBackend(site()), "lib/db.ts")).toContain("process.env.SITE_DATABASE_TOKEN");
+    expect(text(withBackend(site()), "lib/files.ts")).toContain("process.env.SITE_FILES_KEY");
   });
 
   it("runs the preview's migrations with the same ledger as Locus", () => {
@@ -233,6 +237,26 @@ describe("the generated preview database", () => {
     } finally {
       client.close();
     }
+  });
+
+  it("keeps the preview's uploads in the sandbox, and only under its own folder", async () => {
+    const files = await import(join(root, "lib/files.ts"));
+    expect(files.previewFiles).toBe(true);
+    const { pathname, token } = await files.startUpload({
+      name: "../My photo.png",
+      contentType: "image/png",
+      size: 3,
+    });
+    expect(token).toBeNull();
+    expect(pathname).toMatch(/^sites\/preview\/[0-9a-f-]{36}\/My-photo.png$/);
+    await files.savePreviewFile(pathname, new TextEncoder().encode("png").buffer);
+    expect(await (await files.fileResponse(pathname))?.text()).toBe("png");
+    await expect(
+      files.savePreviewFile("sites/preview/../../etc/x", new ArrayBuffer(1)),
+    ).rejects.toThrow(/isn't a file this preview can keep/);
+    expect(await files.fileResponse("../package.json")).toBeNull();
+    await files.deleteFiles([pathname]);
+    expect(await files.fileResponse(pathname)).toBeNull();
   });
 
   it("lets a check build load the site without its database", async () => {
