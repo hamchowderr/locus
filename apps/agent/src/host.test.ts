@@ -23,6 +23,7 @@ import {
   subscription,
   user,
 } from "@locus/db/control";
+import type { AppConnector } from "@locus/harness";
 import { FakeRuntimeProvider, handleSandboxRequest } from "@locus/sandbox";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
@@ -904,5 +905,125 @@ describe("the site builder", () => {
     expect(web.runtimes.runtimes.get(`${client.id}/site-1`)?.calls).toContainEqual(
       expect.objectContaining({ method: "run", command: "node", args: ["--version"] }),
     );
+  });
+});
+
+describe("connected apps", () => {
+  /** A client's apps, in memory, recording which client each was built for. */
+  function fakeApps() {
+    const builtFor: string[] = [];
+    const executed: string[] = [];
+    const apps = (clientId: string): AppConnector => {
+      builtFor.push(clientId);
+      return {
+        search: async () => ({ tools: [], notConnected: [] }),
+        readOnly: async () => true,
+        execute: async (slug) => {
+          executed.push(slug);
+          return { ok: true, data: { messages: [] } };
+        },
+      };
+    };
+    return { apps, builtFor, executed };
+  }
+
+  const readEmail = (id: string) => ({
+    toolCalls: [{ id, name: "use_app", arguments: JSON.stringify({ tool: "GMAIL_FETCH_EMAILS" }) }],
+  });
+
+  async function run(
+    signedIn: { as: string | null },
+    apps: (clientId: string) => AppConnector,
+    ghl: ReturnType<typeof createFakeGhl>,
+    setup: Awaited<ReturnType<typeof agency>>,
+    message: string,
+  ) {
+    const host = createHost({
+      db,
+      session: async () => (signedIn.as ? (setup.sessions[signedIn.as] ?? null) : null),
+      connect: setup.connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      fetch: ghl.fetch,
+      origin: "http://locus.test",
+      apps,
+    });
+    const chat = new MastraClient({
+      baseUrl: "http://agent.test",
+      apiPrefix: PREFIX,
+      retries: 0,
+      fetch: (input, init) => host.fetch(new Request(input, init)),
+    });
+    const session = chat
+      .getAgentController("locus")
+      .session(`client:${setup.client.ghlLocationId}`);
+    await session.create();
+    const done = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
+      void session.subscribe({
+        onEvent: (event) => {
+          const { type } = event as { type: string };
+          // A run stops at the end or at a question for a person, who can't be a removed
+          // member: their stream and run are cut (see "a member removed while a change waits").
+          if (type === "agent_end" || type === "tool_approval_required") {
+            clearTimeout(timer);
+            resolve();
+          }
+        },
+      });
+    });
+    await session.sendMessage(message);
+    await done;
+    return chat;
+  }
+
+  test("a client's chat reads that client's own apps, unasked", async () => {
+    mock().llm.on({ userMessage: /read my email/i, hasToolResult: false }, readEmail("ap1"));
+    mock().llm.on({ toolCallId: "ap1" }, { content: "No new email." });
+    const { apps, builtFor, executed } = fakeApps();
+    const setup = await agency();
+
+    await run({ as: "owner" }, apps, createFakeGhl({ "*": { body: {} } }), setup, "Read my email");
+
+    expect(builtFor).toEqual([setup.client.id]);
+    expect(executed).toEqual(["GMAIL_FETCH_EMAILS"]);
+  });
+
+  test("a member removed mid-run reaches none of the client's apps", async () => {
+    mock().llm.on(
+      { userMessage: /tag c1 then read email/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "ap2-tag",
+            name: "perform_action",
+            arguments: JSON.stringify({
+              operation: "contacts.update-contact",
+              params: { path: { contactId: "c1" }, body: { firstName: "A" } },
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "ap2-tag" }, readEmail("ap2-read"));
+    mock().llm.on({ toolCallId: "ap2-read" }, { content: "Done." });
+    const { apps, executed } = fakeApps();
+    const setup = await agency();
+    await db.insert(memberLocation).values({ memberId: "m-staff", locationId: setup.client.id });
+    let revoked: Promise<unknown> | undefined;
+    const ghl = createFakeGhl({
+      "*": () => {
+        // While the GHL change runs, an admin takes the client away from staff.
+        revoked = (async () => {
+          await db.delete(memberLocation).where(eq(memberLocation.memberId, "m-staff"));
+        })();
+        return { body: {} };
+      },
+    });
+
+    await run({ as: "staff" }, apps, ghl, setup, "Tag c1 then read email");
+    await revoked;
+
+    expect(ghl.requests.map((r) => r.url.pathname)).toEqual(["/contacts/c1"]);
+    expect(executed).toEqual([]);
   });
 });
