@@ -1,6 +1,6 @@
 import { type AuthorizedClient, authorizeClient, ClientAccessDenied } from "@locus/auth";
 import { imagesFromEnv } from "@locus/builder";
-import { clientGhlSession, siteCrm } from "@locus/connect";
+import { clientGhl, siteCrm } from "@locus/connect";
 import { provisionerFromEnv } from "@locus/db";
 import type { RuntimeProvider } from "@locus/sandbox";
 import { baseUrl, configured, connectDeps } from "./connect.ts";
@@ -41,7 +41,7 @@ export function siteBuilderDeps(): SiteBuilderDeps {
       siteCrm(async () => {
         const connect = connectDeps();
         return {
-          session: await clientGhlSession(connect, client),
+          ...(await clientGhl(connect, client)),
           ...(connect.http ? { http: connect.http } : {}),
         };
       }),
