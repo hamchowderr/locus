@@ -79,12 +79,20 @@ export default async function Sites({
     chosen?: string;
     deleted?: string;
     published?: string;
+    deploys?: string;
   }>;
 }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, created, chosen, deleted, published: publishedVersion } = await searchParams;
+  const {
+    error,
+    created,
+    chosen,
+    deleted,
+    published: publishedVersion,
+    deploys,
+  } = await searchParams;
   const ctx = sessionContext(current);
   const client = await resolveActiveClient(locus().db, ctx).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
@@ -153,7 +161,8 @@ export default async function Sites({
       {deleted && <Notice tone="info">Site deleted.</Notice>}
       {publishedVersion && /^\d{1,6}$/.test(publishedVersion) && (
         <Notice tone="info">
-          Version {publishedVersion} sent to GitHub. Vercel deploys it in a minute or two.
+          Version {publishedVersion} sent to GitHub.
+          {deploys ? " Vercel deploys it in a minute or two." : ""}
         </Notice>
       )}
       {chosen && <Notice tone="info">The site builder now works on that site.</Notice>}
@@ -241,6 +250,7 @@ export default async function Sites({
             {manager && s.repoFullName && briefNames.has(s.id) && (
               <form action={publishSite} className="space-y-2">
                 <input type="hidden" name="siteId" value={s.id} />
+                {s.hostProjectId && <input type="hidden" name="deploys" value="yes" />}
                 <p className="text-sm text-neutral-600">
                   Publishing sends the site's latest saved version to {s.repoFullName}
                   {s.hostProjectId ? ", and Vercel deploys it" : ""}.

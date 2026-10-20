@@ -514,15 +514,16 @@ export async function publishSite(form: FormData) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   const ctx = sessionContext(current);
-  let version: number;
+  let done: string;
   try {
     const client = await resolveActiveClient(locus().db, ctx);
-    ({ version } = await publishLatestVersion(
+    const { version } = await publishLatestVersion(
       siteBuilderDeps(),
       ctx,
       client,
       text(form, "siteId"),
-    ));
+    );
+    done = `published=${version}${form.get("deploys") === "yes" ? "&deploys=1" : ""}`;
   } catch (error) {
     if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
       back("/sites", error);
@@ -533,7 +534,7 @@ export async function publishSite(form: FormData) {
     throw error;
   }
   revalidatePath("/sites");
-  redirect(`/sites?published=${version}`);
+  redirect(`/sites?${done}`);
 }
 
 /** Gives one of the active client's sites a Vercel project that builds its repository. */

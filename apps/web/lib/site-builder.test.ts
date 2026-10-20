@@ -471,6 +471,53 @@ describe("publishing saved versions", () => {
     const refused = publishLatestVersion(deps(), ctx("owner"), client, siteId);
     await expect(refused).rejects.toBeInstanceOf(SiteInputError);
     await expect(refused).rejects.toThrow(/Connect GitHub/);
+    expect(pooledUsers(clientA)).toBe(0);
+  });
+
+  it("publishes a version saved in the chat during a Sites page publish, so it stays on top", async () => {
+    const { client, siteId } = await startedSite();
+    const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
+      siteId,
+      name: "a-site",
+    });
+    let saved = false;
+    const racing = (): PublishDeps => ({
+      ...publishDeps(),
+      github: {
+        apiBaseUrl: "https://api.github.stub",
+        // A chat save lands while the button's first commit is on its way.
+        fetch: async (input, init) => {
+          if (!saved) {
+            saved = true;
+            const tenant = await openClientDb(provisioner, client);
+            try {
+              const workspace = new SiteWorkspace(tenant, siteId);
+              await workspace.writeFile("app/about/page.tsx", "about");
+              await workspace.saveVersion({ message: "Add about", source: "agent" });
+            } finally {
+              tenant.$client.close();
+            }
+          }
+          return github(input, init);
+        },
+      },
+    });
+    const published = await publishLatestVersion(
+      deps({ publish: racing }),
+      ctx("owner"),
+      client,
+      siteId,
+    );
+    expect(published.version).toBe(2);
+    expect(github.repoFiles(repoFullName as string)?.["app/about/page.tsx"]).toBe("about");
+  });
+
+  it("refuses to publish another client's site from the Sites page", async () => {
+    const { siteId } = await startedSite();
+    const other = await authorized("owner", clientB);
+    await expect(publishLatestVersion(deps(), ctx("owner"), other, siteId)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
   });
 
   it("leaves a site without a repository unpublished, with no call to GitHub", async () => {
