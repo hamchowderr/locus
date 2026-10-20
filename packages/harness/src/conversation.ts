@@ -30,14 +30,15 @@ export type ConversationStore = MastraCompositeStore;
 export const HISTORY_TOKENS = 24_000;
 
 /**
- * The stub's text. The model wrote its earlier answers and questions from the real result, so the
- * note says the data was real: told only that it is gone, a model concluded it had made the data
- * up (`apps/agent/fixtures/recorded/ask-back`).
+ * The stub's text. It replaces every forgotten result, not only GHL reads (site-builder tools,
+ * writes, failures), and serves later turns too. Told only that a result was gone, a model
+ * concluded it had invented the contacts it had just read (`apps/agent/fixtures/recorded/ask-back`),
+ * so the note says the result was real; it still sends the model back to GHL for current data.
  */
 export const NOT_KEPT =
-  "Not kept: this was real GoHighLevel data, read by this call, and what you said from it was " +
-  "accurate. It is removed once read, because GoHighLevel data is not stored. Read it again if " +
-  "you need the details now.";
+  "Not kept: this tool really ran and returned a result, which was removed afterwards because " +
+  "it may hold GoHighLevel data, and that is not stored. What you said from it was right when " +
+  "you said it, but it may have changed since: read it again before you rely on its details.";
 
 export function createLocusMemory(storage: ConversationStore): Memory {
   return new Memory({
