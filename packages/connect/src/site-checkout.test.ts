@@ -2,14 +2,26 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
-import { agencyGhlConnection, location, organization, site } from "@locus/db/control";
+import {
+  agencyGhlConnection,
+  authRateLimit,
+  location,
+  organization,
+  site,
+} from "@locus/db/control";
 import { createRateLimiter } from "@locus/ghl";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, type FakeGhl, type FakeRoutes } from "@locus/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
 import type { GhlAppConfig } from "./ghl-oauth.ts";
-import { isGhlPayUrl, type SiteCheckoutDeps, startSiteCheckout } from "./site-checkout.ts";
+import {
+  CHECKOUT_LIMITS,
+  isGhlPayUrl,
+  type SiteCheckoutDeps,
+  startSiteCheckout,
+} from "./site-checkout.ts";
+import { hashVisitorIp } from "./site-leads.ts";
 
 // Level-1 plumbing: the fake GHL plays GoHighLevel. A checkout never reaches an agent from
 // this path, so there is nothing for AIMock to play.
@@ -23,8 +35,12 @@ const ghl: GhlAppConfig = {
 };
 
 const CLOCK = Date.parse("2026-10-14T12:00:00Z");
+const DAY = 24 * 3_600_000;
+const IP_KEY = Buffer.alloc(32, 7);
 const GHL_LOCATION = "ghl-loc-sunrise";
 const PAY_URL = "https://link.msgsndr.com/invoice/inv1";
+/** What the agency's connection was granted, as GHL's token response said. */
+const GRANTED = "products.readonly users.readonly contacts.write invoices.write oauth.write";
 
 let dir: string;
 let db: ControlDb;
@@ -79,7 +95,7 @@ function deps(routes: FakeRoutes = okRoutes): SiteCheckoutDeps {
     ghl,
     http: { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" },
     now: () => CLOCK,
-    ipHashKey: Buffer.alloc(32, 7),
+    ipHashKey: IP_KEY,
     rateLimiter: createRateLimiter(),
     liveMode: false,
   };
@@ -114,6 +130,8 @@ const checkout = (
 /** A different visitor each time, for a test that checks out more than one visitor may. */
 let visitor = 0;
 const nextIp = () => `198.51.100.${++visitor}`;
+/** Someone else's order: another email, as one address is only sent a few invoices a day. */
+const another = () => ({ ...order, email: `buyer${++visitor}@example.test` });
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "locus-checkout-"));
@@ -141,8 +159,8 @@ beforeEach(async () => {
     JSON.stringify({
       accessToken: "agency-token",
       refreshToken: "refresh-token",
-      expiresAt: CLOCK + 24 * 3_600_000,
-      scopes: "products.readonly oauth.write",
+      expiresAt: CLOCK + 2 * DAY,
+      scopes: GRANTED,
       companyId: "company-1",
       installedBy: "user-1",
     }),
@@ -150,7 +168,7 @@ beforeEach(async () => {
   await db.insert(agencyGhlConnection).values({
     organizationId: "agency-a",
     ghlCompanyId: "company-1",
-    scopes: "products.readonly oauth.write",
+    scopes: GRANTED,
     secretRef: ghlSecretRef("agency-a"),
     connectedAt: new Date(CLOCK),
   });
@@ -219,13 +237,16 @@ describe("checkout on a published site", () => {
     });
     expect(noteBody()).toBe(
       "Also on the form (kept here, not changed on the contact):\nName: Dana Visitor\n\n" +
-        "Page: /shop\nStarted checkout: Deep Clean Package × 2 (149.50 USD each), invoice 1001",
+        "Page: /shop\nStarted checkout: Deep Clean Package × 2 (149.50 USD each) (test mode), invoice 1001",
     );
   });
 
   it("takes live payments only when the deployment says so", async () => {
     await checkout({ ...deps(), liveMode: true }, { ...order, liveMode: false });
     expect(invoiceRequest()?.body).toMatchObject({ liveMode: true });
+    // Only a test-mode checkout says so on the contact.
+    expect(noteBody()).toContain("(149.50 USD each), invoice 1001");
+    expect(noteBody()).not.toContain("test mode");
   });
 
   it("ignores any amount, currency or terms the request names", async () => {
@@ -245,7 +266,7 @@ describe("checkout on a published site", () => {
       expect.objectContaining({ amount: 149.5, qty: 1, currency: "USD" }),
     ]);
     expect(noteBody()).not.toContain("0.01");
-    expect(noteBody()).toContain("(149.50 USD), invoice 1001");
+    expect(noteBody()).toContain("(149.50 USD) (test mode), invoice 1001");
   });
 
   it("never sells another sub-account's product, or a price of another product", async () => {
@@ -263,7 +284,12 @@ describe("checkout on a published site", () => {
       // Found by its slug: only its own id counts.
       { "GET /products/prod1": { body: { ...product().body, _id: "prod7" } } },
     ]) {
-      const result = await checkout(deps({ ...okRoutes, ...routes }), order, "site-live", nextIp());
+      const result = await checkout(
+        deps({ ...okRoutes, ...routes }),
+        another(),
+        "site-live",
+        nextIp(),
+      );
       expect(result).toEqual({ status: 422, body: { error: "That isn't for sale here." } });
       expect(paths()).not.toContain("POST /contacts/upsert");
       expect(paths()).not.toContain("POST /invoices/text2pay");
@@ -279,7 +305,7 @@ describe("checkout on a published site", () => {
           recurring: { interval: "month", intervalCount: 1 },
         }),
       }),
-      order,
+      another(),
     );
     expect(recurring).toEqual({
       status: 422,
@@ -288,7 +314,7 @@ describe("checkout on a published site", () => {
     for (const over of [{ amount: 0 }, { amount: "149.5" }, { currency: "dollars" }]) {
       const result = await checkout(
         deps({ ...okRoutes, "GET /products/prod1/price/price1": price(over) }),
-        order,
+        another(),
       );
       expect(result.status).toBe(422);
     }
@@ -297,7 +323,7 @@ describe("checkout on a published site", () => {
         ...okRoutes,
         "GET /products/prod1/price/price1": price({ trackInventory: true, availableQuantity: 1 }),
       }),
-      order,
+      another(),
     );
     expect(stock).toEqual({ status: 422, body: { error: "There aren't enough of those left." } });
     expect(paths()).not.toContain("POST /invoices/text2pay");
@@ -349,13 +375,13 @@ describe("checkout on a published site", () => {
 
   it("limits checkouts per visitor", async () => {
     const d = deps();
-    for (let i = 0; i < 5; i++) expect((await checkout(d, order)).status).toBe(200);
-    const limited = await checkout(d, order);
+    for (let i = 0; i < 5; i++) expect((await checkout(d, another())).status).toBe(200);
+    const limited = await checkout(d, another());
     expect(limited.status).toBe(429);
     expect(limited).toMatchObject({ retryAfterSeconds: expect.any(Number) });
   });
 
-  it("notes that nothing was charged when GHL won't make the invoice", async () => {
+  it("notes that nothing was charged when GHL refuses the invoice", async () => {
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     const result = await checkout(
       deps({
@@ -374,9 +400,10 @@ describe("checkout on a published site", () => {
       "POST /contacts/contact-1/notes",
     ]);
     expect(noteBody()).toContain(
-      "Tried to check out Deep Clean Package × 2 (149.50 USD each), but the invoice couldn't be made. Nothing was charged.",
+      "Tried to check out Deep Clean Package × 2 (149.50 USD each) (test mode), but the invoice couldn't be made. Nothing was charged.",
     );
     expect(noteBody()).not.toContain("Started checkout");
+    expect(noteBody()).not.toContain("may not have been made");
     expect(errors.mock.calls.flat().join(" ")).toContain("invoices.text-2-pay-invoice 422");
   });
 
@@ -397,7 +424,7 @@ describe("checkout on a published site", () => {
     expect(errors.mock.calls.flat().join(" ")).toContain("has no user");
   });
 
-  it("never sends the visitor to a payment page that isn't GHL's", async () => {
+  it("never sends the visitor to a payment page that isn't GHL's, and says the invoice was emailed", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     for (const invoiceUrl of [
       "http://link.msgsndr.com/invoice/inv1",
@@ -414,18 +441,168 @@ describe("checkout on a published site", () => {
             body: { invoice: { _id: "inv1", invoiceNumber: 7 }, invoiceUrl },
           },
         }),
-        order,
+        another(),
         "site-live",
         nextIp(),
       );
-      expect(result).toEqual({
-        status: 502,
-        body: { error: "We couldn't open the payment page. Your invoice is on its way by email." },
-      });
+      // GHL made and emailed the invoice: a success, with no page to go to.
+      expect(result).toEqual({ status: 200, body: { ok: true, emailed: true } });
       expect(noteBody()).toContain(
         "invoice 7. It was emailed; the site couldn't open its payment page.",
       );
+      expect(noteBody()).not.toContain("Nothing was charged");
     }
+  });
+
+  it("says the invoice may not have been made when GHL doesn't answer clearly", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failures: FakeRoutes[string][] = [
+      { status: 500, body: { statusCode: 500, message: "boom" } },
+      { status: 504, body: { message: "timeout" } },
+      // Made, perhaps, but answered with nothing Locus can read.
+      { body: { invoice: {} } },
+      () => {
+        throw new TypeError("fetch failed");
+      },
+    ];
+    for (const failure of failures) {
+      const result = await checkout(
+        deps({ ...okRoutes, "POST /invoices/text2pay": failure }),
+        another(),
+        "site-live",
+        nextIp(),
+      );
+      // Not "try again": a second checkout could email a second invoice.
+      expect(result).toEqual({
+        status: 502,
+        body: {
+          error:
+            "We couldn't confirm your checkout. Please check your email for an invoice before trying again.",
+        },
+      });
+      expect(noteBody()).toContain(
+        "Tried to check out Deep Clean Package × 2 (149.50 USD each) (test mode), but GHL didn't confirm the invoice, so it may not have been made.",
+      );
+      expect(noteBody()).not.toContain("Nothing was charged");
+    }
+    expect(errors).toHaveBeenCalled();
+  });
+
+  it("keeps the invoice's answer when only the note fails, and never says nothing was charged", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const result = await checkout(
+      deps({
+        ...okRoutes,
+        "POST /contacts/contact-1/notes": { status: 500, body: { message: "no" } },
+      }),
+      order,
+    );
+    expect(result).toEqual({ status: 200, body: { ok: true, payUrl: PAY_URL } });
+    expect(paths().slice(-2)).toEqual([
+      "POST /invoices/text2pay",
+      "POST /contacts/contact-1/notes",
+    ]);
+    expect(noteBody()).toContain("Started checkout");
+    expect(noteBody()).not.toContain("Nothing was charged");
+    expect(errors.mock.calls.flat().join(" ")).toContain("Checkout note for site site-live");
+  });
+
+  it("refuses before writing anything when the connection can't make invoices", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    await secrets.set(
+      ghlSecretRef("agency-a"),
+      JSON.stringify({
+        accessToken: "agency-token",
+        refreshToken: "refresh-token",
+        expiresAt: CLOCK + DAY,
+        scopes: GRANTED.replace(" invoices.write", ""),
+        companyId: "company-1",
+        installedBy: "user-1",
+      }),
+    );
+    const result = await checkout(deps(), order);
+    expect(result).toEqual({
+      status: 503,
+      body: { error: "Checkout isn't switched on for this site yet." },
+    });
+    // Only the token: no product read, no contact, no invoice.
+    expect(paths()).toEqual(["POST /oauth/location-token"]);
+    expect(errors.mock.calls.flat().join(" ")).toContain("no invoices.write scope");
+  });
+
+  it("sends one email address at most two invoices a day, counted before GHL is called", async () => {
+    const d = deps();
+    expect((await checkout(d, order, "site-live", nextIp())).status).toBe(200);
+    // The same address, however it's written.
+    const shouty = { ...order, email: "  DANA@Example.TEST " };
+    expect((await checkout(d, shouty, "site-live", nextIp())).status).toBe(200);
+    const sent = fake.requests.length;
+    const limited = await checkout(d, order, "site-live", nextIp());
+    expect(limited).toEqual({
+      status: 429,
+      body: { error: "We've already sent invoices to that email today. Please check your inbox." },
+      retryAfterSeconds: expect.any(Number),
+    });
+    expect(fake.requests).toHaveLength(sent);
+    // Someone else still can.
+    expect((await checkout(d, another(), "site-live", nextIp())).status).toBe(200);
+    // A day later, so can they.
+    const later = { ...d, now: () => CLOCK + DAY };
+    expect((await checkout(later, order, "site-live", nextIp())).status).toBe(200);
+    // The address is kept only as a keyed hash.
+    const keys = (await db.select().from(authRateLimit)).map((r) => r.key);
+    expect(keys).toContain(
+      `site-checkout|email|site-live|${hashVisitorIp(IP_KEY, "dana@example.test")}`,
+    );
+    expect(JSON.stringify(keys)).not.toContain("example.test");
+  });
+
+  it("stops a site's checkouts for the day at its daily ceiling", async () => {
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // The site has already sent its day's invoices, a few hours ago.
+    await db.insert(authRateLimit).values({
+      key: "site-checkout|day|site-live",
+      count: CHECKOUT_LIMITS.perSiteDay.max,
+      windowStart: CLOCK - 3 * 3_600_000,
+    });
+    expect(CHECKOUT_LIMITS.perSiteDay).toEqual({ max: 300, windowMs: DAY });
+    const result = await checkout(deps(), order);
+    expect(result).toEqual({
+      status: 429,
+      body: { error: "Checkout is busy just now. Please try again later." },
+      retryAfterSeconds: 21 * 3_600,
+    });
+    expect(fake.requests).toHaveLength(0);
+    expect(warnings.mock.calls.flat().join(" ")).toContain("daily checkout ceiling (300)");
+  });
+
+  it("invoices as an admin of the sub-account, the same one every time", async () => {
+    const user = (id: string, role: string, locationIds = [GHL_LOCATION], deleted = false) => ({
+      id,
+      name: id,
+      deleted,
+      roles: { type: "account", role, locationIds },
+    });
+    const userId = async (users: unknown[]) => {
+      await checkout(
+        deps({ ...okRoutes, "GET /users/search": { body: { users, count: users.length } } }),
+        another(),
+        "site-live",
+        nextIp(),
+      );
+      return (invoiceRequest()?.body as { userId?: string } | undefined)?.userId;
+    };
+    expect(
+      await userId([
+        user("userB", "user"),
+        user("adminZ", "admin"),
+        user("adminA", "admin", ["ghl-loc-other"]),
+        user("adminM", "admin"),
+        user("admin0", "admin", [GHL_LOCATION], true),
+      ]),
+    ).toBe("adminM");
+    // No admin of this sub-account: its first user.
+    expect(await userId([user("userB", "user"), user("userA", "user")])).toBe("userB");
   });
 
   it("answers a broken GHL connection as an outage", async () => {

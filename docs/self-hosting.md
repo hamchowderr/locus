@@ -55,7 +55,7 @@ deployment is not considered set up without it.
 | `GHL_MODE` | no | `live`, the default in production |
 | `GHL_CLIENT_ID`, `GHL_CLIENT_SECRET`, `GHL_APP_ID` | yes | Your GoHighLevel Marketplace app's |
 | `GHL_WEBHOOK_PUBLIC_KEY` | for webhooks | GoHighLevel's Ed25519 webhook public key, base64 SPKI or PEM |
-| `LOCUS_GHL_LIVE_PAYMENTS` | no | `true` makes the invoices a site's checkout sends live (real money). Unset or anything else means test-mode invoices |
+| `LOCUS_GHL_LIVE_PAYMENTS` | no | `true` makes the invoices a site's checkout sends live (real money). Unset or anything else means test-mode invoices; unset against live GHL logs a warning once, so set `false` to keep test mode deliberately |
 | `GITHUB_MODE` | no | `live`, the default in production |
 | `GITHUB_APP_SLUG`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | yes | Your GitHub App's |
 | `GITHUB_WEBHOOK_SECRET` | yes | The GitHub App's webhook secret |

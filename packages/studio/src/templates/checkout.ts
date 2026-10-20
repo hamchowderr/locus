@@ -4,7 +4,8 @@ import type { SiteFile } from "../workspace.ts";
 // opens a short form (name, email, phone), starts a checkout through the site's `/api/locus`
 // route and sends the visitor on to the GHL invoice's payment page. Locus checks the product
 // and price are the client's, takes the amount from GHL, adds the visitor as a contact and has
-// GHL email them the invoice. No price, key or token is in the component; the page shows the
+// GHL email them the invoice. When GHL's answer has no payment page Locus can vouch for, the
+// visitor is told the invoice was emailed instead. No price, key or token is in the component; the page shows the
 // price as text, as the builder's `crm` products lists it.
 //
 // The builder writes it into a site when the person wants to sell something (`crm` tool).
@@ -39,7 +40,9 @@ export function BuyButton({
   form?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [state, setState] = useState<"idle" | "sending" | "preview" | "failed">("idle");
+  const [state, setState] = useState<"idle" | "sending" | "preview" | "emailed" | "failed">(
+    "idle",
+  );
   const [error, setError] = useState("");
   const shownAt = useRef(Date.now());
 
@@ -69,6 +72,8 @@ export function BuyButton({
     }).catch(() => null);
     const result = await response?.json().catch(() => null);
     if (response?.ok && result?.preview) return setState("preview");
+    // The invoice was made and emailed, but its payment page can't be opened from here.
+    if (response?.ok && result?.emailed === true) return setState("emailed");
     // Only ever on to an https payment page, as Locus checked it.
     const payUrl = result?.payUrl;
     if (response?.ok && typeof payUrl === "string" && payUrl.startsWith("https://")) {
@@ -92,6 +97,14 @@ export function BuyButton({
     return (
       <p role="status" className="rounded-lg bg-primary/10 p-4">
         Checkout works on the published site.
+      </p>
+    );
+  }
+
+  if (state === "emailed") {
+    return (
+      <p role="status" className="rounded-lg bg-primary/10 p-4">
+        We've emailed you an invoice to pay.
       </p>
     );
   }

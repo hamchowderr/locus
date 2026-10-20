@@ -76,7 +76,7 @@ export interface SiteLeadLimits {
 
 const MINUTE = 60_000;
 
-// Windows stay within an hour: `consumeAttempt` sweeps keys older than its longest window.
+// Windows stay within a day: `consumeAttempt` sweeps keys older than its longest window.
 export const SITE_LEAD_LIMITS: SiteLeadLimits = {
   perSite: { max: 300, windowMs: 60 * MINUTE },
   perSiteBurst: { max: 20, windowMs: MINUTE },
@@ -320,6 +320,8 @@ export async function countWithDeadline(
 export interface SiteGhl {
   session: GhlSession;
   options: GhlRequestOptions;
+  /** The scopes the agency's connection was granted: what GHL lets this session do. */
+  scopes: readonly string[];
 }
 
 /**
@@ -339,6 +341,7 @@ export async function siteGhl(
       companyId: agency.companyId,
     },
     options: { ...deps.http, rateLimiter: deps.rateLimiter ?? sharedRateLimiter },
+    scopes: agency.scopes,
   };
 }
 
