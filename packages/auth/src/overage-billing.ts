@@ -199,23 +199,32 @@ export async function reportOverage(
           .where(and(waiting, eq(usageEvent.organizationId, organizationId)))
           .orderBy(asc(usageEvent.createdAt))
           .limit(PAGE);
-        for (const e of page) {
-          await stripe.billing.meterEvents
-            .create({
-              event_name: OVERAGE_METER_EVENT,
-              identifier: e.id,
-              timestamp: Math.floor(now.getTime() / 1000),
-              payload: { stripe_customer_id: billed.customer, value: String(e.overageCredits) },
-            })
-            .catch((error: unknown) => {
-              // An overlapping run already sent it: Stripe has it, so it only needs marking.
-              if (!alreadySent(error)) throw error;
-            });
-          await db
-            .update(usageEvent)
-            .set({ overageReportedAt: now })
-            .where(eq(usageEvent.id, e.id));
-          reported += 1;
+        // Marked a page at a time, one write instead of one per event; whatever reached Stripe
+        // before a failure is still marked.
+        const sent: string[] = [];
+        try {
+          for (const e of page) {
+            await stripe.billing.meterEvents
+              .create({
+                event_name: OVERAGE_METER_EVENT,
+                identifier: e.id,
+                timestamp: Math.floor(now.getTime() / 1000),
+                payload: { stripe_customer_id: billed.customer, value: String(e.overageCredits) },
+              })
+              .catch((error: unknown) => {
+                // An overlapping run already sent it: Stripe has it, so it only needs marking.
+                if (!alreadySent(error)) throw error;
+              });
+            sent.push(e.id);
+          }
+        } finally {
+          if (sent.length > 0) {
+            await db
+              .update(usageEvent)
+              .set({ overageReportedAt: now })
+              .where(inArray(usageEvent.id, sent));
+            reported += sent.length;
+          }
         }
         if (page.length < PAGE) break;
       }
