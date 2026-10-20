@@ -41,7 +41,7 @@ export function openSiteDb(url: string, authToken: string): Client {
 }
 
 /** SQLite's own tables and the migration bookkeeping, which the dashboard leaves out. */
-const INTERNAL = /^(sqlite_|_litestream|__drizzle|_cf_|libsql_)/;
+const INTERNAL = /^(sqlite_|_litestream|__drizzle|_cf_|libsql_|_locus_)/;
 
 const MAX_PAGE = 200;
 
