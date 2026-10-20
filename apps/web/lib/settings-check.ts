@@ -20,8 +20,14 @@ export const PRODUCTION_SETTINGS: Record<string, readonly string[]> = {
     "VERCEL_INTEGRATION_CLIENT_ID",
     "VERCEL_INTEGRATION_CLIENT_SECRET",
   ],
+  // Only off Vercel: a Vercel deployment's own OIDC token opens sandboxes (`sandboxFromEnv`).
   "site builder": ["LOCUS_SANDBOX_TOKEN", "LOCUS_SANDBOX_TEAM_ID", "LOCUS_SANDBOX_PROJECT_ID"],
 };
+
+/** Features whose settings a Vercel deployment supplies itself. */
+function suppliedByHost(feature: string, env: Record<string, string | undefined>) {
+  return feature === "site builder" && env.VERCEL === "1" && env.LOCUS_SANDBOX !== "off";
+}
 
 const STUB_SWITCHES = ["GHL_MODE", "GITHUB_MODE", "VERCEL_MODE", "EMAIL_MODE"] as const;
 
@@ -29,6 +35,7 @@ const STUB_SWITCHES = ["GHL_MODE", "GITHUB_MODE", "VERCEL_MODE", "EMAIL_MODE"] a
 export function settingsProblems(env: Record<string, string | undefined>): string[] {
   const problems: string[] = [];
   for (const [feature, names] of Object.entries(PRODUCTION_SETTINGS)) {
+    if (suppliedByHost(feature, env)) continue;
     const missing = names.filter((name) => !env[name]);
     if (missing.length > 0) problems.push(`${feature}: ${missing.join(", ")} not set`);
   }

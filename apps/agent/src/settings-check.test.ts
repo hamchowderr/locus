@@ -1,7 +1,7 @@
 import { createClient } from "@libsql/client";
 import { LocalProvisioner, openControlDb, TursoProvisioner } from "@locus/db";
 import { describe, expect, it } from "vitest";
-import { settingsProblems, unresolvedSettings } from "./settings-check.ts";
+import { modelProblems, settingsProblems, unresolvedSettings } from "./settings-check.ts";
 
 const TOKEN = "turso-platform-token-never-logged";
 // `${path}` as text: what Coolify passed through unfilled.
@@ -79,5 +79,38 @@ describe("the agent's settings check", () => {
       timeoutMs: 20,
     });
     expect(problems).toEqual([expect.stringMatching(/Turso refused .*no answer in 20 ms/)]);
+  });
+
+  it("passes a model Mastra can reach with its key set, and the scripted model", () => {
+    const key = "gateway-key-never-logged";
+    const gateway = {
+      LOCUS_AGENT_MODEL: "vercel/anthropic/claude-sonnet-5.5",
+      AI_GATEWAY_API_KEY: key,
+    };
+    expect(modelProblems(gateway)).toEqual([]);
+    expect(modelProblems({ LOCUS_AGENT_MODEL: "scripted" })).toEqual([]);
+  });
+
+  it("reports a model id Mastra can't resolve, as staging once ran", () => {
+    expect(
+      modelProblems({
+        LOCUS_AGENT_MODEL: "gateway/anthropic/claude-sonnet-5-5",
+        AI_GATEWAY_API_KEY: "k",
+      }),
+    ).toEqual(["LOCUS_AGENT_MODEL names a provider Mastra doesn't know: gateway"]);
+    // A model Mastra's snapshot doesn't list yet still works, so it passes.
+    expect(
+      modelProblems({ LOCUS_AGENT_MODEL: "anthropic/claude-next", ANTHROPIC_API_KEY: "k" }),
+    ).toEqual([]);
+    // A value that isn't an id at all (a pasted key, say) is never echoed.
+    expect(modelProblems({ LOCUS_AGENT_MODEL: "sk-pasted-secret" })).toEqual([
+      "LOCUS_AGENT_MODEL is not a Mastra model id (provider/model)",
+    ]);
+  });
+
+  it("reports a model whose key is missing, by the key's name only", () => {
+    expect(modelProblems({ LOCUS_AGENT_MODEL: "vercel/anthropic/claude-sonnet-5.5" })).toEqual([
+      "LOCUS_AGENT_MODEL needs AI_GATEWAY_API_KEY, which is not set",
+    ]);
   });
 });
