@@ -413,6 +413,16 @@ describe("publishing saved versions", () => {
       { action: "write", path: "app/about/page.tsx", content: "about" },
       rc,
     );
+    await call(
+      builder.tools,
+      "files",
+      {
+        action: "write",
+        path: "app/book/page.tsx",
+        content: '<Booking calendarId="cal1" form="consult" />\n<Booking calendarId={someVar} />',
+      },
+      rc,
+    );
     const saved = await call(
       builder.tools,
       "versions",
@@ -437,6 +447,8 @@ describe("publishing saved versions", () => {
     expect(latest?.commitSha).toMatch(/\w+/);
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.status).toBe("pushed");
+    // Bookings are taken on the calendars the published code names, and only those.
+    expect(row?.bookingCalendars).toEqual(["cal1"]);
   });
 
   it("publishes with its Vercel address until its domain is live, and checks its search basics", async () => {

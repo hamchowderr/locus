@@ -1,3 +1,4 @@
+import type { SiteCrm } from "@locus/connect";
 import type { SiteRuntime } from "@locus/sandbox";
 import type { SiteFile, SiteWorkspace, VersionInfo } from "@locus/studio";
 import type { ImageGenerator } from "./images.ts";
@@ -23,6 +24,8 @@ export interface BuilderSession {
   /** The site's sandbox, opened on first use. */
   runtime: () => Promise<SiteRuntime>;
   images?: ImageGenerator | null;
+  /** Reads from the client's GHL sub-account (calendars), for this client only. */
+  crm?: SiteCrm | null;
   meter?: UsageMeter | null;
   userId?: string | null;
   /**

@@ -14,12 +14,23 @@ export {
 } from "./backend.ts";
 export { baseFiles, DEFAULT_PALETTE, packageName, readableOn, SITE_STACK } from "./base.ts";
 export {
+  BOOKING_COMPONENT_PATH,
+  bookingCalendarIds,
+  bookingComponentFile,
+  CALENDAR_EMBED_PATH,
+  calendarEmbedFile,
+} from "./booking.ts";
+export {
   LEAD_ROUTE_PATH,
+  LOCUS_PROXY_CALLS,
+  LOCUS_PROXY_PATH,
   LOCUS_SETTINGS_PATH,
   type LocusSettings,
   leadEndpoint,
   leadRouteFile,
+  locusProxyFile,
   locusSettingsFile,
+  siteApiBase,
   withLocusSettings,
 } from "./forms.ts";
 export {

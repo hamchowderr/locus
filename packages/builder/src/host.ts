@@ -19,6 +19,7 @@ import {
   ConnectError,
   commitSiteVersion,
   type PublishDeps,
+  type SiteCrm,
   type SiteDeps,
   siteDomainStatus,
 } from "@locus/connect";
@@ -42,6 +43,7 @@ import {
   sandboxFromEnv,
 } from "@locus/sandbox";
 import {
+  bookingCalendarIds,
   type PageSeo,
   pageSeo,
   readBrief,
@@ -123,6 +125,11 @@ export interface SiteBuilderDeps {
   locusUrl: string;
   /** Billing is on: creating a site needs a plan, within its `sitesPerMonth`. */
   billing?: boolean;
+  /**
+   * The client's GHL sub-account, for the builder's `crm` tool. Called with the client after
+   * the staff check on each tool call; null or absent leaves the tool saying it can't reach it.
+   */
+  crm?: ((client: AuthorizedClient) => SiteCrm) | null;
 }
 
 export interface SiteBuilderWiring {
@@ -309,6 +316,12 @@ export function publishHook(
   return async (version: VersionInfo, files) => {
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
+    // The calendars this version books on: the only ones its visitors may book once it's live.
+    // Recorded before the push, so the new deployment never refuses its own calendars.
+    await db
+      .update(site)
+      .set({ bookingCalendars: bookingCalendarIds(files) })
+      .where(eq(site.id, row.id));
     try {
       const deps = publish();
       const siteUrl = await siteAddress(deps, client, row);
@@ -700,6 +713,7 @@ export function createSiteBuilder(
           ? deps.openRuntime(client, siteId)
           : deps.runtimes().open(siteRuntimeKey(client, siteId)),
       images: deps.images ?? null,
+      crm: deps.crm ? deps.crm(client) : null,
       meter: usageMeter(deps.db, client, { siteId, userId }),
       userId,
       ...(onVersionSaved ? { onVersionSaved } : {}),
