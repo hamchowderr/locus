@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { authorizeClient, ClientAccessDenied, type SessionContext } from "@locus/auth";
-import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
+import { type ControlDb, LocalProvisioner, migrateControlDb, openControlDb } from "@locus/db";
 import {
   auditLog,
   githubInstallation,
@@ -13,6 +13,7 @@ import {
   memberLocation,
   organization,
   site,
+  siteBackend,
   user,
 } from "@locus/db/control";
 import { MemorySecretStore } from "@locus/secrets";
@@ -861,6 +862,38 @@ describe("deploying a site on Vercel", () => {
       deployUrl: "https://acme-dental.vercel.app",
       status: "deployed",
     });
+  });
+
+  it("gives an app-style site's project its database settings before the first build", async () => {
+    await addSite("site-1", "client-1", { repoFullName: "acme/members", status: "pushed" });
+    const provisioner = new LocalProvisioner(join(dir, "dbs"));
+    const made = await provisioner.createDatabase("site-site-1");
+    await db.insert(siteBackend).values({
+      siteId: "site-1",
+      locationId: "client-1",
+      tursoDbName: made.dbName,
+      tursoDbHostname: made.hostname,
+    });
+    const v = vercelRoutes({
+      "GET /v10/projects/prj_new/env": () => [200, { envs: [] }],
+      "POST /v10/projects/prj_new/env": () => [201, {}],
+    });
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await ensureSiteDeployment(
+      { ...deps({ vercel: v.fetch }), provisioner },
+      ctx("owner"),
+      client,
+      {
+        siteId: "site-1",
+      },
+    );
+    const order = v.calls.map((c) => `${c.method} ${c.url.pathname}`);
+    const env = order.indexOf("POST /v10/projects/prj_new/env");
+    expect(env).toBeGreaterThan(-1);
+    expect(env).toBeLessThan(order.indexOf("POST /v13/deployments"));
+    const posted = v.of("POST", "/v10/projects/prj_new/env")[0]?.body as { key: string }[];
+    const keys = posted.map((e) => e.key);
+    expect(keys).toEqual(["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"]);
   });
 
   it("shows the production address, not a protected deployment URL, and ignores previews", async () => {
