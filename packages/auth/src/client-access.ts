@@ -38,7 +38,10 @@ export type LocationRow = typeof location.$inferSelect & {
 };
 
 /** A `location` row with whether its site builder is on, from a select of both tables. */
-const located = (r: { location: typeof location.$inferSelect; off: string | null }): LocationRow => ({
+const located = (r: {
+  location: typeof location.$inferSelect;
+  off: string | null;
+}): LocationRow => ({
   ...r.location,
   siteBuilder: r.off === null,
 });

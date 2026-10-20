@@ -10,6 +10,7 @@ import {
 import {
   agencyGithubAccount,
   ConnectError,
+  type DomainState,
   type DomainStatus,
   type HostProject,
   type HostProjectList,
@@ -38,8 +39,10 @@ import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locu
 import {
   activeSiteIdForSession,
   LEAD_TOTAL_DAYS,
+  type SiteSeo,
   siteLeadTotals,
   siteNames,
+  siteSeo,
 } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { deploymentLabel, linkableRepos, suggestedRepoName } from "@/lib/site-publish";
@@ -172,18 +175,23 @@ export default async function Sites({
   );
   // Names live in the brief, in the client's own database. A site with a brief was started
   // in Locus (so it has a version) and can be built; a linked project without one can't.
-  const briefs = await softly(() =>
-    siteNames(
-      siteBuilderDeps(),
-      client,
-      sites.map((s) => s.id),
-    ),
+  const briefs = await softly(
+    () =>
+      siteNames(
+        siteBuilderDeps(),
+        client,
+        sites.map((s) => s.id),
+      ),
+    "Site building isn't set up here yet.",
   );
   const briefNames = isProblem(briefs) ? new Map<string, string>() : briefs;
   // What each published site's forms sent to the CRM lately, counted in the client's database.
   const published = sites.filter((s) => s.status !== "draft").map((s) => s.id);
   const leads = await softly(() => siteLeadTotals(siteBuilderDeps(), client, published));
   const leadTotals = isProblem(leads) ? undefined : leads;
+  // What search engines will see of each site started in Locus, from its latest version.
+  const seo = await softly(() => siteSeo(siteBuilderDeps(), client, [...briefNames.keys()]));
+  const seoChecks = isProblem(seo) ? new Map<string, SiteSeo>() : seo;
   // Publishing: a site started in Locus gets a repository, then a Vercel project that builds it.
   const needsRepo = (s: (typeof sites)[number]) => !s.repoFullName && !s.hostProjectId;
   // On a personal account Locus can't create repositories, so the form only links one.
@@ -244,6 +252,12 @@ export default async function Sites({
         </Notice>
       )}
       {chosen && <Notice tone="info">The site builder now works on that site.</Notice>}
+      {isProblem(briefs) && sites.length > 0 && (
+        <Notice tone="error">
+          Building and publishing are hidden because Locus couldn't read this client's site details.{" "}
+          {briefs.problem}
+        </Notice>
+      )}
       {isProblem(projects) && (
         <Notice tone="error">
           {projects.problem}{" "}
@@ -343,6 +357,7 @@ export default async function Sites({
                 <p className="text-sm text-neutral-600">No domain yet.</p>
               )}
               {s.status !== "draft" && leadTotals && <FormLeads totals={leadTotals.get(s.id)} />}
+              {seoChecks.has(s.id) && <SeoCheck check={seoChecks.get(s.id) as SiteSeo} />}
               {manager && needsRepo(s) && (
                 <RepoForm
                   siteId={s.id}
@@ -635,40 +650,44 @@ function DomainPanel({
     <div className="space-y-3">
       <p>
         <strong>{status.domain}</strong>
+        {status.state === "live" && (
+          <>
+            {" · "}
+            <a
+              href={`https://${status.domain}`}
+              className="text-sm underline"
+              target="_blank"
+              rel="noreferrer"
+            >
+              the site's main address
+            </a>
+          </>
+        )}
       </p>
       <Notice tone="info">{STATE[status.state]}</Notice>
-      {status.records.length > 0 && (
-        <div className="space-y-2 text-sm">
-          <p className="text-neutral-600">
-            Add at the DNS provider for <strong>{status.records[0]?.zone}</strong>:
+      <DnsRecords state={status} />
+      {status.redirect && (
+        <div className="space-y-2">
+          <p className="text-sm">
+            <strong>{status.redirect.domain}</strong> sends visitors to {status.domain}.{" "}
+            {status.redirect.state === "live"
+              ? "It works."
+              : "It needs its own record too, then check again."}
           </p>
-          <table className="w-full table-fixed border-collapse">
-            <thead>
-              <tr className="text-left text-neutral-500">
-                <th className="w-16 py-1">Type</th>
-                <th className="w-1/3 py-1">Name</th>
-                <th className="py-1">Value</th>
-              </tr>
-            </thead>
-            <tbody>
-              {status.records.map((r) => (
-                <tr key={`${r.type}-${r.name}-${r.value}`} className="border-t border-neutral-200">
-                  <td className="py-1 align-top">{r.type}</td>
-                  <td className="break-all py-1 align-top font-mono">{r.name}</td>
-                  <td className="break-all py-1 align-top font-mono">{r.value}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {status.state === "point" && (
-            <p className="text-neutral-600">
-              If the DNS is on Cloudflare, set the record to "DNS only" (grey cloud).
-            </p>
-          )}
+          <DnsRecords state={status.redirect} />
         </div>
       )}
+      {status.partner && manager && (
+        <form action={addSiteDomain} className="text-sm">
+          <input type="hidden" name="siteId" value={siteId} />
+          <input type="hidden" name="domain" value={status.domain} />
+          <button type="submit" className="underline">
+            Also send {status.partner} to {status.domain}
+          </button>
+        </form>
+      )}
       <div className="flex items-center gap-4 text-sm">
-        {status.state !== "live" && (
+        {(status.state !== "live" || (status.redirect && status.redirect.state !== "live")) && (
           // A full load, so Vercel is asked again.
           <a href="/sites" className="underline">
             Check again
@@ -676,6 +695,41 @@ function DomainPanel({
         )}
         {manager && <RemoveDomain siteId={siteId} />}
       </div>
+    </div>
+  );
+}
+
+/** The DNS records one domain still needs, to add at its DNS provider. */
+function DnsRecords({ state }: { state: DomainState }) {
+  if (state.records.length === 0) return null;
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="text-neutral-600">
+        Add at the DNS provider for <strong>{state.records[0]?.zone}</strong>:
+      </p>
+      <table className="w-full table-fixed border-collapse">
+        <thead>
+          <tr className="text-left text-neutral-500">
+            <th className="w-16 py-1">Type</th>
+            <th className="w-1/3 py-1">Name</th>
+            <th className="py-1">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          {state.records.map((r) => (
+            <tr key={`${r.type}-${r.name}-${r.value}`} className="border-t border-neutral-200">
+              <td className="py-1 align-top">{r.type}</td>
+              <td className="break-all py-1 align-top font-mono">{r.name}</td>
+              <td className="break-all py-1 align-top font-mono">{r.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {state.state === "point" && (
+        <p className="text-neutral-600">
+          If the DNS is on Cloudflare, set the record to "DNS only" (grey cloud).
+        </p>
+      )}
     </div>
   );
 }
@@ -806,10 +860,11 @@ function DeploymentLine({
       Latest deployment: {deploymentLabel(deployment.state)}
       {deployment.url && (
         <>
-          {" · "}
+          {" · Preview address "}
           <a href={deployment.url} className="underline" target="_blank" rel="noreferrer">
             {deployment.url.replace(/^https:\/\//, "")}
           </a>
+          {" (always on, good for sharing before the domain works)"}
         </>
       )}
     </p>
@@ -842,6 +897,53 @@ function FormLeads({ totals }: { totals: { delivered: number; failed: number } |
       )}
       {failed === 0 && "."}
     </p>
+  );
+}
+
+/** Each page's search title and description in the latest version, and what to fix. */
+function SeoCheck({ check }: { check: SiteSeo }) {
+  const { issues, pages } = check;
+  return (
+    <details className="text-sm">
+      <summary className="cursor-pointer text-neutral-600">
+        Search check (version {check.version}):{" "}
+        {issues.length === 0
+          ? "nothing to fix."
+          : `${issues.length} ${issues.length === 1 ? "thing" : "things"} to fix.`}
+      </summary>
+      <div className="space-y-3 pt-2">
+        {issues.length > 0 && (
+          <ul className="list-disc space-y-1 pl-5 text-red-700">
+            {issues.map((issue) => (
+              <li key={`${issue.page} ${issue.problem}`}>
+                {issue.page === "site" ? "Whole site" : issue.page}: {issue.problem}
+              </li>
+            ))}
+          </ul>
+        )}
+        <ul className="space-y-2">
+          {pages.map((page) => (
+            <li key={page.path}>
+              <span className="font-mono">{page.path}</span>
+              {page.noindex && <span className="text-neutral-600"> (kept out of search)</span>}
+              <br />
+              <span>{page.title ?? (page.hasTitle ? "Title set in code" : "No title")}</span>
+              {" · "}
+              <span className="text-neutral-600">
+                {page.description ??
+                  (page.hasDescription ? "Description set in code" : "No description")}
+              </span>
+              {page.schema && <span className="text-neutral-600"> · Structured data</span>}
+            </li>
+          ))}
+        </ul>
+        <p className="text-neutral-600">
+          Every published site also gets a sitemap, robots.txt, llms.txt and the business's
+          structured data. They use the site's own domain once it's live, so publish again after the
+          domain starts working. Ask the site builder in the chat to fix anything listed.
+        </p>
+      </div>
+    </details>
   );
 }
 

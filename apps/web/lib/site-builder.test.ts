@@ -48,12 +48,14 @@ import {
   session,
   site,
   siteBackend,
+  siteFolder,
   siteMemberAccess,
   subscription,
   usageEvent,
   usageLimit,
   user,
 } from "@locus/db/control";
+import { siteBrief } from "@locus/db/tenant";
 import { FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
 import { readBrief, SiteWorkspace } from "@locus/studio";
@@ -81,6 +83,7 @@ import {
   leaseClientDb,
   newSiteRefusal,
   openClientDb,
+  POOL_IDLE_MS,
   pooledUsers,
   publishLatestVersion,
   publishMessage,
@@ -91,7 +94,9 @@ import {
   type SiteBuilderDeps,
   SiteInputError,
   siteLeadTotals,
+  siteNames,
   siteRuntimeKey,
+  siteSeo,
   toMeasurement,
   usageMeter,
 } from "./site-builder.ts";
@@ -417,6 +422,16 @@ describe("publishing saved versions", () => {
       { action: "write", path: "app/about/page.tsx", content: "about" },
       rc,
     );
+    await call(
+      builder.tools,
+      "files",
+      {
+        action: "write",
+        path: "app/book/page.tsx",
+        content: '<Booking calendarId="cal1" form="consult" />\n<Booking calendarId={someVar} />',
+      },
+      rc,
+    );
     const saved = await call(
       builder.tools,
       "versions",
@@ -441,6 +456,34 @@ describe("publishing saved versions", () => {
     expect(latest?.commitSha).toMatch(/\w+/);
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.status).toBe("pushed");
+    // Bookings are taken on the calendars the published code names, and only those.
+    expect(row?.bookingCalendars).toEqual(["cal1"]);
+  });
+
+  it("publishes with its Vercel address until its domain is live, and checks its search basics", async () => {
+    const { client, siteId } = await startedSite();
+    const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
+      siteId,
+      name: "a-site",
+    });
+    // A domain Vercel can't confirm is live (here, no Vercel at all) isn't the address yet.
+    await db
+      .update(site)
+      .set({ customDomain: "www.a-site.test", deployUrl: "https://a-site.vercel.app" })
+      .where(eq(site.id, siteId));
+    await publishLatestVersion(deps(), ctx("owner"), client, siteId);
+    const pushed = github.repoFiles(repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain('siteUrl: "https://a-site.vercel.app"');
+    expect(pushed?.["app/sitemap.ts"]).toContain("locus.pages.map");
+    expect(pushed?.["app/llms.txt/route.ts"]).toContain("export function GET");
+
+    const checks = await siteSeo(deps(), client, [siteId, "not-a-site"]);
+    expect([...checks.keys()]).toEqual([siteId]);
+    expect(checks.get(siteId)).toMatchObject({
+      version: 1,
+      issues: [],
+      pages: [expect.objectContaining({ path: "/", canonical: "/" })],
+    });
   });
 
   it("publishes the latest saved version from the Sites page, without the chat", async () => {
@@ -826,10 +869,8 @@ describe("copying a site", () => {
     await call(builder.tools, "versions", { action: "save", message: "Add extra" }, rc);
     // Unsaved work isn't copied: only the latest saved version is.
     await call(builder.tools, "files", { action: "write", path: "draft.txt", content: "x" }, rc);
-    await db
-      .update(site)
-      .set({ folder: "Dental", repoFullName: "agency/smiles" })
-      .where(eq(site.id, siteId));
+    await db.update(site).set({ repoFullName: "agency/smiles" }).where(eq(site.id, siteId));
+    await db.insert(siteFolder).values({ siteId, name: "Dental" });
     return { client, siteId };
   }
 
@@ -865,8 +906,10 @@ describe("copying a site", () => {
       repoFullName: null,
       hostProjectId: null,
       customDomain: null,
-      folder: null,
     });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual(
+      [],
+    );
     const original = await contents(client, siteId);
     const copied = await contents(to, copy.siteId);
     expect(copied.files).toEqual(original.files);
@@ -895,7 +938,10 @@ describe("copying a site", () => {
       name: "Again",
     });
     const [row] = await db.select().from(site).where(eq(site.id, copy.siteId));
-    expect(row).toMatchObject({ locationId: clientA, folder: "Dental", repoFullName: null });
+    expect(row).toMatchObject({ locationId: clientA, repoFullName: null });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual([
+      { siteId: copy.siteId, name: "Dental" },
+    ]);
   });
 
   it("only copies between clients the member passed the staff check for", async () => {
@@ -1111,6 +1157,28 @@ describe("deleting a site", () => {
       tenant.$client.close();
     }
   }
+
+  it("names the client's sites, skipping one whose brief no longer reads", async () => {
+    const good = await draft("owner", "Good");
+    const { client, siteId: bad } = await draft("owner", "Bad");
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      await tenant
+        .update(siteBrief)
+        .set({ brief: { old: true } })
+        .where(eq(siteBrief.siteId, bad));
+    } finally {
+      tenant.$client.close();
+    }
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const names = await siteNames(deps(), client, [good.siteId, bad, "unknown"]);
+      expect([...names]).toEqual([[good.siteId, "Good"]]);
+    } finally {
+      error.mockRestore();
+    }
+    expect(await siteNames(deps(), client, [])).toEqual(new Map());
+  });
 
   it("removes a draft and everything Locus keeps for it, and only that site", async () => {
     const kept = await draft("owner", "Kept");
@@ -1386,6 +1454,43 @@ describe("pooled client connections", () => {
     };
     (await leaseClientDb(open, client)).release();
     (await leaseClientDb(open, client, Date.now() + 46 * 60_000)).release();
+    expect(opens).toBe(2);
+  });
+
+  it("closes a connection nobody has used for a while", async () => {
+    const client = await authorized("owner", clientA);
+    closeClientDbs();
+    let opens = 0;
+    const open = (c: AuthorizedClient) => {
+      opens++;
+      return openClientDb(provisioner, c);
+    };
+    let idleDb!: Awaited<ReturnType<typeof openClientDb>>;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const first = await leaseClientDb(open, client);
+      idleDb = first.db;
+      first.release();
+      vi.advanceTimersByTime(POOL_IDLE_MS - 1);
+      // Still pooled: used again before the idle time ran out, which restarts it.
+      (await leaseClientDb(open, client)).release();
+      expect(opens).toBe(1);
+      vi.advanceTimersByTime(POOL_IDLE_MS - 1);
+      expect(pooledUsers(clientA)).toBe(0);
+      // A lease held across the idle time keeps it open.
+      const held = await leaseClientDb(open, client);
+      vi.advanceTimersByTime(POOL_IDLE_MS * 2);
+      expect(pooledUsers(clientA)).toBe(1);
+      held.release();
+      vi.advanceTimersByTime(POOL_IDLE_MS);
+      expect(pooledUsers(clientA)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+    // The connection itself is closed, not just dropped from the pool.
+    await new Promise((r) => setTimeout(r, 10));
+    await expect(idleDb.$client.execute("select 1")).rejects.toThrow();
+    (await leaseClientDb(open, client)).release();
     expect(opens).toBe(2);
   });
 });
