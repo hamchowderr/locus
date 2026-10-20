@@ -74,7 +74,21 @@ export {
   siteSlots,
   validTimezone,
 } from "./site-booking.ts";
-export { type CrmCalendar, listCalendars, type SiteCrm, siteCrm } from "./site-crm.ts";
+export {
+  type CrmCalendar,
+  type CrmMedia,
+  CrmMediaError,
+  type CrmMediaFile,
+  downloadMedia,
+  isGhlStorageUrl,
+  listCalendars,
+  listMedia,
+  MAX_MEDIA_BYTES,
+  type MediaFormat,
+  mediaFormat,
+  type SiteCrm,
+  siteCrm,
+} from "./site-crm.ts";
 export {
   countSiteLead,
   hashVisitorIp,
