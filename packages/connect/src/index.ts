@@ -147,6 +147,7 @@ export {
   type SiteLeadResult,
   submitSiteLead,
 } from "./site-leads.ts";
+export { SIGN_UP_FORM, SITE_MEMBER_LIMITS, siteMemberSignedUp } from "./site-members.ts";
 export {
   attachSiteDomain,
   type DnsRecord,

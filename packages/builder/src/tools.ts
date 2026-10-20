@@ -706,6 +706,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         const removed = files.map((file) => file.path).filter((path) => !kept.has(path));
         if (changed.length > 0) await ws.writeFiles(changed);
         if (removed.length > 0) await ws.deleteFiles(removed);
+        const auth = app.find((file) => file.path === "lib/auth.ts")?.content;
+        const noSignUpHook = typeof auth === "string" && !auth.includes("memberSignedUp");
         const filesRenewed =
           changed.some((file) => file.path === "lib/files.ts") && before.has("lib/files.ts");
         return {
@@ -717,6 +719,10 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
             (filesRenewed
               ? " File uploads were updated: uploadFile now returns { fileId, url }. Change any " +
                 "code that used pathname or fileUrl to store and show url, and delete by fileId."
+              : "") +
+            (noSignUpHook
+              ? " lib/auth.ts was changed before, so it was kept: add the memberSignedUp hook to " +
+                "it as the site-database skill says, so new members reach HighLevel."
               : ""),
         };
       }
