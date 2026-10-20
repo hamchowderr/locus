@@ -46,6 +46,12 @@ import { giveSiteProject, giveSiteRepoAndPublish } from "@/lib/site-publish";
 
 const text = (form: FormData, key: string) => String(form.get(key) ?? "").trim();
 
+/** An uploaded file's bytes and type, or null when the field was left empty. */
+async function uploaded(value: FormDataEntryValue | null) {
+  if (!(value instanceof File) || value.size === 0) return null;
+  return { bytes: new Uint8Array(await value.arrayBuffer()), mediaType: value.type };
+}
+
 /** Better Auth's API errors carry a readable message in `body.message`. */
 function messageOf(error: unknown): string {
   if (error && typeof error === "object") {
@@ -448,6 +454,15 @@ export async function createSite(form: FormData) {
       name: text(form, "name"),
       kind: text(form, "kind"),
       templateId: text(form, "templateId"),
+      description: text(form, "description"),
+      goal: text(form, "goal"),
+      audience: text(form, "audience"),
+      palette: text(form, "palette"),
+      fonts: text(form, "fonts"),
+      layout: text(form, "layout"),
+      pages: form.getAll("pages").map(String),
+      referenceUrl: text(form, "referenceUrl"),
+      screenshot: await uploaded(form.get("screenshot")),
     });
     // The site just made is the one the person means to build next, in the chat too. The site
     // exists either way, so failing to choose it doesn't fail the creation.

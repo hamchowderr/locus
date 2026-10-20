@@ -6,7 +6,7 @@ import {
   type SessionContext,
 } from "@locus/auth";
 import type { ControlDb } from "@locus/db";
-import { auditLog, site } from "@locus/db/control";
+import { auditLog, site, siteBackend } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
 import { and, eq, isNull } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
@@ -386,14 +386,26 @@ export async function unlinkHostProject(
     eq(site.hostProjectId, row.hostProjectId),
     isNull(site.customDomain),
   );
+  // A site with its own database keeps its row (and so its database): unlinking the project
+  // must not delete the site's records.
+  const [backend] = await deps.db
+    .select({ siteId: siteBackend.siteId })
+    .from(siteBackend)
+    .where(eq(siteBackend.siteId, row.id));
   // TODO(site studio): a site made by Studio needs its own marker; "no repository" stands in.
-  const changed = row.repoFullName
-    ? await deps.db
-        .update(site)
-        .set({ host: null, hostProjectId: null, deployUrl: null, status: "pushed" })
-        .where(unchanged)
-        .returning({ id: site.id })
-    : await deps.db.delete(site).where(unchanged).returning({ id: site.id });
+  const changed =
+    row.repoFullName || backend
+      ? await deps.db
+          .update(site)
+          .set({
+            host: null,
+            hostProjectId: null,
+            deployUrl: null,
+            status: row.repoFullName ? "pushed" : "draft",
+          })
+          .where(unchanged)
+          .returning({ id: site.id })
+      : await deps.db.delete(site).where(unchanged).returning({ id: site.id });
   if (changed.length === 0) {
     throw new ConnectError("This site changed while you were unlinking it. Try again.");
   }
