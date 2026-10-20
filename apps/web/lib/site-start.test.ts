@@ -76,7 +76,11 @@ const authorized = (locationId: string) => authorizeClient(db, ctx("staff"), loc
 
 describe("starting a site from design answers", () => {
   it("puts the answers in the brief and the screenshot in version 1", async () => {
-    const PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    // A PNG's signature and IHDR (1440 × 900), which is what Locus checks.
+    const PNG = new Uint8Array(33);
+    PNG.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
+    new DataView(PNG.buffer).setUint32(16, 1440);
+    new DataView(PNG.buffer).setUint32(20, 900);
     const client = await authorized(clientA);
     const { siteId } = await createClientSite(deps(), ctx("staff"), client, {
       name: "Bright Smiles",

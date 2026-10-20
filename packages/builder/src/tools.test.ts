@@ -413,11 +413,7 @@ describe("view_reference", () => {
       type: "content",
       value: [
         { type: "text", text: "Reference screenshot design/references/screenshot-1.png:" },
-        {
-          type: "file",
-          mediaType: "image/png",
-          data: { type: "data", data: Buffer.from(PNG).toString("base64") },
-        },
+        { type: "image-data", data: Buffer.from(PNG).toString("base64"), mediaType: "image/png" },
       ],
     });
   });
