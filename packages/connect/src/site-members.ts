@@ -13,12 +13,19 @@ import {
 // Locus with the site's key, and Locus finds or creates the contact, filling only blank details,
 // tagged as a sign-up. Which sub-account comes from the site's registry row, never the request.
 
-/** Sign-ups one site reports, on top of GHL's own per-client budget. */
+/**
+ * Sign-ups one site reports, on top of GHL's own per-client budget. Only the site itself (with
+ * its key) can send them, after Better Auth's own sign-up limit, so these are loose: a launch
+ * or a whole office signing up from one network still gets through.
+ */
 export const SITE_MEMBER_LIMITS: Pick<SiteLeadLimits, "perIp" | "perSiteBurst" | "perSite"> = {
-  perSite: { max: 100, windowMs: 60 * 60_000 },
-  perSiteBurst: { max: 10, windowMs: 60_000 },
-  perIp: { max: 5, windowMs: 10 * 60_000 },
+  perSite: { max: 500, windowMs: 60 * 60_000 },
+  perSiteBurst: { max: 60, windowMs: 60_000 },
+  perIp: { max: 30, windowMs: 10 * 60_000 },
 };
+
+/** The longest name a lead keeps; a longer one is cut rather than losing the contact. */
+const MAX_NAME = 120;
 
 /** The form name sign-ups carry in HighLevel: tags `website lead`, `website form: sign-up`. */
 export const SIGN_UP_FORM = "sign-up";
@@ -40,9 +47,12 @@ export async function siteMemberSignedUp(
   const row = await siteFor(deps, input.siteId, input.authorization);
   if (!row) return refuse(401, "This site can't send sign-ups.");
   const given = (input.body ?? {}) as { email?: unknown; name?: unknown };
+  // Better Auth takes a name of any length; the contact still gets made with it cut short.
+  const name =
+    typeof given.name === "string" ? given.name.replace(/\s+/g, " ").trim().slice(0, MAX_NAME) : "";
   const parsed = parseLead({
     email: given.email,
-    ...(typeof given.name === "string" && given.name.trim() ? { name: given.name } : {}),
+    ...(name ? { name } : {}),
     form: SIGN_UP_FORM,
   });
   if ("error" in parsed || !parsed.lead.fields.email) {
