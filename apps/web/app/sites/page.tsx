@@ -144,19 +144,21 @@ export default async function Sites({
   const leadTotals = isProblem(leads) ? undefined : leads;
   // Publishing: a site started in Locus gets a repository, then a Vercel project that builds it.
   const needsRepo = (s: (typeof sites)[number]) => !s.repoFullName && !s.hostProjectId;
-  const repos: InstallationRepo[] | { problem: string } =
-    manager && sites.some(needsRepo)
-      ? await softly(
-          () => listInstallationRepos(publishDeps(), ctx),
-          "Publishing to GitHub isn't set up here yet.",
-        )
-      : [];
-  const repoChoices = isProblem(repos) ? [] : linkableRepos(repos, sites);
   // On a personal account Locus can't create repositories, so the form only links one.
-  const githubAccount =
-    manager && !isProblem(repos) && sites.some(needsRepo)
-      ? await softly(() => agencyGithubAccount(publishDeps(), ctx))
-      : undefined;
+  const [repos, githubAccount]: [
+    InstallationRepo[] | { problem: string },
+    InstallationAccount | { problem: string } | undefined,
+  ] =
+    manager && sites.some(needsRepo)
+      ? await Promise.all([
+          softly(
+            () => listInstallationRepos(publishDeps(), ctx),
+            "Publishing to GitHub isn't set up here yet.",
+          ),
+          softly(() => agencyGithubAccount(publishDeps(), ctx)),
+        ])
+      : [[], undefined];
+  const repoChoices = isProblem(repos) ? [] : linkableRepos(repos, sites);
   const account = githubAccount && !isProblem(githubAccount) ? githubAccount : undefined;
   const deployments = await Promise.all(
     sites.map((s) =>
@@ -481,7 +483,7 @@ function RepoForm({
     <p className="text-sm text-neutral-600">
       Locus can't create repositories in your personal GitHub account {account.login}.{" "}
       <a href="https://github.com/new" className="underline" target="_blank" rel="noreferrer">
-        Create an empty private repository
+        Create an empty private repository (opens in a new tab)
       </a>{" "}
       (leave out the README),{" "}
       <a
@@ -490,7 +492,7 @@ function RepoForm({
         target="_blank"
         rel="noreferrer"
       >
-        give the Locus app access to it
+        give the Locus app access to it (opens in a new tab)
       </a>
       , then reload this page and pick it here.
     </p>
@@ -510,10 +512,17 @@ function RepoForm({
         <span className="text-neutral-700">GitHub repository</span>
         <select
           name="repo"
-          defaultValue={personal ? choices[0]?.fullName : ""}
+          defaultValue=""
+          required={personal}
           className="mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base"
         >
-          {!personal && <option value="">Create a new private repository</option>}
+          {personal ? (
+            <option value="" disabled>
+              Pick an empty repository
+            </option>
+          ) : (
+            <option value="">Create a new private repository</option>
+          )}
           {choices.map((r) => (
             <option key={r.fullName} value={r.fullName}>
               Link {r.fullName}
