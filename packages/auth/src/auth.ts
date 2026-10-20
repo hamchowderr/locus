@@ -7,6 +7,7 @@ import { nextCookies } from "better-auth/next-js";
 import { organization } from "better-auth/plugins";
 import Stripe from "stripe";
 import { mayManageBilling } from "./billing.ts";
+import { reportOverage } from "./overage-billing.ts";
 import { PLANS } from "./plans.ts";
 import { ATTEMPT_LIMITS, checkAttemptLimits } from "./rate-limit.ts";
 
@@ -43,6 +44,7 @@ const NO_STRIPE = { secretKey: "sk_test_billing_is_off", webhookSecret: "" };
  * be able to join an agency.
  */
 export function createAuth(config: LocusAuthConfig) {
+  const stripeClient = new Stripe((config.billing ?? NO_STRIPE).secretKey);
   const { sendEmail } = config;
   const auth = betterAuth({
     baseURL: config.baseURL,
@@ -175,7 +177,7 @@ export function createAuth(config: LocusAuthConfig) {
         },
       }),
       stripe({
-        stripeClient: new Stripe((config.billing ?? NO_STRIPE).secretKey),
+        stripeClient,
         stripeWebhookSecret: (config.billing ?? NO_STRIPE).webhookSecret,
         // Otaku bills the agency, never a person: customers are organisations.
         organization: { enabled: true },
@@ -189,6 +191,18 @@ export function createAuth(config: LocusAuthConfig) {
           })),
           // The agency comes from the session: the caller's referenceId must be the session's
           // active organisation, and only its owners and admins manage billing.
+          // Extra usage stops once the plan is set to end (`usage.ts`); send what is waiting now,
+          // while the subscription still has an invoice to put it on.
+          onSubscriptionCancel: async ({ subscription }) => {
+            if (!config.billing) return;
+            try {
+              await reportOverage(config.db, stripeClient, {
+                organizationId: subscription.referenceId,
+              });
+            } catch (error) {
+              console.error("[locus] extra usage not sent on cancellation:", error);
+            }
+          },
           authorizeReference: async ({ user, session, referenceId }, ctx) => {
             const row = await ctx.context.adapter.findOne<{ role: string }>({
               model: "member",
