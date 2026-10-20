@@ -171,13 +171,15 @@ import * as schema from "@/db/schema";
 
 // Server code only: never import this from a "use client" file. On the published site the
 // database comes from env vars Locus sets on the host. In the preview (next dev) it is a local
-// file, and the preview has no token at all. A production build without them refuses to start
-// rather than quietly keeping members in a throwaway file.
+// file, and the preview has no token at all. A production server without them refuses to start
+// rather than quietly keeping members in a throwaway file. \`next build\` loads this file too, and
+// a check build in the sandbox has no database: it gets an empty in-memory one.
 const url = process.env.${SITE_DATABASE_ENV.url};
+const building = process.env.NEXT_PHASE === "phase-production-build";
 
 export const isPreviewDatabase = !url && process.env.NODE_ENV !== "production";
 
-if (!url && !isPreviewDatabase) {
+if (!url && !isPreviewDatabase && !building) {
   throw new Error("${SITE_DATABASE_ENV.url} is not set. Publish the site from Locus to set it.");
 }
 if (isPreviewDatabase) mkdirSync(".data", { recursive: true });
@@ -185,7 +187,7 @@ if (isPreviewDatabase) mkdirSync(".data", { recursive: true });
 export const client = createClient(
   url
     ? { url, authToken: process.env.${SITE_DATABASE_ENV.token} }
-    : { url: ${JSON.stringify(`file:${LOCAL_DB}`)} },
+    : { url: isPreviewDatabase ? ${JSON.stringify(`file:${LOCAL_DB}`)} : ":memory:" },
 );
 
 export const db = drizzle(client, { schema });
@@ -221,7 +223,12 @@ export async function applyLocalMigrations() {
   );
   // The same rules as Locus applies at publish, so the preview never accepts what publishing
   // would refuse.
-  const files = (await readdir(DIR).catch(() => [] as string[])).sort();
+  // Folders under db/migrations (such as drizzle-kit's meta/) aren't migrations.
+  const entries = await readdir(DIR, { withFileTypes: true }).catch(() => []);
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .sort();
   const numbers = new Set<string>();
   for (const file of files) {
     if (!/^\\d{4}_[a-z0-9_]+\\.sql$/.test(file)) {
@@ -250,7 +257,14 @@ export async function applyLocalMigrations() {
     });
     // migrate, not batch: it turns foreign keys off outside the transaction, so rebuilding a
     // table doesn't cascade-delete the rows that refer to it.
-    await client.migrate(statements);
+    try {
+      await client.migrate(statements);
+    } catch (error) {
+      // The preview started applying them at the same time: what it applied is done.
+      const now = await client.execute({ sql: \`select hash from \${LEDGER} where name = ?\`, args: [name] });
+      if (now.rows[0]?.hash === hash) continue;
+      throw error;
+    }
     applied.push(name);
   }
   return { applied };
@@ -355,7 +369,8 @@ export function withBackend(files: SiteFile[]): SiteFile[] {
   const pkg = byPath.get("package.json");
   if (pkg && typeof pkg.content === "string") {
     const json = JSON.parse(pkg.content) as { dependencies?: Record<string, string> };
-    json.dependencies = { ...json.dependencies, ...BACKEND_STACK };
+    // Packages the site already has keep their versions.
+    json.dependencies = { ...BACKEND_STACK, ...json.dependencies };
     json.dependencies = Object.fromEntries(
       Object.entries(json.dependencies).sort(([a], [b]) => a.localeCompare(b)),
     );

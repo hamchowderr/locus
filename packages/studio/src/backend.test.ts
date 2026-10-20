@@ -77,6 +77,20 @@ describe("an app-style site's files", () => {
       f.path === SITE_SCHEMA_PATH ? { ...f, content: `${f.content}// bookings\n` } : f,
     );
     expect(text(withBackend(grown), SITE_SCHEMA_PATH)).toContain("// bookings");
+
+    const pinned = app.map((f) =>
+      f.path === "package.json"
+        ? {
+            ...f,
+            content: JSON.stringify({
+              dependencies: { ...pkg.dependencies, "drizzle-orm": "9.9.9" },
+            }),
+          }
+        : f,
+    );
+    expect(JSON.parse(text(withBackend(pinned), "package.json")).dependencies["drizzle-orm"]).toBe(
+      "9.9.9",
+    );
   });
 
   it("keeps every credential out of the site's files", () => {
@@ -206,7 +220,35 @@ describe("the generated preview database", () => {
     }
   });
 
-  it("refuses to start a production build without its database", async () => {
+  it("applies migrations once when two runs start together, and skips folders", async () => {
+    await mkdir("db/migrations/meta", { recursive: true });
+    await writeFile("db/migrations/meta/_journal.json", "{}");
+    const { applyLocalMigrations } = await import(join(root, "lib/local-migrations.ts"));
+    const { client } = await import(join(root, "lib/db.ts"));
+    try {
+      const runs = await Promise.all([applyLocalMigrations(), applyLocalMigrations()]);
+      expect(runs.flatMap((run) => run.applied)).toContain("0000_logins");
+      const ledger = await client.execute(`select count(*) as n from ${SITE_MIGRATIONS_TABLE}`);
+      expect(Number(ledger.rows[0]?.n)).toBe(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("lets a check build load the site without its database", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PHASE", "phase-production-build");
+    vi.stubEnv("SITE_DATABASE_URL", "");
+    const { client, isPreviewDatabase } = await import(join(root, "lib/db.ts"));
+    try {
+      expect(isPreviewDatabase).toBe(false);
+      expect((await client.execute("select 1 as one")).rows[0]?.one).toBe(1);
+    } finally {
+      client.close();
+    }
+  });
+
+  it("refuses to start a production server without its database", async () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("SITE_DATABASE_URL", "");
     await expect(import(join(root, "lib/db.ts"))).rejects.toThrow(/SITE_DATABASE_URL is not set/);

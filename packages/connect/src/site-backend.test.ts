@@ -315,9 +315,9 @@ describe("publishing a site with a database", () => {
   it("leaves a plain website alone", async () => {
     const staff = await authorizeClient(db, ctx("staff"), "client-1");
     await db.update(site).set({ hostProjectId: "prj_1" }).where(eq(site.id, SITE));
-    expect(
-      await migrateSiteBackend(release(), staff, { siteId: SITE, files: [logins] }),
-    ).toBeNull();
+    const page = { path: "app/page.tsx", content: "export default 1" };
+    expect(await migrateSiteBackend(release(), staff, { siteId: SITE, files: [page] })).toBeNull();
+    expect(await db.select().from(siteBackend)).toEqual([]);
     expect(await ensureSiteBackendEnv(release(), staff, { siteId: SITE })).toEqual([]);
     expect(calls).toEqual([]);
   });
@@ -353,8 +353,12 @@ describe("publishing a site with a database", () => {
     await expect(
       migrateSiteBackend(release(), owner, { siteId: SITE, files: [broken] }),
     ).rejects.toThrow(
-      /^The site's database change didn't apply: 0000_logins failed: .*new migration/,
+      /^The site's database change didn't apply: 0000_logins failed: .*fix it in place\./,
     );
+    // It rolled back, so fixing that same file is what makes the next publish go out.
+    expect(await migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] })).toEqual({
+      applied: ["0000_logins"],
+    });
     await expect(
       migrateSiteBackend(release({ provisioner: false }), owner, { siteId: SITE, files: [logins] }),
     ).rejects.toThrow("This site's database isn't set up on this deployment yet.");
@@ -428,5 +432,54 @@ describe("publishing a site with a database", () => {
       "/v9/projects/prj_1/env/env_SITE_AUTH_SECRET",
     ]);
     expect(await siteBackendOf(db, owner, SITE)).toBeNull();
+  });
+
+  it("gives a site its database the first time a version with migrations is published", async () => {
+    // Staff on the client publish as they save in the chat; the agent made it app-style.
+    const staff = await authorizeClient(db, ctx("staff"), "client-1");
+    expect(
+      await migrateSiteBackend(release(), staff, { siteId: SITE, files: [logins, bookings] }),
+    ).toEqual({ applied: ["0000_logins", "0001_bookings"] });
+    const row = await siteBackendOf(db, staff, SITE);
+    expect(row).toMatchObject({ siteId: SITE, tursoDbName: siteDbName(SITE) });
+    const audits = await db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, "site.backend.enable"));
+    expect(audits).toMatchObject([
+      { actorUserId: null, locationId: "client-1", detail: { memberId: staff.memberId } },
+    ]);
+
+    // Another client's staff can't make one for this site.
+    const other = await authorizeClient(db, ctx("owner"), "client-2");
+    await expect(
+      migrateSiteBackend(release(), other, { siteId: SITE, files: [logins] }),
+    ).rejects.toBeInstanceOf(ConnectError);
+
+    // A badly named migration stops the publish before anything is made.
+    await expect(
+      migrateSiteBackend(release(), staff, {
+        siteId: SITE,
+        files: [{ path: "db/migrations/bookings.sql", content: "select 1" }],
+      }),
+    ).rejects.toThrow(
+      /^The site's database change didn't apply: db\/migrations\/bookings\.sql.*Rename the file/,
+    );
+  });
+
+  it("doesn't make the database again after an owner removed it", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    await migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] });
+    await removeSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    await expect(
+      migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] }),
+    ).rejects.toThrow(/^This site's database was removed/);
+    expect(await siteBackendOf(db, owner, SITE)).toBeNull();
+
+    // An owner turning it on again is a choice, and publishing works from there.
+    await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    expect(await migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] })).toEqual({
+      applied: ["0000_logins"],
+    });
   });
 });

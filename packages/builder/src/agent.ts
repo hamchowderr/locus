@@ -49,6 +49,9 @@ Rules:
   Never invent a product id, a price id or a price; show prices as crm products lists them.
 - Images: the client's own first (site-media skill: their logo as the favicon, a photo as
   the link preview), else generate_image into public/images. Alt text that describes them.
+- App features that keep data (member sign-up and login, the site's own bookings or saved
+  records): load the site-database skill, then database add. Change tables only through new
+  db/migrations files; never edit one that has run.
 - CRM tracking (visitors linked to contacts, workflows on page views and forms): ask the
   person for the snippet from their CRM's Settings → External Tracking and use crm
   add_tracking. Never write a tracking or analytics script by hand.
@@ -74,6 +77,7 @@ export const SITE_BUILDER_TOOL_NAMES = [
   "add_dependency",
   "check_site",
   "preview",
+  "database",
   "fetch_reference",
   "generate_image",
   "view_reference",
