@@ -50,6 +50,16 @@ export const SITE_FILE_LIMITS: Pick<SiteLeadLimits, "perIp" | "perSiteBurst" | "
   perIp: { max: 10, windowMs: 10 * 60_000 },
 };
 
+/**
+ * Tickets for bigger files, counted on top of SITE_FILE_LIMITS: each may be 500 MB, so a site
+ * gets far fewer of them.
+ */
+export const SITE_BIG_FILE_LIMITS: typeof SITE_FILE_LIMITS = {
+  perSite: { max: 40, windowMs: 60 * 60_000 },
+  perSiteBurst: { max: 5, windowMs: 60_000 },
+  perIp: { max: 5, windowMs: 10 * 60_000 },
+};
+
 /** The most files one delete may name. */
 const MAX_DELETE = 20;
 /** Files listed per page, and the most pages read to find a site's file. */
@@ -65,6 +75,7 @@ export type SiteFilesDeps = Pick<
   /** Visitor IPs are hashed with this for the per-IP limit, as for site forms. */
   ipHashKey: Uint8Array;
   limits?: Partial<typeof SITE_FILE_LIMITS>;
+  bigLimits?: Partial<typeof SITE_FILE_LIMITS>;
 };
 
 /** A file in the site's folder of the Media Library. */
@@ -112,10 +123,13 @@ function safeName(name: string): string {
 
 export type SiteFileAnswer =
   | { status: 200; body: Record<string, unknown> }
-  | { status: 400 | 401 | 403 | 413 | 415 | 502; body: { error: string } }
+  | { status: 400 | 401 | 403 | 409 | 413 | 415 | 502; body: { error: string } }
   | { status: 429; body: { error: string }; retryAfterSeconds: number };
 
-const refuse = (status: 400 | 401 | 403 | 413 | 415 | 502, error: string): SiteFileAnswer => ({
+const refuse = (
+  status: 400 | 401 | 403 | 409 | 413 | 415 | 502,
+  error: string,
+): SiteFileAnswer => ({
   status,
   body: { error },
 });
@@ -286,10 +300,15 @@ async function uploadLimited(
   deps: SiteFilesDeps,
   siteId: string,
   visitorIp: string | null,
+  big = false,
 ): Promise<SiteFileAnswer | null> {
-  const limits = { ...SITE_FILE_LIMITS, ...deps.limits };
   const now = deps.now?.() ?? Date.now();
-  const wait = await consumeSiteLimits(deps, siteId, visitorIp, limits, now, "file");
+  const limits = { ...SITE_FILE_LIMITS, ...deps.limits };
+  let wait = await consumeSiteLimits(deps, siteId, visitorIp, limits, now, "file");
+  if (wait === null && big) {
+    const bigLimits = { ...SITE_BIG_FILE_LIMITS, ...deps.bigLimits };
+    wait = await consumeSiteLimits(deps, siteId, visitorIp, bigLimits, now, "file-big");
+  }
   if (wait === null) return null;
   return {
     status: 429,
@@ -373,9 +392,12 @@ export async function uploadSiteFile(
 // Bigger files skip Vercel: the site's route (which checks the member) asks Locus for a ticket
 // for one file of a given name, type and size, and the member's browser sends the file with it
 // straight to Locus's own server, which has no request limit of Vercel's. A ticket is signed
-// with a key derived for this alone, names its site, lives ten minutes and is used once.
+// with a key derived for this alone, names its site, lives ten minutes and is used once: the
+// server that takes the file claims it before reading any of the body.
 
 const TICKET_TTL_MS = 10 * 60_000;
+/** How long a claimed ticket's nonce is remembered: well past any upload it could start. */
+const CLAIM_WINDOW_MS = 3 * 60 * 60_000;
 
 interface Ticket {
   /** Site, file name, content type, size, expiry, nonce. */
@@ -429,15 +451,17 @@ export async function issueSiteUploadTicket(
   if (typeof body.name !== "string" || body.name.length > 300) {
     return refuse(400, "Give the file's name.");
   }
+  // Made safe now, so the ticket stays short whatever the name held.
+  const name = safeName(body.name);
   const contentType = typeof body.contentType === "string" ? mediaType(body.contentType) : "";
   const size = typeof body.size === "number" ? body.size : 0;
   const refused = fileRefusal(contentType, size, true);
   if (refused) return refused;
-  const limited = await uploadLimited(deps, row.site.id, input.visitorIp);
+  const limited = await uploadLimited(deps, row.site.id, input.visitorIp, true);
   if (limited) return limited;
   const { ticket, expiresAt } = signSiteUploadTicket(
     deps.ticketKey,
-    { siteId: row.site.id, name: body.name, contentType, size },
+    { siteId: row.site.id, name, contentType, size },
     deps.now?.() ?? Date.now(),
   );
   return { status: 200, body: { uploadUrl: deps.uploadUrl, ticket, contentType, expiresAt } };
@@ -462,49 +486,70 @@ export function signSiteUploadTicket(
   return { ticket: `${payload}.${sign(ticketKey, payload)}`, expiresAt };
 }
 
-/** What a ticket allows: the server that takes the file checks the bytes against it. */
-export function siteUploadTicket(
-  ticketKey: Uint8Array,
-  value: string | null,
-  now = Date.now(),
-): { siteId: string; name: string; contentType: string; size: number } | null {
-  const ticket = value ? readTicket(ticketKey, value, now) : null;
-  return ticket
-    ? { siteId: ticket.s, name: ticket.n, contentType: ticket.t, size: ticket.z }
-    : null;
+/** A ticket the server taking a file has claimed: the only way to `keepTicketedFile`. */
+export interface ClaimedSiteUpload {
+  readonly siteId: string;
+  readonly name: string;
+  readonly contentType: string;
+  readonly size: number;
 }
 
+const claimed = new WeakSet<ClaimedSiteUpload>();
+
 /**
- * A bigger upload, sent with a ticket by the member's browser. The file must be exactly what the
- * ticket names; the ticket works once, and only while its site still keeps files.
+ * Claims a ticket before any of the file is read: checks it, that the upload says it is what
+ * the ticket names, and uses it up, so the same ticket can't send a second copy alongside.
+ * `size` is the declared length, when the request has one.
  */
-export async function uploadSiteFileWithTicket(
-  deps: SiteFilesDeps & { ticketKey: Uint8Array },
-  input: {
-    ticket: string | null;
-    file: Blob;
-    contentType: string;
-    /** When the file began to arrive: a big file may take longer than the ticket lives. */
-    startedAt?: number;
-  },
-): Promise<SiteFileAnswer> {
+export async function claimSiteUploadTicket(
+  deps: Pick<SiteFilesDeps, "db" | "now"> & { ticketKey: Uint8Array },
+  input: { ticket: string | null; contentType: string; size: number | null },
+): Promise<{ claim: ClaimedSiteUpload } | { answer: SiteFileAnswer }> {
   const now = deps.now?.() ?? Date.now();
-  const at = Math.min(input.startedAt ?? now, now);
-  const ticket = input.ticket ? readTicket(deps.ticketKey, input.ticket, at) : null;
-  if (!ticket) return refuse(401, "That upload has expired. Try again.");
-  if (mediaType(input.contentType) !== ticket.t || input.file.size !== ticket.z) {
-    return refuse(400, "That isn't the file this upload was for.");
+  const ticket = input.ticket ? readTicket(deps.ticketKey, input.ticket, now) : null;
+  if (!ticket) return { answer: refuse(401, "That upload has expired. Try again.") };
+  if (
+    mediaType(input.contentType) !== ticket.t ||
+    (input.size !== null && input.size !== ticket.z)
+  ) {
+    return { answer: refuse(400, "That isn't the file this upload was for.") };
   }
   const once = await consumeAttempt(
     deps.db,
     `site-file-ticket|${ticket.r}`,
-    { max: 1, windowMs: TICKET_TTL_MS },
+    { max: 1, windowMs: CLAIM_WINDOW_MS },
     now,
   );
-  if (!once.allowed) return refuse(401, "That upload was already used. Try again.");
-  const row = await siteFor(deps, ticket.s, `Bearer ${siteFilesKey(deps.filesKey, ticket.s)}`);
+  if (!once.allowed) return { answer: refuse(409, "That upload was already used. Try again.") };
+  const claim: ClaimedSiteUpload = Object.freeze({
+    siteId: ticket.s,
+    name: ticket.n,
+    contentType: ticket.t,
+    size: ticket.z,
+  });
+  claimed.add(claim);
+  return { claim };
+}
+
+/**
+ * Keeps a file sent with a claimed ticket. The file must be exactly the size the ticket named,
+ * and its site must still keep files.
+ */
+export async function keepTicketedFile(
+  deps: SiteFilesDeps,
+  claim: ClaimedSiteUpload,
+  file: Blob,
+): Promise<SiteFileAnswer> {
+  if (!claimed.has(claim)) throw new Error("keepTicketedFile needs a claimed ticket");
+  claimed.delete(claim);
+  if (file.size !== claim.size) return refuse(400, "That isn't the file this upload was for.");
+  const row = await siteFor(
+    deps,
+    claim.siteId,
+    `Bearer ${siteFilesKey(deps.filesKey, claim.siteId)}`,
+  );
   if (!row) return refuse(401, CANT_KEEP);
-  return keepInMediaLibrary(deps, row, input.file, ticket.n, ticket.t);
+  return keepInMediaLibrary(deps, row, file, claim.name, claim.contentType);
 }
 
 /**

@@ -461,7 +461,8 @@ export type BigUpload =
 
 /**
  * Starts an upload of a file over MAX_FILE_BYTES: the member's browser then PUTs the file to
- * \`\${uploadUrl}?ticket=\${ticket}\` with \`content-type: contentType\`, once, within ten minutes.
+ * \`uploadUrl\` with \`content-type: contentType\` and \`x-locus-ticket: ticket\`, once, within ten
+ * minutes.
  * \`uploadUrl\` is null when this host can't take big files (\`preview\` when the preview takes
  * them through the site's own upload route instead).
  */
@@ -577,13 +578,13 @@ export async function POST(request: Request) {
   }
   const text = await request.text();
   if (text.length > 4096) return refused("That's too much to send.", 413);
-  let meta: { name?: unknown; contentType?: unknown; size?: unknown };
+  let meta: { name?: unknown; contentType?: unknown; size?: unknown } | null;
   try {
     meta = JSON.parse(text);
   } catch {
     return refused("Send JSON.", 400);
   }
-  if (typeof meta.name !== "string" || typeof meta.contentType !== "string" || typeof meta.size !== "number") {
+  if (!meta || typeof meta !== "object" || typeof meta.name !== "string" || typeof meta.contentType !== "string" || typeof meta.size !== "number") {
     return refused("Give the file's name, type and size.", 400);
   }
   try {
@@ -666,9 +667,9 @@ export async function uploadFile(file: File): Promise<UploadedFile> {
     throw new Error(\`Files can be up to \${MAX_FILE_BYTES / 1024 / 1024} MB here.\`);
   }
   return kept(
-    await fetch(\`\${start.uploadUrl}?ticket=\${encodeURIComponent(start.ticket)}\`, {
+    await fetch(start.uploadUrl, {
       method: "PUT",
-      headers: { "content-type": start.contentType },
+      headers: { "content-type": start.contentType, "x-locus-ticket": start.ticket },
       body: file,
     }),
   );

@@ -38,7 +38,12 @@ import type { MastraModelConfig } from "@mastra/core/llm";
 import { LibSQLStore } from "@mastra/libsql";
 import { eq } from "drizzle-orm";
 import { refreshingClient } from "./refreshing-client.ts";
-import { SITE_UPLOAD_PATH, type SiteUploadDeps, siteUploads } from "./site-uploads.ts";
+import {
+  SITE_UPLOAD_PATH,
+  type SiteUploadDeps,
+  siteUploads,
+  siteUploadsOff,
+} from "./site-uploads.ts";
 
 export const PREFIX = "/api/agent";
 
@@ -432,7 +437,7 @@ export function createHost({
     const { pathname } = new URL(request.url);
     if (pathname === "/health") return new Response("ok");
     // Ticketed, cookie-free and from any site's page: before the origin and JSON rules below.
-    if (pathname === SITE_UPLOAD_PATH && uploads) return uploads(request);
+    if (pathname === SITE_UPLOAD_PATH) return uploads ? uploads(request) : siteUploadsOff(request);
     if (request.method === "GET" || request.method === "HEAD") {
       return guardStream(request, await api.fetch(request));
     }

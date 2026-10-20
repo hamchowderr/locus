@@ -91,23 +91,26 @@ export async function ghlRequest<T = unknown>(
     Accept: "application/json",
   };
   if (needsAuth) headers.Authorization = `Bearer ${session.token}`;
-  let encoded: string | FormData | undefined;
+  let encoded: string | ReadableStream<Uint8Array> | undefined;
   if (body && operation.body === "multipart") {
-    // Files (Blobs) and flat fields. fetch sets the multipart Content-Type with its boundary.
-    const form = new FormData();
+    // Files (Blobs) and flat fields, streamed: fetch would read a whole file into memory first.
+    const fields: [string, string | Blob][] = [];
     for (const [key, value] of Object.entries(body)) {
       if (value === undefined) continue;
       if (value instanceof Blob) {
-        form.set(key, value, value instanceof File ? value.name : key);
+        fields.push([key, value]);
       } else if (typeof value === "object" && value !== null) {
         throw new GhlUsageError(
           `${operation.id}: multipart field "${key}" must be a file or a plain value`,
         );
       } else {
-        form.set(key, String(value));
+        fields.push([key, String(value)]);
       }
     }
-    encoded = form;
+    const multipart = multipartBody(fields);
+    headers["Content-Type"] = multipart.contentType;
+    headers["Content-Length"] = String(multipart.length);
+    encoded = multipart.stream;
   } else if (body && operation.body === "form") {
     // OAuth endpoints take application/x-www-form-urlencoded: flat string fields only.
     const form = new URLSearchParams();
@@ -127,11 +130,14 @@ export async function ghlRequest<T = unknown>(
 
   const budget = rateLimitKey(session);
   await options.rateLimiter?.acquire(budget);
-  const res = await (options.fetch ?? fetch)(url, {
+  // Node's fetch reads a streamed body all into memory before sending; a big upload must not.
+  const send = options.fetch ?? (encoded instanceof ReadableStream ? streamingFetch : fetch);
+  const res = await send(url, {
     method: operation.method,
     headers,
     ...(encoded === undefined ? {} : { body: encoded }),
-  });
+    ...(encoded instanceof ReadableStream ? { duplex: "half" } : {}),
+  } as RequestInit);
   if (res.status === 429) options.rateLimiter?.pause(budget, retryAfterMs(res));
 
   const text = await res.text();
@@ -234,4 +240,110 @@ function toGhlError(operationId: string, status: number, payload: unknown): GhlE
     }
   }
   return new GhlError(operationId, status, `HTTP ${status}`);
+}
+
+const encoder = new TextEncoder();
+/** A field name or file name inside a quoted multipart header, escaped as browsers do. */
+const quoted = (value: string) =>
+  value.replace(/"/g, "%22").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+
+/**
+ * A multipart/form-data body that reads each file only as it is sent, with its exact length,
+ * so a big upload never sits in memory.
+ */
+export function multipartBody(fields: [string, string | Blob][]): {
+  stream: ReadableStream<Uint8Array>;
+  contentType: string;
+  length: number;
+} {
+  const boundary = `----LocusFormBoundary${crypto.randomUUID().replaceAll("-", "")}`;
+  const parts: (Uint8Array | Blob)[] = [];
+  for (const [name, value] of fields) {
+    let head = `--${boundary}\r\nContent-Disposition: form-data; name="${quoted(name)}"`;
+    if (value instanceof Blob) {
+      const filename = value instanceof File ? value.name : name;
+      head += `; filename="${quoted(filename)}"\r\nContent-Type: ${value.type || "application/octet-stream"}`;
+      parts.push(encoder.encode(`${head}\r\n\r\n`), value, encoder.encode("\r\n"));
+    } else {
+      parts.push(encoder.encode(`${head}\r\n\r\n${value}\r\n`));
+    }
+  }
+  parts.push(encoder.encode(`--${boundary}--\r\n`));
+  const length = parts.reduce(
+    (sum, part) => sum + (part instanceof Blob ? part.size : part.byteLength),
+    0,
+  );
+  let next = 0;
+  let reading: ReadableStreamDefaultReader<Uint8Array> | null = null;
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      for (;;) {
+        if (reading) {
+          const { done, value } = await reading.read();
+          if (!done) return controller.enqueue(value);
+          reading = null;
+        }
+        const part = parts[next++];
+        if (part === undefined) return controller.close();
+        if (part instanceof Blob) reading = part.stream().getReader();
+        else return controller.enqueue(part);
+      }
+    },
+    async cancel(reason) {
+      await reading?.cancel(reason);
+    },
+  });
+  return { stream, contentType: `multipart/form-data; boundary=${boundary}`, length };
+}
+
+const STREAM_IDLE_MS = 5 * 60_000;
+
+/**
+ * Sends a streamed body with node:http(s), which waits for the socket as it goes, and answers as
+ * fetch does. Only for requests with a stream body.
+ */
+async function streamingFetch(
+  input: string | URL | Request,
+  init?: RequestInit,
+): Promise<Response> {
+  const url = new URL(input instanceof Request ? input.url : input.toString());
+  const body = init?.body;
+  if (!(body instanceof ReadableStream)) throw new Error("streamingFetch sends stream bodies only");
+  const [{ request }, { Readable }, { pipeline }] = await Promise.all([
+    url.protocol === "https:" ? import("node:https") : import("node:http"),
+    import("node:stream"),
+    import("node:stream/promises"),
+  ]);
+  return new Promise<Response>((resolve, reject) => {
+    const req = request(
+      url,
+      { method: init?.method ?? "POST", headers: Object.fromEntries(new Headers(init?.headers)) },
+      (res) => {
+        const headers = new Headers();
+        for (const [key, value] of Object.entries(res.headers)) {
+          if (value !== undefined)
+            headers.set(key, Array.isArray(value) ? value.join(", ") : value);
+        }
+        const status = res.statusCode ?? 502;
+        const empty = status === 204 || status === 304;
+        if (empty) res.resume();
+        resolve(
+          new Response(
+            empty ? null : (Readable.toWeb(res) as unknown as ReadableStream<Uint8Array>),
+            { status, headers },
+          ),
+        );
+      },
+    );
+    req.on("error", reject);
+    // A server that goes quiet mid-upload would otherwise hold the request open for good.
+    req.setTimeout(STREAM_IDLE_MS, () => req.destroy(new Error("GHL stopped answering an upload")));
+    pipeline(
+      Readable.fromWeb(body as import("node:stream/web").ReadableStream<Uint8Array>),
+      req,
+    ).catch((error: unknown) => {
+      req.destroy(error as Error);
+      reject(error);
+    });
+  });
 }
