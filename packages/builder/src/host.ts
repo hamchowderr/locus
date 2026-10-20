@@ -291,6 +291,49 @@ export function publishHook(
   };
 }
 
+/**
+ * Sends a site's latest saved version to its repository from the Sites page, as a save in the
+ * chat does (`publishHook`), for a deployment without the chat or a site whose repository came
+ * after its last save. Owners and admins only. The client is the session's; the site must be
+ * one of its and have a repository. Vercel deploys the push.
+ */
+export async function publishLatestVersion(
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "publish" | "locusUrl">,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<{ version: number; commitSha: string }> {
+  assertAuthorizedClient(client);
+  await requireAgencyManager(deps.db, ctx);
+  const row = await clientSite(deps.db, client, siteId);
+  if (!row.repoFullName) {
+    throw new SiteInputError("Give the site a GitHub repository first.");
+  }
+  if (!deps.publish) throw new SiteInputError("Publishing to GitHub isn't set up here yet.");
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    const workspace = new SiteWorkspace(tenant, siteId);
+    const version = await workspace.latestVersion();
+    if (!version) throw new SiteInputError("This site has no saved version to publish yet.");
+    const files = await workspace.versionFiles(version.id);
+    const hook = publishHook(deps.db, deps.publish, client, siteId, deps.locusUrl);
+    let published: Awaited<ReturnType<VersionSavedHook>>;
+    try {
+      published = await hook(version, files);
+    } catch (error) {
+      if (error instanceof PublishError) throw new SiteInputError(error.message);
+      throw error;
+    }
+    if (!published?.commitSha) {
+      throw new SiteInputError("Give the site a GitHub repository first.");
+    }
+    await workspace.setCommitSha(version.id, published.commitSha);
+    return { version: version.number, commitSha: published.commitSha };
+  } finally {
+    release();
+  }
+}
+
 // One pooled connection per client database, shared by every builder in the process. It is
 // replaced (with a freshly minted token) before the token's hour is up, and a replaced or
 // closed connection is closed only once no call is still using it.
