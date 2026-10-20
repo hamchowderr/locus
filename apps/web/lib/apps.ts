@@ -1,5 +1,5 @@
 /**
- * The Connections page's logic: which apps a client has connected (Gmail, Slack...), and
+ * The Apps page's logic: which apps a client has connected (Gmail, Slack...), and
  * connecting or disconnecting them through Composio. The chat uses the same connections, since
  * both name the client's Composio user with `appUserId`.
  *
