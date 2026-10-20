@@ -33,6 +33,11 @@ export function openTenantDb(url: string, authToken?: string): TenantDb {
   return drizzle(client, { schema: tenantSchema });
 }
 
+/** One client's database over a connection already open with that client's own token. */
+export function tenantDbOver(client: Client): TenantDb {
+  return drizzle(client, { schema: tenantSchema });
+}
+
 /**
  * The control database is one database, so Drizzle's own migrator is enough for it. `folder`
  * is another set of control migrations, e.g. `main`'s from `downloadControlMigrations`.
