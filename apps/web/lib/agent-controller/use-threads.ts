@@ -28,6 +28,8 @@ export type ThreadItem = {
    */
   parentThreadId?: string;
   status?: WorkThreadStatus;
+  /** A site's own conversation (its chat tags it): the site it is about. */
+  siteId?: string;
 };
 
 export type WorkThreadStatus = 'working' | 'needs_you' | 'done' | 'failed' | 'stopped';
