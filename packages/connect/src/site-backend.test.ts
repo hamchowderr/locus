@@ -411,6 +411,21 @@ describe("publishing a site with a database", () => {
     expect(await ensureSiteBackendEnv(release(), owner, { siteId: SITE })).toEqual([]);
     expect(calls.map((c) => c.method)).toEqual(["GET"]);
 
+    // Once Locus has file storage, the next publish adds the site's files key, and only that.
+    calls = [];
+    const withFiles = { ...release(), siteFilesKey: (id: string) => `key-for-${id}` };
+    expect(await ensureSiteBackendEnv(withFiles, owner, { siteId: SITE })).toEqual([
+      "SITE_FILES_KEY",
+    ]);
+    expect(calls.find((c) => c.method === "POST")?.body).toEqual([
+      {
+        key: "SITE_FILES_KEY",
+        value: `key-for-${SITE}`,
+        type: "sensitive",
+        target: ["production"],
+      },
+    ]);
+
     // Another client's staff can't reach it.
     const other = await authorizeClient(db, ctx("owner"), "client-2");
     expect(await ensureSiteBackendEnv(release(), other, { siteId: SITE })).toEqual([]);
