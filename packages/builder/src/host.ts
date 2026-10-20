@@ -909,11 +909,12 @@ export async function createClientSite(
  * refused: its copy may be live (on `*.vercel.app` or a domain added on Vercel), and its forms
  * would stop reaching the CRM with no way to point them at a new site. Unlinking the project
  * first (`unlinkHostProject`) is the owner's deliberate step.
- * The site's `site.create` entry stays, so deleting doesn't give back plan allowance. The site's sandbox is not removed yet: no one can reach it once the row
- * is gone, and Vercel stops it when its timeout ends.
+ * The site's `site.create` entry stays, so deleting doesn't give back plan allowance. Its
+ * sandbox is deleted last, best effort (`RuntimeProvider.destroy`): no one can reach it once the
+ * row is gone, and one left behind only stops when its timeout ends.
  */
 export async function deleteClientSite(
-  deps: Pick<SiteBuilderDeps, "db" | "openClientDb">,
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb"> & Partial<Pick<SiteBuilderDeps, "runtimes">>,
   ctx: SessionContext,
   client: AuthorizedClient,
   siteId: string,
@@ -1004,6 +1005,11 @@ export async function deleteClientSite(
     action: "site.delete",
     detail: { siteId },
   });
+  try {
+    await deps.runtimes?.().destroy?.(siteRuntimeKey(client, siteId));
+  } catch (error) {
+    console.error("The deleted site's sandbox wasn't removed", { siteId, error });
+  }
 }
 
 const isBusy = (error: unknown) =>
