@@ -28,8 +28,8 @@ export interface NewSiteDesign {
   pages?: string[];
   /** A website to take after. */
   referenceUrl?: string;
-  /** A screenshot to take after. */
-  screenshot?: { bytes: Uint8Array; mediaType: string } | null;
+  /** A screenshot to take after. Its type is read from its bytes; `mediaType` is only a claim. */
+  screenshot?: { bytes: Uint8Array; mediaType?: string } | null;
 }
 
 /** A design answer the form can't use, in words for the person. */
@@ -42,17 +42,60 @@ export class DesignInputError extends Error {
 
 const PAGE_OPTIONS = new Set(DESIGN_QUESTIONS.find((q) => q.id === "pages")?.options ?? []);
 
-/** Whether the bytes really are the image type they claim, from their first bytes. */
-function looksLike(bytes: Uint8Array, mediaType: keyof typeof SCREENSHOT_TYPES): boolean {
+/** The longest side a reference screenshot may have: models refuse larger images. */
+export const MAX_SCREENSHOT_SIDE = 8000;
+
+type ImageInfo = { mediaType: keyof typeof SCREENSHOT_TYPES; width: number; height: number };
+
+/**
+ * An image's real type and size from its first bytes (PNG, JPEG or WebP), whatever the browser
+ * said it was, or null for anything else.
+ */
+export function imageInfo(bytes: Uint8Array): ImageInfo | null {
   const ascii = (from: number, to: number) => String.fromCharCode(...bytes.subarray(from, to));
-  switch (mediaType) {
-    case "image/png":
-      return bytes[0] === 0x89 && ascii(1, 4) === "PNG";
-    case "image/jpeg":
-      return bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-    case "image/webp":
-      return ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP";
+  const u16 = (at: number) => ((bytes[at] ?? 0) << 8) | (bytes[at + 1] ?? 0);
+  const le16 = (at: number) => (bytes[at] ?? 0) | ((bytes[at + 1] ?? 0) << 8);
+  const le24 = (at: number) => le16(at) | ((bytes[at + 2] ?? 0) << 16);
+  const b = (at: number) => bytes[at] ?? 0;
+  if (bytes.length >= 24 && b(0) === 0x89 && ascii(1, 4) === "PNG" && ascii(12, 16) === "IHDR") {
+    return {
+      mediaType: "image/png",
+      width: u16(16) * 65536 + u16(18),
+      height: u16(20) * 65536 + u16(22),
+    };
   }
+  if (b(0) === 0xff && b(1) === 0xd8 && b(2) === 0xff) {
+    // Walk the segments to the frame header (SOF0-SOF15, except DHT, JPG and DAC).
+    let at = 2;
+    while (at + 9 < bytes.length) {
+      if (b(at) !== 0xff) return null;
+      const marker = b(at + 1);
+      if (marker === 0xff) {
+        at++;
+        continue;
+      }
+      if (marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker)) {
+        return { mediaType: "image/jpeg", width: u16(at + 7), height: u16(at + 5) };
+      }
+      at += 2 + u16(at + 2);
+    }
+    return null;
+  }
+  if (bytes.length >= 30 && ascii(0, 4) === "RIFF" && ascii(8, 12) === "WEBP") {
+    switch (ascii(12, 16)) {
+      case "VP8 ":
+        return { mediaType: "image/webp", width: le16(26) & 0x3fff, height: le16(28) & 0x3fff };
+      case "VP8L":
+        return {
+          mediaType: "image/webp",
+          width: 1 + (((b(22) & 0x3f) << 8) | b(21)),
+          height: 1 + (((b(24) & 0x0f) << 10) | (b(23) << 2) | ((b(22) & 0xc0) >> 6)),
+        };
+      case "VP8X":
+        return { mediaType: "image/webp", width: 1 + le24(24), height: 1 + le24(27) };
+    }
+  }
+  return null;
 }
 
 const trimmed = (value: string | undefined, max: number, label: string) => {
@@ -79,12 +122,14 @@ export function designFromForm(input: NewSiteDesign): {
   const audience = trimmed(input.audience, 500, "who the site is for");
   if (audience) brief.audience = audience;
   if (input.palette) {
-    const palette = PALETTE_PRESETS[input.palette];
+    const palette = Object.hasOwn(PALETTE_PRESETS, input.palette)
+      ? PALETTE_PRESETS[input.palette]
+      : undefined;
     if (!palette) throw new DesignInputError("Pick one of the colour choices.");
     brief.palette = palette;
   }
   if (input.fonts) {
-    const fonts = FONT_PRESETS[input.fonts];
+    const fonts = Object.hasOwn(FONT_PRESETS, input.fonts) ? FONT_PRESETS[input.fonts] : undefined;
     if (!fonts) throw new DesignInputError("Pick one of the lettering choices.");
     brief.fonts = fonts;
   }
@@ -106,7 +151,8 @@ export function designFromForm(input: NewSiteDesign): {
   if (url) {
     let parsed: URL | null = null;
     try {
-      parsed = new URL(/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : `https://${url}`);
+      // "example.com:8080" has no scheme; only "something://" does.
+      parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(url) ? url : `https://${url}`);
     } catch {
       parsed = null;
     }
@@ -117,17 +163,22 @@ export function designFromForm(input: NewSiteDesign): {
     references.push({ kind: "url", url: parsed.toString(), note: "A site the person likes" });
   }
   if (input.screenshot && input.screenshot.bytes.byteLength > 0) {
-    const { bytes, mediaType } = input.screenshot;
-    const type = mediaType as keyof typeof SCREENSHOT_TYPES;
-    if (!(type in SCREENSHOT_TYPES) || !looksLike(bytes, type)) {
-      throw new DesignInputError("The screenshot has to be a PNG, JPEG or WebP image.");
-    }
+    // The bytes decide the type; what the browser claimed is ignored.
+    const { bytes } = input.screenshot;
+    const info = imageInfo(bytes);
+    if (!info) throw new DesignInputError("The screenshot has to be a PNG, JPEG or WebP image.");
     if (bytes.byteLength > MAX_SCREENSHOT_BYTES) {
       throw new DesignInputError(
         `The screenshot is too big. Keep it under ${MAX_SCREENSHOT_BYTES / 1024 / 1024} MB.`,
       );
     }
-    const path = `${REFERENCE_FOLDER}/screenshot-1.${SCREENSHOT_TYPES[type]}`;
+    if (Math.max(info.width, info.height) > MAX_SCREENSHOT_SIDE) {
+      throw new DesignInputError(
+        `The screenshot is ${info.width} × ${info.height} pixels. Crop it to at most ` +
+          `${MAX_SCREENSHOT_SIDE} pixels on each side.`,
+      );
+    }
+    const path = `${REFERENCE_FOLDER}/screenshot-1.${SCREENSHOT_TYPES[info.mediaType]}`;
     files.push({ path, content: bytes });
     references.push({ kind: "screenshot", path, note: "A screenshot the person likes" });
   }

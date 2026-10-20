@@ -699,7 +699,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       }
       return { path, mediaType, data: Buffer.from(content).toString("base64") };
     }),
-    // The model sees the picture itself; the base64 text would only cost tokens.
+    // The model sees the picture itself; the base64 text would only cost tokens. Memory keeps
+    // neither once the run ends (the harness stubs it), so a later turn looks again.
     toModelOutput: (raw: unknown) => {
       const output = raw as { path: string; mediaType: string; data: string } | { error: string };
       return "error" in output
@@ -708,11 +709,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
             type: "content",
             value: [
               { type: "text", text: `Reference screenshot ${output.path}:` },
-              {
-                type: "file",
-                mediaType: output.mediaType,
-                data: { type: "data", data: output.data },
-              },
+              // Mastra's own image part; it becomes what each model provider expects.
+              { type: "image-data", data: output.data, mediaType: output.mediaType },
             ],
           };
     },
