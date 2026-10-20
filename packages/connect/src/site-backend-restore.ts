@@ -13,14 +13,14 @@ import {
   TursoError,
 } from "@locus/db";
 import { site, siteBackend, siteBackendRestore } from "@locus/db/control";
-import { and, eq, isNull, lt, or } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import {
-  BUSY,
   clientSite,
+  holdSite,
+  letGo,
   projectEnv,
   restoreOf,
-  type SiteBackendRow,
   type SiteReleaseDeps,
   siteBackendOf,
   siteProjectId,
@@ -36,16 +36,14 @@ import { vercel } from "./vercel-api.ts";
 // restore in place), moves the live site onto that one, and keeps the database it replaced,
 // so the restore can be undone. Only the latest replaced database is kept.
 //
-// One restore or undo runs at a time per site, and publishing waits for it (`busy_until`).
+// One restore, undo, publish or removal changes a site's database at a time (`holdSite`).
 // The live site is moved first: its database settings change and production is deployed again.
-// Only once that worked does the registry row move, in the same write as the restore record.
-// A database the site stops using is deleted later, not at once: the deployment still live
-// keeps using it until the new one is ready.
+// Only once that worked does the registry row move, in the same write as the restore record,
+// and only while the hold is still this one. A database the site stops using is deleted later,
+// not at once: the deployment still live keeps using it until a newer one is ready.
 
 /** How far back a site's database can be restored: what Turso's free plan keeps. */
 export const SITE_RESTORE_WINDOW_MS = 24 * 3_600_000;
-/** How long a restore or undo may hold the site before another can start. */
-const LOCK_MS = 10 * 60_000;
 /** How long a database the site stopped using is kept for the deployment still using it. */
 const RETIRE_AFTER_MS = 2 * 3_600_000;
 
@@ -83,46 +81,6 @@ export async function siteRestoreState(
         ? { restoredTo: restore.restoredTo, restoredAt: restore.restoredAt }
         : null,
   };
-}
-
-/** Takes the site for one restore or undo, or refuses while another (or a publish) has it. */
-async function claim(db: ControlDb, backend: SiteBackendRow, now: number) {
-  await db
-    .insert(siteBackendRestore)
-    .values({
-      siteId: backend.siteId,
-      locationId: backend.locationId,
-      currentSince: backend.createdAt,
-    })
-    .onConflictDoNothing();
-  const [claimed] = await db
-    .update(siteBackendRestore)
-    .set({ busyUntil: new Date(now + LOCK_MS) })
-    .where(
-      and(
-        eq(siteBackendRestore.siteId, backend.siteId),
-        or(isNull(siteBackendRestore.busyUntil), lt(siteBackendRestore.busyUntil, new Date(now))),
-      ),
-    )
-    .returning();
-  if (!claimed) throw new ConnectError(BUSY);
-  // Read again under the claim: another restore may have moved the site just before.
-  const [current] = await db
-    .select()
-    .from(siteBackend)
-    .where(eq(siteBackend.siteId, backend.siteId));
-  if (!current) {
-    await release(db, backend.siteId);
-    throw new ConnectError("This site doesn't have a database.");
-  }
-  return { restore: claimed, backend: current };
-}
-
-async function release(db: ControlDb, siteId: string) {
-  await db
-    .update(siteBackendRestore)
-    .set({ busyUntil: null })
-    .where(eq(siteBackendRestore.siteId, siteId));
 }
 
 /** The migrations a database has applied, by name. */
@@ -219,6 +177,56 @@ async function deployProduction(
   }
 }
 
+/** The migrations `from` has that `to` lacks: the live code needs them. */
+async function migrationsMissing(provisioner: TenantProvisioner, from: Target, to: Target) {
+  const has = await appliedMigrations(provisioner, to);
+  return [...(await appliedMigrations(provisioner, from))].filter((name) => !has.has(name));
+}
+
+/** Writes the swap, unless the hold ran out and someone else took the site meanwhile. */
+async function commitSwap(
+  db: ControlDb,
+  siteId: string,
+  until: Date,
+  target: Target,
+  record: Partial<typeof siteBackendRestore.$inferInsert>,
+) {
+  const held = and(eq(siteBackendRestore.siteId, siteId), eq(siteBackendRestore.busyUntil, until));
+  const [recorded] = await db.batch([
+    db
+      .update(siteBackendRestore)
+      .set(record)
+      .where(held)
+      .returning({ siteId: siteBackendRestore.siteId }),
+    db
+      .update(siteBackend)
+      .set(target)
+      .where(
+        and(
+          eq(siteBackend.siteId, siteId),
+          sql`exists (select 1 from ${siteBackendRestore} where ${held})`,
+        ),
+      ),
+  ]);
+  if (recorded.length === 0) {
+    throw new ConnectError(
+      "The restore took too long and was stopped. Check the site, then try again.",
+    );
+  }
+}
+
+/** Keeps a database the live site may be using until a newer deployment is ready. */
+async function retire(db: ControlDb, siteId: string, dbName: string, now: number) {
+  const restore = await restoreOf(db, siteId);
+  if (!restore) return;
+  await db
+    .update(siteBackendRestore)
+    .set({
+      retired: [...restore.retired, { dbName, retiredAt: now, deleteAfter: now + RETIRE_AFTER_MS }],
+    })
+    .where(eq(siteBackendRestore.siteId, siteId));
+}
+
 function needsProvisioner(deps: SiteRestoreDeps) {
   if (!deps.provisioner) {
     throw new ConnectError("This site's database isn't set up on this deployment yet.");
@@ -252,7 +260,7 @@ export async function restoreSiteBackend(
     throw new ConnectError("Choose a moment within the times shown.");
   }
 
-  const { restore, backend } = await claim(deps.db, found, now);
+  const { restore, backend, until } = await holdSite(deps.db, found, now);
   try {
     if (to < (restore.currentSince ?? backend.createdAt).getTime()) {
       throw new ConnectError("Choose a moment within the times shown.");
@@ -273,10 +281,7 @@ export async function restoreSiteBackend(
     let redeployed: boolean;
     try {
       // The live site's code expects the tables its published versions added.
-      const before = await appliedMigrations(provisioner, copy);
-      const missing = [...(await appliedMigrations(provisioner, backend))].filter(
-        (name) => !before.has(name),
-      );
+      const missing = await migrationsMissing(provisioner, backend, copy);
       if (missing.length > 0) {
         throw new ConnectError(
           `At that moment the database didn't have changes the live site needs (${missing.join(", ")}). Choose a later time.`,
@@ -290,44 +295,50 @@ export async function restoreSiteBackend(
         backend,
       );
     } catch (error) {
-      await provisioner.destroy(made.dbName);
+      // Settings that couldn't be put back may name the copy: it stays until they're fixed.
+      if ((await restoreOf(deps.db, backend.siteId))?.envStale) {
+        await retire(deps.db, backend.siteId, made.dbName, deps.now?.() ?? Date.now());
+      } else {
+        await provisioner.destroy(made.dbName);
+      }
       throw error;
     }
 
     // The database replaced before this one is no longer kept for undo; the one just replaced
     // is, and nothing is deleted while a deployment may still use it.
+    const moved = deps.now?.() ?? Date.now();
     const retired = [...restore.retired];
     if (restore.keptDbName) {
-      retired.push({ dbName: restore.keptDbName, deleteAfter: now + RETIRE_AFTER_MS });
+      retired.push({
+        dbName: restore.keptDbName,
+        retiredAt: moved,
+        deleteAfter: moved + RETIRE_AFTER_MS,
+      });
     }
-    await deps.db.batch([
-      deps.db
-        .update(siteBackend)
-        .set({ tursoDbName: copy.tursoDbName, tursoDbHostname: copy.tursoDbHostname })
-        .where(eq(siteBackend.siteId, backend.siteId)),
-      deps.db
-        .update(siteBackendRestore)
-        .set({
-          currentSince: new Date(now),
-          keptDbName: backend.tursoDbName,
-          keptDbHostname: backend.tursoDbHostname,
-          keptSince: restore.currentSince ?? backend.createdAt,
-          restoredTo: input.to,
-          restoredAt: new Date(now),
-          retired,
-        })
-        .where(eq(siteBackendRestore.siteId, backend.siteId)),
-    ]);
+    try {
+      await commitSwap(deps.db, backend.siteId, until, copy, {
+        currentSince: new Date(now),
+        keptDbName: backend.tursoDbName,
+        keptDbHostname: backend.tursoDbHostname,
+        keptSince: restore.currentSince ?? backend.createdAt,
+        restoredTo: input.to,
+        restoredAt: new Date(now),
+        retired,
+      });
+    } catch (error) {
+      await retire(deps.db, backend.siteId, copy.tursoDbName, moved);
+      throw error;
+    }
     await audit(deps.db, ctx, client, "site.backend.restore", {
       siteId: backend.siteId,
       restoredTo: input.to.toISOString(),
       from: backend.tursoDbName,
       to: copy.tursoDbName,
     });
-    await sweepRetired({ db: deps.db, provisioner }, { ...backend, ...copy }, now);
+    await sweepRetired({ ...deps, provisioner }, client, { ...backend, ...copy }, moved);
     return { redeployed };
   } finally {
-    await release(deps.db, backend.siteId);
+    await letGo(deps.db, backend.siteId, until);
   }
 }
 
@@ -348,7 +359,7 @@ export async function undoSiteBackendRestore(
   if (!found) throw new ConnectError("There's no restore to undo.");
   const provisioner = needsProvisioner(deps);
   const now = deps.now?.() ?? Date.now();
-  const { restore, backend } = await claim(deps.db, found, now);
+  const { restore, backend, until } = await holdSite(deps.db, found, now);
   try {
     if (
       !restore.keptDbName ||
@@ -358,6 +369,13 @@ export async function undoSiteBackendRestore(
       throw new ConnectError("There's no restore to undo.");
     }
     const kept = { tursoDbName: restore.keptDbName, tursoDbHostname: restore.keptDbHostname };
+    // A publish since the restore may have changed the database in ways the older one lacks.
+    const missing = await migrationsMissing(provisioner, backend, kept);
+    if (missing.length > 0) {
+      throw new ConnectError(
+        `A publish since the restore changed the database (${missing.join(", ")}), and the database from before doesn't have those changes, so the restore can't be undone.`,
+      );
+    }
     const redeployed = await moveLiveSite(
       { ...deps, provisioner },
       client,
@@ -365,32 +383,27 @@ export async function undoSiteBackendRestore(
       kept,
       backend,
     );
-    await deps.db.batch([
-      deps.db.update(siteBackend).set(kept).where(eq(siteBackend.siteId, backend.siteId)),
-      deps.db
-        .update(siteBackendRestore)
-        .set({
-          currentSince: restore.keptSince ?? backend.createdAt,
-          keptDbName: null,
-          keptDbHostname: null,
-          keptSince: null,
-          restoredTo: null,
-          restoredAt: null,
-          retired: [
-            ...restore.retired,
-            { dbName: backend.tursoDbName, deleteAfter: now + RETIRE_AFTER_MS },
-          ],
-        })
-        .where(eq(siteBackendRestore.siteId, backend.siteId)),
-    ]);
+    const moved = deps.now?.() ?? Date.now();
+    await commitSwap(deps.db, backend.siteId, until, kept, {
+      currentSince: restore.keptSince ?? backend.createdAt,
+      keptDbName: null,
+      keptDbHostname: null,
+      keptSince: null,
+      restoredTo: null,
+      restoredAt: null,
+      retired: [
+        ...restore.retired,
+        { dbName: backend.tursoDbName, retiredAt: moved, deleteAfter: moved + RETIRE_AFTER_MS },
+      ],
+    });
     await audit(deps.db, ctx, client, "site.backend.restore.undo", {
       siteId: backend.siteId,
       from: backend.tursoDbName,
       to: kept.tursoDbName,
     });
-    await sweepRetired({ db: deps.db, provisioner }, { ...backend, ...kept }, now);
+    await sweepRetired({ ...deps, provisioner }, client, { ...backend, ...kept }, moved);
     return { redeployed };
   } finally {
-    await release(deps.db, backend.siteId);
+    await letGo(deps.db, backend.siteId, until);
   }
 }

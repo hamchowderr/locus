@@ -23,7 +23,7 @@ import {
   TursoError,
 } from "@locus/db";
 import { auditLog, site, siteBackend, siteBackendRestore } from "@locus/db/control";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { audit } from "./sites.ts";
 import { hostGrant, refused, type VercelCallDeps, vercel } from "./vercel-api.ts";
@@ -168,38 +168,36 @@ export async function removeSiteBackend(
 ): Promise<void> {
   assertAuthorizedClient(client);
   await requireAgencyManager(deps.db, ctx);
-  const row = await siteBackendOf(deps.db, client, input.siteId);
-  if (!row) return;
-  const projectId = await siteProjectId(deps.db, client, row.siteId);
-  if (projectId) {
-    if (!deps.secrets) throw new ConnectError("Vercel isn't set up on this deployment yet.");
-    const env = await projectEnv({ ...deps, secrets: deps.secrets }, client, projectId);
-    for (const variable of env.ours) {
-      const gone = await vercel(
-        env.deps,
-        env.grant,
-        "DELETE",
-        `/v9/projects/${encodeURIComponent(projectId)}/env/${encodeURIComponent(variable.id)}`,
-      );
-      if (!gone.ok && gone.status !== 404) {
-        throw refused(gone, "Vercel didn't remove the site's database settings. Try again.");
+  const found = await siteBackendOf(deps.db, client, input.siteId);
+  if (!found) return;
+  // Nothing else may change the site's database meanwhile; the hold goes with its record.
+  const { restore, backend: row, until } = await holdSite(deps.db, found, Date.now());
+  try {
+    const projectId = await siteProjectId(deps.db, client, row.siteId);
+    if (projectId) {
+      if (!deps.secrets) throw new ConnectError("Vercel isn't set up on this deployment yet.");
+      const env = await projectEnv({ ...deps, secrets: deps.secrets }, client, projectId);
+      for (const variable of env.ours) {
+        const gone = await vercel(
+          env.deps,
+          env.grant,
+          "DELETE",
+          `/v9/projects/${encodeURIComponent(projectId)}/env/${encodeURIComponent(variable.id)}`,
+        );
+        if (!gone.ok && gone.status !== 404) {
+          throw refused(gone, "Vercel didn't remove the site's database settings. Try again.");
+        }
       }
     }
+    // The database a restore replaced, kept for undo, goes with it.
+    for (const name of [restore.keptDbName, ...restore.retired.map((r) => r.dbName)]) {
+      if (name && name !== row.tursoDbName) await deps.provisioner.destroy(name);
+    }
+  } catch (error) {
+    await letGo(deps.db, row.siteId, until);
+    throw error;
   }
-  // The database a restore replaced, kept for undo, goes with it.
-  const [restore] = await deps.db
-    .select()
-    .from(siteBackendRestore)
-    .where(eq(siteBackendRestore.siteId, row.siteId));
-  if (restore?.busyUntil && restore.busyUntil.getTime() > Date.now()) {
-    throw new ConnectError(BUSY);
-  }
-  for (const name of [restore?.keptDbName, ...(restore?.retired ?? []).map((r) => r.dbName)]) {
-    if (name && name !== row.tursoDbName) await deps.provisioner.destroy(name);
-  }
-  if (restore) {
-    await deps.db.delete(siteBackendRestore).where(eq(siteBackendRestore.siteId, row.siteId));
-  }
+  await deps.db.delete(siteBackendRestore).where(eq(siteBackendRestore.siteId, row.siteId));
   await deps.provisioner.destroy(row.tursoDbName);
   await deps.db.delete(siteBackend).where(eq(siteBackend.siteId, row.siteId));
   await audit(deps.db, ctx, client, "site.backend.remove", {
@@ -329,7 +327,8 @@ export interface SiteReleaseDeps extends VercelCallDeps {
 const MIGRATE_TTL = "10m";
 
 const NO_PROVISIONER = "This site's database isn't set up on this deployment yet.";
-export const BUSY = "The site's database is being restored right now. Try again in a minute.";
+export const BUSY =
+  "The site's database is being changed right now (a restore or a publish). Try again in a minute.";
 const NOT_MADE = "Locus couldn't make the site's database. Try again.";
 const REMOVED =
   "This site's database was removed, so Locus won't make a new one on its own. Take the " +
@@ -355,24 +354,42 @@ export async function migrateSiteBackend(
   } catch (error) {
     throw migrationRefusal(error);
   }
-  let row = await siteBackendOf(deps.db, client, input.siteId);
-  if (!row && migrations.length === 0) return null;
+  const found = await siteBackendOf(deps.db, client, input.siteId);
+  if (!found && migrations.length === 0) return null;
   if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
-  if (row) {
-    // A restore swaps the site's database: a publish waits for it to finish.
-    const restore = await restoreOf(deps.db, row.siteId);
-    if (restore?.busyUntil && restore.busyUntil.getTime() > Date.now()) {
-      throw new ConnectError(BUSY);
-    }
-    await sweepRetired({ db: deps.db, provisioner: deps.provisioner }, row, Date.now());
+  const release = { ...deps, provisioner: deps.provisioner };
+  if (!found) return applyMigrations(release, client, input.siteId, null, migrations);
+  // A restore swaps the site's database: the site is held while its changes apply, so a
+  // restore can't move it part way, and a publish waits for a restore to finish.
+  const held = await holdSite(deps.db, found, Date.now());
+  try {
+    await sweepRetired(
+      { ...deps, provisioner: deps.provisioner },
+      client,
+      held.backend,
+      Date.now(),
+    );
+    return await applyMigrations(release, client, input.siteId, held.backend, migrations);
+  } finally {
+    await letGo(deps.db, found.siteId, held.until);
   }
+}
+
+async function applyMigrations(
+  deps: SiteReleaseDeps & { provisioner: TenantProvisioner },
+  client: AuthorizedClient,
+  siteId: string,
+  existing: SiteBackendRow | null,
+  migrations: ReturnType<typeof siteMigrationsIn>,
+): Promise<{ applied: string[] }> {
+  let row = existing;
   if (!row) {
     // Removing a site's database is an owner's choice; a later save doesn't quietly undo it.
-    if (await backendRemoved(deps.db, client, input.siteId)) throw new ConnectError(REMOVED);
+    if (await backendRemoved(deps.db, client, siteId)) throw new ConnectError(REMOVED);
     const provisioned = await provisionSiteBackend(
       { db: deps.db, provisioner: deps.provisioner },
       client,
-      input.siteId,
+      siteId,
     );
     row = provisioned.row;
     if (provisioned.created) {
@@ -496,8 +513,9 @@ export async function ensureSiteBackendEnv(
   if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
   const provisioner = deps.provisioner;
 
-  const env = await projectEnv(deps, client, projectId);
+  let env = await projectEnv(deps, client, projectId);
   const restore = await restoreOf(deps.db, row.siteId);
+  const rewritten: string[] = [];
   if (restore?.envStale) {
     // A restore that failed part way may have left them naming another database.
     await writeSiteDatabaseEnv(deps, env, projectId, provisioner, row);
@@ -505,7 +523,8 @@ export async function ensureSiteBackendEnv(
       .update(siteBackendRestore)
       .set({ envStale: false })
       .where(eq(siteBackendRestore.siteId, row.siteId));
-    return [SITE_DATABASE_ENV.url, SITE_DATABASE_ENV.token];
+    rewritten.push(SITE_DATABASE_ENV.url, SITE_DATABASE_ENV.token);
+    env = await projectEnv(deps, client, projectId);
   }
   const present = new Set(env.ours.filter(servesProduction).map((v) => v.key));
   const values: Record<string, () => Promise<string>> = {
@@ -516,7 +535,7 @@ export async function ensureSiteBackendEnv(
   const filesKey = deps.siteFilesKey;
   if (filesKey) values[SITE_DATABASE_ENV.filesKey] = async () => filesKey(row.siteId);
   const missing = Object.keys(values).filter((key) => !present.has(key));
-  if (missing.length === 0) return [];
+  if (missing.length === 0) return rewritten;
   const body = [];
   for (const key of missing) {
     body.push({
@@ -534,7 +553,7 @@ export async function ensureSiteBackendEnv(
   if (!added.ok || (added.body.failed?.length ?? 0) > 0) {
     throw refused(added, "Vercel didn't take the site's database settings. Try again.");
   }
-  return missing;
+  return [...rewritten, ...missing];
 }
 
 /** The site's restore record, if it was ever restored. */
@@ -546,21 +565,103 @@ export async function restoreOf(db: ControlDb, siteId: string) {
   return row ?? null;
 }
 
+/** How long a restore, undo, publish or removal may hold the site before another can start. */
+const HOLD_MS = 10 * 60_000;
+
 /**
- * Deletes the databases the site stopped using once their time has passed (the deployment
- * that used them has been replaced by then). Never the one the site uses now, nor the one kept
- * for undo.
+ * Takes the site for one change to its database (a restore, an undo, a publish's migrations,
+ * its removal), or refuses while another has it. Returns the site's records read under the
+ * hold, and the hold's own expiry, which `letGo` needs: a hold that ran out and was taken by
+ * someone else is theirs.
+ */
+export async function holdSite(db: ControlDb, backend: SiteBackendRow, now: number) {
+  await db
+    .insert(siteBackendRestore)
+    .values({
+      siteId: backend.siteId,
+      locationId: backend.locationId,
+      currentSince: backend.createdAt,
+    })
+    .onConflictDoNothing();
+  const until = new Date(now + HOLD_MS);
+  const [restore] = await db
+    .update(siteBackendRestore)
+    .set({ busyUntil: until })
+    .where(
+      and(
+        eq(siteBackendRestore.siteId, backend.siteId),
+        or(isNull(siteBackendRestore.busyUntil), lt(siteBackendRestore.busyUntil, new Date(now))),
+      ),
+    )
+    .returning();
+  if (!restore) throw new ConnectError(BUSY);
+  // Read again under the hold: a restore may have moved the site just before.
+  const [current] = await db
+    .select()
+    .from(siteBackend)
+    .where(eq(siteBackend.siteId, backend.siteId));
+  if (!current) {
+    await letGo(db, backend.siteId, until);
+    throw new ConnectError("This site doesn't have a database.");
+  }
+  return { restore, backend: current, until };
+}
+
+/** Ends a hold, if it is still this one. */
+export async function letGo(db: ControlDb, siteId: string, until: Date) {
+  await db
+    .update(siteBackendRestore)
+    .set({ busyUntil: null })
+    .where(and(eq(siteBackendRestore.siteId, siteId), eq(siteBackendRestore.busyUntil, until)));
+}
+
+/** When the site's newest ready production deployment was made, or null when unknown. */
+async function liveSince(
+  deps: VercelCallDeps,
+  client: AuthorizedClient,
+  projectId: string,
+): Promise<number | null> {
+  try {
+    const grant = await hostGrant(deps, client.location.organizationId);
+    const listed = await vercel<{ deployments?: { createdAt?: number }[] }>(
+      deps,
+      grant,
+      "GET",
+      "/v6/deployments",
+      { query: { projectId, target: "production", state: "READY", limit: "1" } },
+    );
+    const createdAt = listed.ok ? listed.body.deployments?.[0]?.createdAt : undefined;
+    return typeof createdAt === "number" ? createdAt : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Deletes the databases the site stopped using, once no deployment can still be using them:
+ * their time has passed and production has been deployed (and is ready) since. A deploy that
+ * was accepted but failed to build leaves the old deployment live on its old database, which
+ * is then kept. Never the one the site uses now, nor the one kept for undo.
  */
 export async function sweepRetired(
-  deps: SiteBackendDeps,
+  deps: SiteBackendDeps & Partial<Pick<VercelCallDeps, "secrets" | "http">>,
+  client: AuthorizedClient,
   backend: SiteBackendRow,
   now: number,
 ): Promise<void> {
   const restore = await restoreOf(deps.db, backend.siteId);
   if (!restore || restore.retired.length === 0) return;
   const keep = new Set([backend.tursoDbName, restore.keptDbName]);
-  const due = restore.retired.filter((r) => r.deleteAfter <= now && !keep.has(r.dbName));
+  let due = restore.retired.filter((r) => r.deleteAfter <= now && !keep.has(r.dbName));
   if (due.length === 0) return;
+  const projectId = await siteProjectId(deps.db, client, backend.siteId);
+  if (projectId) {
+    const since = deps.secrets
+      ? await liveSince({ ...deps, secrets: deps.secrets }, client, projectId)
+      : null;
+    due = since === null ? [] : due.filter((r) => r.retiredAt < since);
+    if (due.length === 0) return;
+  }
   for (const r of due) await deps.provisioner.destroy(r.dbName);
   const gone = new Set(due.map((r) => r.dbName));
   // Written as "whatever is there now, minus what was deleted", so a concurrent change stays.

@@ -55,6 +55,10 @@ type Call = { method: string; path: string; body: unknown };
 let calls: Call[];
 type Env = { id: string; key: string; target: string[] };
 let envs: Env[];
+/** When production last finished deploying, or null while no deploy has been ready. */
+let readyAt: number | null;
+/** Runs on each Vercel call, before it is answered. */
+let onCall: (method: string, path: string) => Promise<void>;
 /** Answers 500 to the calls it matches. */
 let failing: (method: string, path: string) => boolean;
 const SITE = "6f1d2c3a-0000-4000-8000-000000000001";
@@ -72,10 +76,14 @@ function deps(): SiteRestoreDeps {
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ method, path: url.pathname, body });
+    await onCall(method, url.pathname);
     if (failing(method, url.pathname)) {
       return Response.json({ error: { message: "no" } }, { status: 500 });
     }
     if (method === "GET" && url.pathname.endsWith("/env")) return Response.json({ envs });
+    if (method === "GET" && url.pathname === "/v6/deployments") {
+      return Response.json({ deployments: readyAt === null ? [] : [{ createdAt: readyAt }] });
+    }
     if (method === "GET") {
       return Response.json({ name: "members-club", link: { productionBranch: "main" } });
     }
@@ -123,6 +131,8 @@ beforeEach(async () => {
   secrets = new MemorySecretStore();
   calls = [];
   failing = () => false;
+  readyAt = null;
+  onCall = async () => {};
   envs = ["SITE_DATABASE_URL", "SITE_DATABASE_TOKEN", "SITE_AUTH_SECRET"].map(live);
   clock = Date.now();
   const now = new Date(clock);
@@ -320,9 +330,16 @@ describe("restoring a site's database", () => {
       undoSiteBackendRestore(deps(), ctx("owner"), owner, { siteId: SITE }),
     ).rejects.toThrow("There's no restore to undo.");
 
-    // Hours later, the next publish deletes them; never the one the site uses.
+    // Hours later, but the deploys were accepted and never finished: the old deployment is
+    // still live on its database, so nothing is deleted.
     clock += 3 * 3_600_000;
     vi.setSystemTime(clock);
+    await migrateSiteBackend(deps(), owner, { siteId: SITE, files: [] });
+    expect(await provisioner.findDatabase(row.tursoDbName)).not.toBeNull();
+    expect(await provisioner.findDatabase(second)).not.toBeNull();
+
+    // Once a newer deploy is ready, the next publish deletes them; never the one the site uses.
+    readyAt = clock - 60_000;
     await migrateSiteBackend(deps(), owner, { siteId: SITE, files: [] });
     vi.useRealTimers();
     expect(await provisioner.findDatabase(row.tursoDbName)).toBeNull();
@@ -374,6 +391,10 @@ describe("restoring a site's database", () => {
     ).rejects.toThrow();
     expect(await current(owner)).toBe(row.tursoDbName);
     expect((await restoreRow())?.envStale).toBe(true);
+    // The settings may still name the copy, so it isn't deleted yet.
+    const copy = `${siteDbName(SITE)}-r${clock.toString(36)}`;
+    expect(await provisioner.findDatabase(copy)).not.toBeNull();
+    expect((await restoreRow())?.retired.map((r) => r.dbName)).toEqual([copy]);
 
     failing = () => false;
     calls = [];
@@ -414,6 +435,66 @@ describe("restoring a site's database", () => {
     expect(await current(owner)).toBe(row.tursoDbName);
     expect(calls).toEqual([]);
     expect(await provisioner.findDatabase(`${siteDbName(SITE)}-r${clock.toString(36)}`)).toBeNull();
+  });
+
+  it("won't undo once a publish changed the restored database", async () => {
+    const { owner, row } = await withDatabase();
+    clock += 60_000;
+    await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
+    const restored = await current(owner);
+    await migrateSiteBackend(deps(), owner, {
+      siteId: SITE,
+      files: [
+        { path: "db/migrations/0001_bookings.sql", content: "create table booking (id text);" },
+      ],
+    });
+    calls = [];
+    await expect(
+      undoSiteBackendRestore(deps(), ctx("owner"), owner, { siteId: SITE }),
+    ).rejects.toThrow(/A publish since the restore changed the database \(0001_bookings\)/);
+    expect(await current(owner)).toBe(restored);
+    expect(calls).toEqual([]);
+    expect((await restoreRow())?.keptDbName).toBe(row.tursoDbName);
+  });
+
+  it("holds the site while a publish changes its database", async () => {
+    const { owner } = await withDatabase();
+    let heldDuring: Date | null | undefined;
+    const watching = Object.create(provisioner) as LocalProvisioner;
+    watching.mintToken = async (name: string) => {
+      heldDuring = (await restoreRow())?.busyUntil;
+      return provisioner.mintToken(name);
+    };
+    await migrateSiteBackend({ ...deps(), provisioner: watching }, owner, {
+      siteId: SITE,
+      files: [
+        { path: "db/migrations/0001_bookings.sql", content: "create table booking (id text);" },
+      ],
+    });
+    expect(heldDuring).toBeInstanceOf(Date);
+    expect((await restoreRow())?.busyUntil).toBeNull();
+  });
+
+  it("writes nothing when its hold ran out and someone else took the site", async () => {
+    const { owner, row } = await withDatabase();
+    clock += 60_000;
+    // While Vercel is slow, the hold runs out and another change takes the site.
+    onCall = async (method, path) => {
+      if (method === "POST" && path === "/v13/deployments") {
+        await db.update(siteBackendRestore).set({ busyUntil: new Date(Date.now() + 600_000) });
+      }
+    };
+    await expect(
+      restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) }),
+    ).rejects.toThrow("The restore took too long");
+    expect(await current(owner)).toBe(row.tursoDbName);
+    const left = await restoreRow();
+    // Its hold isn't released for it, and its copy waits to be deleted safely.
+    expect(left?.busyUntil).not.toBeNull();
+    expect(left?.keptDbName).toBeNull();
+    expect(left?.retired.map((r) => r.dbName)).toEqual([
+      `${siteDbName(SITE)}-r${clock.toString(36)}`,
+    ]);
   });
 
   it("deletes kept and retired databases with the site's database, and when the client leaves", async () => {
