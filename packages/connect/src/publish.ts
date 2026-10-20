@@ -729,8 +729,16 @@ export async function ensureSiteDeployment(
     repoFullName: row.repoFullName,
   });
 
-  // An app-style site's project needs its database settings before its first build.
-  await ensureSiteBackendEnv(deps, client, { siteId: row.id });
+  // An app-style site's project needs its database settings before its first build. Without
+  // them the first build is skipped too; the next publish adds both.
+  try {
+    await ensureSiteBackendEnv(deps, client, { siteId: row.id });
+  } catch (error) {
+    if (!(error instanceof ConnectError)) throw error;
+    throw new ConnectError(
+      `The site's Vercel project is made, but its database settings aren't on it yet: ${error.message} Publish the site again to finish.`,
+    );
+  }
 
   if (row.status === "pushed") {
     // A project made after the first commit has nothing to build until the next push. A refusal
