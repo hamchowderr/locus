@@ -277,16 +277,15 @@ export default async function Sites({
                 </button>
               </form>
             )}
-            {manager && !s.customDomain && (
+            {manager && !s.hostProjectId && !s.customDomain && (
               <details className="text-sm">
                 <summary className="cursor-pointer text-neutral-600">Delete this site</summary>
                 <form action={deleteSite} className="space-y-2 pt-2">
                   <input type="hidden" name="siteId" value={s.id} />
-                  {(s.repoFullName || s.hostProjectId) && (
+                  {s.repoFullName && (
                     <p className="text-neutral-600">
-                      Its GitHub repository and Vercel project stay where they are; delete them
-                      there if you no longer need them. Forms on the published copy stop sending
-                      leads to the CRM.
+                      Its GitHub repository {s.repoFullName} stays; delete it on GitHub if you no
+                      longer need it.
                     </p>
                   )}
                   <label className="flex items-center gap-2">

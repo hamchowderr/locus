@@ -424,8 +424,8 @@ export async function createSite(form: FormData) {
 
 /**
  * Deletes one of the active client's sites, with everything Locus keeps for it; its repository
- * and Vercel project stay. Owners and admins only; the client is the session's, and a site on a
- * custom domain is refused (`deleteClientSite`).
+ * stays. Owners and admins only; the client is the session's, and a site with a Vercel project
+ * or domain is refused (`deleteClientSite`).
  */
 export async function deleteSite(form: FormData) {
   const current = await currentSession();
