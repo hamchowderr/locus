@@ -376,6 +376,90 @@ describe("a site's domain", () => {
     expect(again.redirect?.domain).toBe("acme.example");
   });
 
+  it("keeps the domain's own status when Vercel fails on its partner", async () => {
+    const { client, siteId } = await linkedSite();
+    const fake = fakeVercel({
+      "POST /v10/projects/prj_stub/domains": () => [200, { name: "www.acme.com" }],
+      "GET /v9/projects/prj_stub/domains/www.acme.com": () => [
+        200,
+        { name: "www.acme.com", apexName: "acme.com", verified: true },
+      ],
+      "GET /v9/projects/prj_stub/domains/acme.com": () => [
+        500,
+        { error: { code: "internal", message: "Something broke" } },
+      ],
+      "GET /v6/domains/www.acme.com/config": () => [200, { misconfigured: false }],
+    });
+    const status = await attachSiteDomain(deps(fake.fetch), ctx("owner"), client, {
+      siteId,
+      domain: "www.acme.com",
+    });
+    expect(status).toEqual({ domain: "www.acme.com", state: "live", records: [] });
+    expect(await siteDomainStatus(deps(fake.fetch), client, siteId)).toMatchObject({
+      state: "live",
+    });
+  });
+
+  it("audits the partner it adds and removes", async () => {
+    const { client, siteId } = await linkedSite();
+    await attachSiteDomain(deps(stub), ctx("owner"), client, {
+      siteId,
+      domain: "www.acme.example",
+    });
+    await removeSiteDomain(deps(stub), ctx("owner"), client, siteId);
+    const rows = await db.select().from(auditLog).where(eq(auditLog.locationId, "client-1"));
+    const domains = rows
+      .filter((r) => r.action.startsWith("site.domain."))
+      .map((r) => [r.action, (r.detail as { domain: string }).domain]);
+    expect(domains).toEqual(
+      expect.arrayContaining([
+        ["site.domain.add", "www.acme.example"],
+        ["site.domain.add", "acme.example"],
+        ["site.domain.remove", "acme.example"],
+        ["site.domain.remove", "www.acme.example"],
+      ]),
+    );
+  });
+
+  it("removes its partner even after the domain itself left the project", async () => {
+    const { client, siteId } = await linkedSite();
+    await attachSiteDomain(deps(stub), ctx("owner"), client, {
+      siteId,
+      domain: "www.acme.example",
+    });
+    // Someone deletes www on Vercel's dashboard; the redirect to it is left pointing nowhere.
+    await stub("https://api.vercel.test/v9/projects/prj_stub/domains/www.acme.example", {
+      method: "DELETE",
+      headers: { authorization: "Bearer vercel-stub-token" },
+    });
+    await removeSiteDomain(deps(stub), ctx("owner"), client, siteId);
+    const left = await stub("https://api.vercel.test/v9/projects/prj_stub/domains/acme.example", {
+      headers: { authorization: "Bearer vercel-stub-token" },
+    });
+    expect(left.status).toBe(404);
+  });
+
+  it("won't make a domain that only redirects the site's own", async () => {
+    const { client, siteId } = await linkedSite();
+    const fake = fakeVercel({
+      "POST /v10/projects/prj_stub/domains": () => [
+        400,
+        { error: { code: "domain_already_exists", message: "Already on this project" } },
+      ],
+      "GET /v9/projects/prj_stub/domains/acme.com": () => [
+        200,
+        { name: "acme.com", apexName: "acme.com", verified: true, redirect: "www.acme.com" },
+      ],
+    });
+    await expect(
+      attachSiteDomain(deps(fake.fetch), ctx("owner"), client, { siteId, domain: "acme.com" }),
+    ).rejects.toThrow(
+      "acme.com already sends visitors to www.acme.com. Connect www.acme.com instead.",
+    );
+    const [row] = await db.select().from(site).where(eq(site.id, siteId));
+    expect(row?.customDomain).toBeNull();
+  });
+
   it("leaves a single subdomain unpaired", async () => {
     const { client, siteId } = await linkedSite();
     const added = await attachSiteDomain(deps(stub), ctx("owner"), client, {
@@ -411,7 +495,9 @@ describe("a site's domain", () => {
     });
     await expect(
       attachSiteDomain(deps(fake.fetch), ctx("owner"), client, { siteId, domain: "www.acme.com" }),
-    ).rejects.toThrow("acme.com is used by another project");
+    ).rejects.toThrow(
+      "Vercel didn't add acme.com: it's on another Vercel project or account. (acme.com is used by another project)",
+    );
   });
 
   it("never adopts or removes a partner that doesn't redirect to the site's domain", async () => {

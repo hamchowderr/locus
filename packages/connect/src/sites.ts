@@ -256,8 +256,15 @@ export async function attachSiteDomain(
       // Vercel refuses a domain that is already on this project, which is where we want it:
       // accept the refusal only if the project really has the domain.
       const path = projectPath(row.hostProjectId, `/domains/${encodeURIComponent(domain)}`);
-      const existing = await vercel(deps, grant, "GET", path);
+      const existing = await vercel<ProjectDomain>(deps, grant, "GET", path);
       if (!existing.ok) throw refused(added, "Vercel didn't add that domain. Try again.");
+      // Already there only to send visitors elsewhere: that other domain is the site's.
+      const elsewhere = existing.body.redirect;
+      if (elsewhere) {
+        throw new ConnectError(
+          `${domain} already sends visitors to ${elsewhere}. Connect ${elsewhere} instead.`,
+        );
+      }
     }
     await deps.db.update(site).set({ customDomain: domain }).where(eq(site.id, row.id));
     await audit(deps.db, ctx, client, "site.domain.add", { siteId: row.id, domain });
@@ -285,8 +292,15 @@ async function addPartner(
   projectId: string,
   domain: string,
 ): Promise<{ added?: string; refused?: ConnectError }> {
-  const partner = partnerOf(domain, await projectDomain(deps, grant, projectId, domain));
-  if (!partner || (await projectDomain(deps, grant, projectId, partner))) return {};
+  let partner: string | null;
+  try {
+    partner = partnerOf(domain, await projectDomain(deps, grant, projectId, domain));
+    if (!partner || (await projectDomain(deps, grant, projectId, partner))) return {};
+  } catch (error) {
+    // Vercel didn't answer about the pair: the domain itself is attached all the same.
+    if (error instanceof ConnectError) return { refused: error };
+    throw error;
+  }
   const added = await vercel(
     deps,
     grant,
@@ -294,6 +308,15 @@ async function addPartner(
     `/v10/projects/${encodeURIComponent(projectId)}/domains`,
     { body: { name: partner, redirect: domain, redirectStatusCode: 308 } },
   );
+  if (added.status === 403 || added.status === 409) {
+    // Vercel's "you don't have access to the domain" or "already in use", not our connection.
+    const why = added.body.error?.message;
+    return {
+      refused: new ConnectError(
+        `Vercel didn't add ${partner}: it's on another Vercel project or account.${why ? ` (${why})` : ""}`,
+      ),
+    };
+  }
   if (!added.ok) {
     return { refused: refused(added, `Vercel didn't add ${partner}. Try again.`) };
   }
@@ -357,11 +380,17 @@ async function domainStatus(
   const status: DomainStatus = await domainState(deps, grant, projectId, domain, current);
   const partner = partnerOf(domain, current);
   if (!partner) return status;
-  const other = await projectDomain(deps, grant, projectId, partner);
-  if (!other) return { ...status, partner };
-  // On the project but serving something else (another site's address, say): not this pair's.
-  if (other.redirect !== domain) return status;
-  return { ...status, redirect: await domainState(deps, grant, projectId, partner, other) };
+  try {
+    const other = await projectDomain(deps, grant, projectId, partner);
+    if (!other) return { ...status, partner };
+    // On the project but serving something else (another site's address, say): not this pair's.
+    if (other.redirect !== domain) return status;
+    return { ...status, redirect: await domainState(deps, grant, projectId, partner, other) };
+  } catch (error) {
+    // The pair is extra: a failed lookup leaves the domain's own status standing.
+    if (error instanceof ConnectError) return status;
+    throw error;
+  }
 }
 
 async function domainState(
@@ -443,7 +472,12 @@ export async function removeSiteDomain(
   const grant = await hostGrant(deps, organizationId);
   // Its partner first, but only one Locus would have added: redirecting to this domain.
   const primary = await projectDomain(deps, grant, row.hostProjectId, row.customDomain);
-  const partner = partnerOf(row.customDomain, primary);
+  // Gone from the project already: the partner is still found by its name alone.
+  const partner = primary
+    ? partnerOf(row.customDomain, primary)
+    : row.customDomain.startsWith("www.")
+      ? row.customDomain.slice(4)
+      : `www.${row.customDomain}`;
   const other = partner ? await projectDomain(deps, grant, row.hostProjectId, partner) : null;
   if (partner && other?.redirect === row.customDomain) {
     const gone = await vercel(
@@ -455,6 +489,11 @@ export async function removeSiteDomain(
     if (!gone.ok && gone.status !== 404) {
       throw refused(gone, `Vercel didn't remove ${partner}. Try again.`);
     }
+    await audit(deps.db, ctx, client, "site.domain.remove", {
+      siteId: row.id,
+      domain: partner,
+      redirectTo: row.customDomain,
+    });
   }
   const path = projectPath(row.hostProjectId, `/domains/${encodeURIComponent(row.customDomain)}`);
   const removed = await vercel(deps, grant, "DELETE", path);
