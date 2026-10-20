@@ -1,0 +1,47 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "How many contacts are tagged vip?",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 3,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "**3 contacts** are tagged vip, out of 6 contacts in the account. The search covered every contact, so this count is complete. Capitalisation and extra spaces were ignored, so \"VIP\" and \"vip\" both count. Similar tags like \"vip-customer\" don't count. I didn't change anything.",
+        "usage": {
+          "prompt_tokens": 7180,
+          "completion_tokens": 140,
+          "total_tokens": 7320,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.03152,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 41,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.03152
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 2242,
+        "interChunkDelaysMs": [1059, 12, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 42, 0],
+        "totalDurationMs": 3356
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}

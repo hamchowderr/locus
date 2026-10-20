@@ -1,0 +1,56 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "Tag one of my contacts for me, but check with me which one and which tag first.",
+        "model": "anthropic/claude-opus-5-5",
+        "turnIndex": 1,
+        "hasToolResult": true
+      },
+      "response": {
+        "content": "Let me pull your contacts so you can pick one.",
+        "toolCalls": [
+          {
+            "name": "query_data",
+            "arguments": "{\"sources\": [{\"as\":\"c\",\"operation\":\"contacts.search-contacts-advanced\",\"params\":{\"body\":{\"pageLimit\":100}}}], \"sql\": \"SELECT id, firstName, lastName, email, tags FROM c ORDER BY dateAdded DESC LIMIT 25\"}",
+            "id": "toolu_013QrM7wpkbZ1WVDVoZ9QAxA"
+          }
+        ],
+        "usage": {
+          "prompt_tokens": 6662,
+          "completion_tokens": 173,
+          "total_tokens": 6835,
+          "cost": 0,
+          "is_byok": true,
+          "prompt_tokens_details": {
+            "cached_tokens": 0,
+            "audio_tokens": 0,
+            "video_tokens": 0
+          },
+          "cost_details": {
+            "upstream_inference_cost": 0.030108,
+            "upstream_inference_prompt_cost": 0,
+            "upstream_inference_completions_cost": 0
+          },
+          "completion_tokens_details": {
+            "reasoning_tokens": 0,
+            "image_tokens": 0
+          },
+          "cache_creation_input_tokens": 0,
+          "market_cost": 0.030108
+        }
+      },
+      "recordedTimings": {
+        "ttftMs": 2243,
+        "interChunkDelaysMs": [
+          0, 0, 0, 0, 1, 0, 0, 57, 32, 53, 52, 49, 52, 54, 148, 54, 46, 50, 51, 60, 87, 4, 1
+        ],
+        "totalDurationMs": 3094
+      },
+      "metadata": {
+        "systemHash": "df6e00d9",
+        "toolsHash": "0d72e672"
+      }
+    }
+  ]
+}
