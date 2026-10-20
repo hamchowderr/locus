@@ -903,15 +903,23 @@ describe("deleting a site", () => {
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
   });
 
-  it.each([
-    { repoFullName: "agency/a-site" },
-    { hostProjectId: "prj_1" },
-    { customDomain: "www.example.com" },
-  ])("refuses a published site (%o), and leaves it as it was", async (published) => {
+  it("deletes a site saved to GitHub from Locus only", async () => {
     const { client, siteId } = await draft();
-    await db.update(site).set(published).where(eq(site.id, siteId));
+    await db.update(site).set({ repoFullName: "agency/a-site" }).where(eq(site.id, siteId));
+    await deleteClientSite(deps(), ctx("owner"), client, siteId);
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 0, briefs: 0 });
+  });
+
+  it.each([
+    { repoFullName: "agency/a-site", hostProjectId: "prj_1" },
+    { hostProjectId: "prj_1" },
+    { hostProjectId: "prj_1", customDomain: "www.example.com" },
+  ])("refuses a site that may be live on Vercel (%o), and leaves it as it was", async (live) => {
+    const { client, siteId } = await draft();
+    await db.update(site).set(live).where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
-      /can't be deleted here/,
+      /unlink its Vercel project first/,
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
