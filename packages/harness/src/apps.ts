@@ -87,7 +87,9 @@ export function createAppTools(
           ...(notConnected.length > 0
             ? {
                 notConnected,
-                note: "These apps aren't connected for this client. Someone can connect them on the Apps page.",
+                note:
+                  "These apps aren't connected for this client. The chat shows a Connect button for each; " +
+                  "ask the person to use it (owners and admins can), then try again.",
               }
             : {}),
         };
