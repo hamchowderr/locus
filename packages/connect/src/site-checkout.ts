@@ -66,9 +66,10 @@ export const MAX_CHECKOUT_QTY = 10;
 const GHL_ID = /^[A-Za-z0-9]{1,64}$/;
 
 /**
- * The hosts a GHL invoice's payment page may be on. GHL's docs give no example `invoiceUrl`, so
- * these are GHL's own domains (its API and widget host, its link host, its client portal); an
- * agency's white-label domain is refused until a live account shows what GHL really returns.
+ * GHL's own domains for an invoice's payment page (its API and widget host, its link host, its
+ * client portal). An agency with a white-label domain gets its invoice links there instead (a live
+ * Flowsper invoice was on `link.flowsper.io`); `isGhlPayUrl` takes those only when the link names
+ * the invoice itself.
  */
 const PAY_HOSTS = ["leadconnectorhq.com", "msgsndr.com", "clientclub.net"];
 
@@ -115,8 +116,14 @@ function operation(id: string) {
   return op;
 }
 
-/** Whether an invoice's payment page is one of GHL's own https addresses. */
-export function isGhlPayUrl(value: unknown): value is string {
+/** The scope that reads the sub-account's invoice settings (the invoice number's prefix). */
+const SETTINGS_SCOPE = "invoices.readonly";
+
+/**
+ * Whether an invoice's payment page is safe to send the visitor to: an https address on one of
+ * GHL's own domains, or, on an agency's white-label domain, one whose path names this invoice.
+ */
+export function isGhlPayUrl(value: unknown, invoiceId?: string): value is string {
   if (typeof value !== "string" || value.length > 2_000) return false;
   let url: URL;
   try {
@@ -126,7 +133,10 @@ export function isGhlPayUrl(value: unknown): value is string {
   }
   if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
   const host = url.hostname.toLowerCase();
-  return PAY_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  if (PAY_HOSTS.some((domain) => host === domain || host.endsWith(`.${domain}`))) return true;
+  // A white-label domain: GHL put it there, but only a link to this very invoice is taken.
+  if (!invoiceId || !GHL_ID.test(invoiceId) || !host.includes(".")) return false;
+  return url.pathname.split("/").includes(invoiceId);
 }
 
 /** One line of the client's own text: no line breaks or column bars, capped. */
@@ -271,7 +281,26 @@ async function invoicingUser(ghl: SiteGhl): Promise<string | null> {
 const refusedByGhl = (error: unknown) =>
   error instanceof GhlError && error.status >= 400 && error.status < 500;
 
-/** The invoice, made and emailed by GHL; its number and payment page. */
+/** The invoice number as GHL shows it: the sub-account's prefix (`INV-`) and the number. */
+async function invoiceLabel(ghl: SiteGhl, number: string): Promise<string> {
+  if (!ghl.scopes.includes(SETTINGS_SCOPE)) return number;
+  try {
+    const settings = await ghlRequest<{ invoiceNumberPrefix?: unknown }>(
+      operation("invoices.get-invoice-settings"),
+      ghl.session,
+      {},
+      ghl.options,
+    );
+    const prefix = settings.invoiceNumberPrefix;
+    return typeof prefix === "string" ? oneLine(`${prefix}${number}`, 50) : number;
+  } catch (error) {
+    // Only the note's wording depends on it; the invoice is made either way.
+    logGhlFailure("Invoice settings", error);
+    return number;
+  }
+}
+
+/** The invoice, made and emailed by GHL; its id, number and payment page. */
 async function invoiceFor(
   ghl: SiteGhl,
   sale: Sale,
@@ -281,7 +310,7 @@ async function invoiceFor(
   userId: string,
   liveMode: boolean,
   now: number,
-): Promise<{ number: string; url: unknown }> {
+): Promise<{ id: string; number: string; url: unknown }> {
   const today = new Date(now).toISOString().slice(0, 10);
   const created = await ghlRequest<{
     invoice?: { _id?: string; invoiceNumber?: number | string };
@@ -325,8 +354,11 @@ async function invoiceFor(
   if (typeof id !== "string" || !id) throw new Error("GoHighLevel's invoice response had no id");
   const number = created.invoice?.invoiceNumber;
   return {
+    id,
     number:
-      typeof number === "number" || typeof number === "string" ? oneLine(String(number), 40) : id,
+      typeof number === "number" || typeof number === "string"
+        ? await invoiceLabel(ghl, oneLine(String(number), 40))
+        : id,
     url: created.invoiceUrl,
   };
 }
@@ -460,7 +492,7 @@ export async function startSiteCheckout(
   const testMode = deps.liveMode ? "" : " (test mode)";
   const what = `${sale.productName} × ${sale.qty} (${amountText(sale.amount, sale.currency)}${sale.qty > 1 ? " each" : ""})${testMode}`;
   const done: {
-    invoice?: { number: string; url: unknown };
+    invoice?: { id: string; number: string; url: unknown };
     /** Why the invoice wasn't made, when it was tried. */
     invoiceFailure?: unknown;
     /** Why the contact wasn't. */
@@ -488,7 +520,7 @@ export async function startSiteCheckout(
             ];
       }
       const started = `Started checkout: ${what}, invoice ${done.invoice.number}`;
-      return isGhlPayUrl(done.invoice.url)
+      return isGhlPayUrl(done.invoice.url, done.invoice.id)
         ? [started]
         : [`${started}. It was emailed; the site couldn't open its payment page.`];
     });
@@ -501,7 +533,8 @@ export async function startSiteCheckout(
   const made = done.invoice;
   if (made) {
     await countWithDeadline(deps, row, "delivered", now);
-    if (isGhlPayUrl(made.url)) return { status: 200, body: { ok: true, payUrl: made.url } };
+    if (isGhlPayUrl(made.url, made.id))
+      return { status: 200, body: { ok: true, payUrl: made.url } };
     // GHL made and emailed the invoice; only its payment page can't be opened from here.
     console.error(`Checkout for site ${row.site.id}: the invoice's address isn't GHL's`);
     return { status: 200, body: { ok: true, emailed: true } };
