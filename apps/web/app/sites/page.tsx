@@ -180,6 +180,12 @@ export default async function Sites({
         </Notice>
       )}
       {chosen && <Notice tone="info">The site builder now works on that site.</Notice>}
+      {isProblem(briefs) && sites.length > 0 && (
+        <Notice tone="error">
+          Locus couldn't read this client's site details, so building and publishing are hidden for
+          now. Reload the page to try again.
+        </Notice>
+      )}
       {isProblem(projects) && (
         <Notice tone="error">
           {projects.problem}{" "}
