@@ -108,12 +108,7 @@ export async function restoreSiteVersion(
 ): Promise<{ restored: number; version: VersionInfo; kept: VersionInfo | null }> {
   return withWorkspace(deps, client, siteId, async (workspace) => {
     const target = await versionByNumber(workspace, number);
-    const kept = await workspace.saveVersion({
-      message: `Unsaved changes, kept before restoring version ${target.number}`,
-      source: "restore",
-      userId: ctx.userId,
-    });
-    const version = await workspace.restoreVersion(target.id, { userId: ctx.userId });
+    const { version, kept } = await workspace.restoreKeeping(target.id, { userId: ctx.userId });
     return { restored: target.number, version, kept };
   });
 }
@@ -125,13 +120,17 @@ export interface SitePreview {
   version: number | null;
 }
 
+/** The sandbox that shows a site's saved versions, apart from the one the builder works in. */
+export const versionPreviewKey = (client: AuthorizedClient, siteId: string) =>
+  `${siteRuntimeKey(client, siteId)}/versions`;
+
 /** How long a preview may spend installing packages before giving up. */
-const INSTALL_MS = 240_000;
+const INSTALL_MS = 180_000;
 
 /**
  * Starts (or refreshes) the site's live preview in its sandbox, with the current files or one
- * saved version's, and lists its pages. The sandbox is the one the builder uses: the builder
- * puts the current files back before its next step, so a version preview lasts until then.
+ * saved version's, and lists its pages. The current files show in the builder's own sandbox;
+ * saved versions show in a second sandbox per site, so they never change what the builder runs.
  * Sandbox time is checked against and counted in the client's credits, as in the chat.
  */
 export async function startSitePreview(
@@ -153,9 +152,12 @@ export async function startSitePreview(
   if (files.length === 0) throw new SiteInputError("This site has no files to preview yet.");
   const started = Date.now();
   try {
-    const runtime = await (deps.openRuntime
-      ? deps.openRuntime(client, siteId)
-      : deps.runtimes().open(siteRuntimeKey(client, siteId)));
+    // An older version gets a sandbox of its own, so it never swaps files under the builder.
+    const runtime = await (version !== null
+      ? deps.runtimes().open(versionPreviewKey(client, siteId))
+      : deps.openRuntime
+        ? deps.openRuntime(client, siteId)
+        : deps.runtimes().open(siteRuntimeKey(client, siteId)));
     await syncRuntime(runtime, files);
     const installed = await runtime.install({ timeoutMs: INSTALL_MS });
     if (installed.exitCode !== 0) {

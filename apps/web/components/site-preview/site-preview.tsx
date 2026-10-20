@@ -2,7 +2,7 @@
 
 import type { SitePage } from "@locus/studio";
 import { ExternalLink, Monitor, RotateCw, Smartphone, Tablet } from "lucide-react";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { ButtonGroup } from "@/components/ui/button-group";
 import { cn } from "@/lib/utils";
@@ -44,10 +44,15 @@ export function SitePreview({
   const [reloads, setReloads] = useState(0);
   const [starting, startTransition] = useTransition();
 
+  // The server action's identity changes whenever the page renders again (a refreshed session
+  // cookie does that), so the auto-start keys on what is shown, never on `start` itself.
+  const startRef = useRef(start);
+  startRef.current = start;
+
   const run = useCallback(() => {
     setProblem(null);
     startTransition(async () => {
-      const result = await start();
+      const result = await startRef.current();
       if ("problem" in result) {
         setProblem(result.problem);
         return;
@@ -56,11 +61,14 @@ export function SitePreview({
       setRoute((r) => (result.pages.some((p) => p.route === r) ? r : "/"));
       setReloads((n) => n + 1);
     });
-  }, [start]);
+  }, []);
 
+  const started = useRef<number | null | undefined>(undefined);
   useEffect(() => {
+    if (started.current === version) return;
+    started.current = version;
     run();
-  }, [run]);
+  }, [run, version]);
 
   const size = DEVICES.find((d) => d.id === device) ?? DEVICES[0];
   const src = preview ? pageUrl(preview.url, route) : null;
@@ -120,8 +128,8 @@ export function SitePreview({
       )}
       {version !== null && preview && (
         <p className="text-sm text-neutral-600">
-          This shows version {version}. The site builder switches the preview back to the current
-          files the next time it works on the site.
+          This shows version {version}, apart from the site builder's own preview. Restore it on the
+          Versions page to make it current.
         </p>
       )}
       <div className="flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-neutral-200 bg-neutral-100 p-3">
@@ -130,6 +138,9 @@ export function SitePreview({
             key={`${src}#${reloads}`}
             title="Site preview"
             src={src}
+            // The site's code is untrusted: it may run, but never steer the Locus page around it.
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+            referrerPolicy="no-referrer"
             className="shrink-0 rounded-md border border-neutral-300 bg-white shadow-sm"
             style={{
               width: size.width ? `${size.width}px` : "100%",

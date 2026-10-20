@@ -20,7 +20,9 @@ const versionsPath = (siteId: string) => `/sites/${encodeURIComponent(siteId)}/v
 /** A refusal the person can act on, as text; anything else is a bug and is thrown. */
 function refusal(error: unknown): string | null {
   if (error instanceof SiteInputError) return error.message;
-  if (error instanceof ClientAccessDenied) return "That site isn't one of this client's.";
+  if (error instanceof ClientAccessDenied) {
+    return "You don't have access to that site. Choose its client on the Clients page.";
+  }
   if (error instanceof NotConfigured) return "Client databases aren't set up here yet.";
   return null;
 }
