@@ -191,7 +191,10 @@ export async function chooseClient(form: FormData) {
     if (error instanceof ClientAccessDenied) back("/clients", error);
     throw error;
   }
-  redirect("/");
+  // The menu shows the chosen sub-account, so every page's layout is drawn again.
+  revalidatePath("/", "layout");
+  // The menu's switcher sends the page to stay on; the Sub-accounts page opens the chat.
+  redirect(safeNext(form.get("next"), "/chat"));
 }
 
 /** Invites someone to the active agency. Better Auth lets owners and admins do this. */

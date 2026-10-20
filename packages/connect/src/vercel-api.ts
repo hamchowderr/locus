@@ -30,7 +30,7 @@ export async function hostGrant(
     .from(hostConnection)
     .where(eq(hostConnection.organizationId, organizationId));
   if (host?.provider !== "vercel") {
-    throw new ConnectError("Connect your Vercel team on the Connections page first.");
+    throw new ConnectError("Connect your Vercel team on the Integrations page first.");
   }
   const stored = await deps.secrets.get(host.secretRef);
   if (!stored) throw new ConnectError("Vercel needs to be connected again.");
@@ -67,7 +67,7 @@ export async function vercel<T>(
 export function refused(result: VercelResult<unknown>, fallback: string): ConnectError {
   if (result.status === 401 || result.status === 403) {
     return new ConnectError(
-      "Vercel refused. Reconnect Vercel on the Connections page and allow access to all projects.",
+      "Vercel refused. Reconnect Vercel on the Integrations page and allow access to all projects.",
     );
   }
   const message = result.body.error?.message;
