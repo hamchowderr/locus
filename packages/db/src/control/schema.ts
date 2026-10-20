@@ -73,6 +73,8 @@ export const site = sqliteTable(
     status: text("status", { enum: ["draft", "pushed", "deployed", "failed"] })
       .notNull()
       .default("draft"),
+    /** The folder the agency filed the site under on the Sites page; null for none. */
+    folder: text("folder"),
     createdAt: createdAt(),
   },
   (t) => [

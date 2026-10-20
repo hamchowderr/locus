@@ -25,6 +25,7 @@ import {
   normalizeDomain,
   removeSiteDomain,
   type SiteDeps,
+  setSiteFolder,
   siteDomainStatus,
   unlinkHostProject,
 } from "./sites.ts";
@@ -144,6 +145,45 @@ describe("domain names", () => {
       expect(() => normalizeDomain(bad)).toThrow(ConnectError);
     }
     expect(() => normalizeDomain("my-site.vercel.app")).toThrow(/already a Vercel address/);
+  });
+});
+
+describe("site folders", () => {
+  beforeEach(async () => {
+    await db.insert(site).values([
+      { id: "site-1", locationId: "client-1" },
+      { id: "site-2", locationId: "client-2" },
+    ]);
+  });
+
+  it("files a client's site under a cleaned name, and takes it out again", async () => {
+    const client = await authorizeClient(db, ctx("staff"), "client-1");
+    await setSiteFolder(db, ctx("staff"), client, {
+      siteId: "site-1",
+      folder: "  Spring   promos ",
+    });
+    const [filed] = await db.select().from(site).where(eq(site.id, "site-1"));
+    expect(filed?.folder).toBe("Spring promos");
+    await setSiteFolder(db, ctx("staff"), client, { siteId: "site-1", folder: "   " });
+    const [unfiled] = await db.select().from(site).where(eq(site.id, "site-1"));
+    expect(unfiled?.folder).toBeNull();
+    const audits = await db.select().from(auditLog).where(eq(auditLog.action, "site.folder"));
+    expect(audits.map((a) => a.detail)).toEqual([
+      { siteId: "site-1", folder: "Spring promos" },
+      { siteId: "site-1", folder: null },
+    ]);
+  });
+
+  it("refuses another client's site and a name that is too long", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await expect(
+      setSiteFolder(db, ctx("owner"), client, { siteId: "site-2", folder: "X" }),
+    ).rejects.toThrow(/isn't one of this client's/);
+    await expect(
+      setSiteFolder(db, ctx("owner"), client, { siteId: "site-1", folder: "x".repeat(61) }),
+    ).rejects.toThrow(ConnectError);
+    const rows = await db.select().from(site);
+    expect(rows.map((r) => r.folder)).toEqual([null, null]);
   });
 });
 

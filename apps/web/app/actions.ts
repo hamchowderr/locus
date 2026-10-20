@@ -1,6 +1,7 @@
 "use server";
 
 import {
+  authorizeClient,
   ClientAccessDenied,
   NotOperator,
   operatorsFromEnv,
@@ -18,6 +19,7 @@ import {
   refusedQuery,
   removeSiteDomain,
   type SyncResult,
+  setSiteFolder,
   syncLocations,
   unlinkHostProject,
 } from "@locus/connect";
@@ -31,6 +33,7 @@ import { safeNext } from "@/lib/next-path";
 import {
   ACTIVE_SITE_COOKIE,
   chooseActiveSite,
+  copyClientSite,
   createClientSite,
   deleteClientSite,
   publishLatestVersion,
@@ -420,6 +423,64 @@ export async function createSite(form: FormData) {
     throw error;
   }
   redirect("/sites?created=1");
+}
+
+/**
+ * Copies one of the active client's sites into a new draft, for this client or another one.
+ * The source is the session's client; the target from the form goes through the same staff
+ * check as choosing a client, so a member can only copy into clients they work on.
+ */
+export async function copySite(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fsites");
+  const ctx = sessionContext(current);
+  let elsewhere = false;
+  try {
+    const from = await resolveActiveClient(locus().db, ctx);
+    const targetId = text(form, "targetClientId") || from.location.id;
+    const to =
+      targetId === from.location.id ? from : await authorizeClient(locus().db, ctx, targetId);
+    elsewhere = to !== from;
+    const { siteId } = await copyClientSite(
+      siteBuilderDeps(),
+      ctx,
+      from,
+      text(form, "siteId"),
+      to,
+      {
+        name: text(form, "name"),
+      },
+    );
+    if (!elsewhere) {
+      try {
+        await rememberActiveSite(await chooseActiveSite(locus().db, ctx, from, siteId));
+      } catch (error) {
+        console.error("copySite: could not choose the copy", error);
+      }
+    }
+  } catch (error) {
+    if (error instanceof ClientAccessDenied || error instanceof SiteInputError) {
+      back("/sites", error);
+    }
+    if (error instanceof NotConfigured) {
+      back("/sites", new Error("Client databases aren't set up here yet."));
+    }
+    throw error;
+  }
+  revalidatePath("/sites");
+  redirect(`/sites?copied=${elsewhere ? "elsewhere" : "here"}`);
+}
+
+/** Files one of the active client's sites under a folder, or under none. */
+export async function fileSite(form: FormData) {
+  await siteAction(
+    (ctx, client) =>
+      setSiteFolder(locus().db, ctx, client, {
+        siteId: text(form, "siteId"),
+        folder: text(form, "folder"),
+      }),
+    "Locus isn't set up here yet.",
+  );
 }
 
 /**
