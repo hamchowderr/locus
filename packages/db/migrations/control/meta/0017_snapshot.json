@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "791beb0f-6bc2-4eb3-ac4c-2a193342ecac",
+  "id": "8f1fe531-0e1e-47a0-bf3e-5061194ec75c",
   "prevId": "4d61f604-1731-4563-98ee-cb18ae484836",
   "tables": {
     "account": {
@@ -1463,8 +1463,8 @@
           "autoincrement": false,
           "default": "'draft'"
         },
-        "folder": {
-          "name": "folder",
+        "folder_name": {
+          "name": "folder_name",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
