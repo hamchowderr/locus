@@ -398,8 +398,28 @@ export class SiteWorkspace {
     versionId: string,
     input: { userId?: string | null } = {},
   ): Promise<VersionInfo> {
+    return (await this.restoreKeeping(versionId, { ...input, keep: false })).version;
+  }
+
+  /**
+   * `restoreVersion`, first saving unsaved draft changes as their own version when `keep` is
+   * set (`kept`, or null when there were none), in the same transaction so no draft write can
+   * land between the two and be lost.
+   */
+  async restoreKeeping(
+    versionId: string,
+    input: { userId?: string | null; keep?: boolean } = {},
+  ): Promise<{ version: VersionInfo; kept: VersionInfo | null }> {
     return this.write(async (tx) => {
       const target = await this.getVersion(versionId, tx);
+      const kept =
+        input.keep === false
+          ? null
+          : await this.saveVersionIn(tx, {
+              message: `Unsaved changes, kept before restoring version ${target.number}`,
+              source: "restore",
+              userId: input.userId ?? null,
+            });
       await this.replaceDraft(tx, target.id);
       const saved = await this.saveVersionIn(tx, {
         message: `Restored version ${target.number}`,
@@ -407,7 +427,7 @@ export class SiteWorkspace {
         userId: input.userId ?? null,
       });
       // Restoring the latest version changes nothing: it is still the current one.
-      return saved ?? target;
+      return { version: saved ?? target, kept };
     });
   }
 

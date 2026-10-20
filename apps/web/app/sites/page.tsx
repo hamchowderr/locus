@@ -276,6 +276,16 @@ export default async function Sites({
                   s.hostProjectId ??
                   "Untitled site"}
               </h2>
+              {briefNames.has(s.id) && (
+                <p className="flex gap-4 text-sm">
+                  <Link href={`/sites/${s.id}/preview`} className="underline">
+                    Preview
+                  </Link>
+                  <Link href={`/sites/${s.id}/versions`} className="underline">
+                    Versions
+                  </Link>
+                </p>
+              )}
               {!briefNames.has(s.id) ? null : viewOnly.has(s.id) ? (
                 <p className="text-sm text-neutral-600">
                   You can view this site but not change it.
