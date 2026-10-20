@@ -205,11 +205,11 @@ export const siteBackendRestore = sqliteTable(
     /** The project's database settings may not name this site's database: the next publish rewrites them. */
     envStale: integer("env_stale", { mode: "boolean" }).notNull().default(false),
     /**
-     * Databases the site no longer uses, deleted once `deleteAfter` passes: the live deployment
-     * keeps using the old one until the new deployment is ready.
+     * Databases the site no longer uses (`retiredAt`, ms), deleted once `deleteAfter` passes and
+     * production was deployed since: the live deployment keeps using the old one until then.
      */
     retired: text("retired", { mode: "json" })
-      .$type<{ dbName: string; deleteAfter: number }[]>()
+      .$type<{ dbName: string; retiredAt: number; deleteAfter: number }[]>()
       .notNull()
       .default(sql`'[]'`),
   },
