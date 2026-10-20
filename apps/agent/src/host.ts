@@ -6,7 +6,7 @@
  */
 
 import { createClient } from "@libsql/client";
-import { createAgentApi, KIT_STREAM_BODY_LIMIT } from "@locus/agent-api";
+import { clientWorkThreads, createAgentApi, KIT_STREAM_BODY_LIMIT } from "@locus/agent-api";
 import {
   type AuthorizedClient,
   authorizeClient,
@@ -28,7 +28,7 @@ import {
   SITE_ID_KEY,
   type SiteBuilderDeps,
 } from "@locus/builder/host";
-import { type ConnectDeps, clientGhlSession } from "@locus/connect";
+import { type ConnectDeps, clientGhlSession, siteCrm } from "@locus/connect";
 import { type ControlDb, DbSecretStore, openControlDb, provisionerFromEnv } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
@@ -329,7 +329,16 @@ export function createHost({
       };
       const builder = siteBuilder
         ? createSiteBuilder(
-            { ...siteBuilder, db },
+            {
+              ...siteBuilder,
+              db,
+              // The builder reads the client's calendars as the member behind each tool call.
+              crm: (client) =>
+                siteCrm(async () => ({
+                  session: await clientGhlSession(connect, client),
+                  ...(connect.http ? { http: connect.http } : {}),
+                })),
+            },
             {
               client: await anyAuthorized(clientId),
               requester: (requestContext) =>
@@ -337,22 +346,22 @@ export function createHost({
             },
           )
         : null;
-      return createLocusController({
+      // The main chat hands longer work to threads of their own (`start_thread`), which run in
+      // the background and report back. Its result is the new thread's id and title only.
+      const workThreads = clientWorkThreads(storage);
+      const controller = await createLocusController({
         model,
         locationId,
         session: async (requestContext) =>
           clientGhlSession(connect, await runClient(requestContext)),
         storage,
         ...(fetch ? { fetch } : {}),
-        ...(builder
-          ? {
-              modes: builder.modes,
-              tools: builder.tools,
-              processors: builder.processors,
-              ownTextTools: builder.ownTextTools,
-            }
-          : {}),
+        tools: { ...builder?.tools, [workThreads.tool.id]: workThreads.tool },
+        ownTextTools: [...(builder?.ownTextTools ?? []), workThreads.tool.id],
+        ...(builder ? { modes: builder.modes, processors: builder.processors } : {}),
       });
+      workThreads.attach(controller);
+      return controller;
     },
   });
 
