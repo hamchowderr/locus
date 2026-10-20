@@ -50,6 +50,11 @@ describe("site migrations", () => {
         { path: "db/migrations/0001_b.sql", content: "" },
       ]),
     ).toThrow(/Two migrations are numbered 0001/);
+    const meta = { path: "db/migrations/meta/_journal.json", content: "{}" };
+    expect(siteMigrationsIn([...files, meta]).map((m) => m.name)).toEqual([
+      "0000_bookings",
+      "0001_notes",
+    ]);
   });
 
   it("applies each migration once, in order, and hides its ledger", async () => {

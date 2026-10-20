@@ -353,8 +353,12 @@ describe("publishing a site with a database", () => {
     await expect(
       migrateSiteBackend(release(), owner, { siteId: SITE, files: [broken] }),
     ).rejects.toThrow(
-      /^The site's database change didn't apply: 0000_logins failed: .*new migration/,
+      /^The site's database change didn't apply: 0000_logins failed: .*fix it in place\./,
     );
+    // It rolled back, so fixing that same file is what makes the next publish go out.
+    expect(await migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] })).toEqual({
+      applied: ["0000_logins"],
+    });
     await expect(
       migrateSiteBackend(release({ provisioner: false }), owner, { siteId: SITE, files: [logins] }),
     ).rejects.toThrow("This site's database isn't set up on this deployment yet.");
@@ -442,7 +446,9 @@ describe("publishing a site with a database", () => {
       .select()
       .from(auditLog)
       .where(eq(auditLog.action, "site.backend.enable"));
-    expect(audits).toMatchObject([{ actorUserId: null, locationId: "client-1" }]);
+    expect(audits).toMatchObject([
+      { actorUserId: null, locationId: "client-1", detail: { memberId: staff.memberId } },
+    ]);
 
     // Another client's staff can't make one for this site.
     const other = await authorizeClient(db, ctx("owner"), "client-2");
@@ -456,6 +462,24 @@ describe("publishing a site with a database", () => {
         siteId: SITE,
         files: [{ path: "db/migrations/bookings.sql", content: "select 1" }],
       }),
-    ).rejects.toThrow(/^The site's database change didn't apply: db\/migrations\/bookings\.sql/);
+    ).rejects.toThrow(
+      /^The site's database change didn't apply: db\/migrations\/bookings\.sql.*Rename the file/,
+    );
+  });
+
+  it("doesn't make the database again after an owner removed it", async () => {
+    const owner = await authorizeClient(db, ctx("owner"), "client-1");
+    await migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] });
+    await removeSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    await expect(
+      migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] }),
+    ).rejects.toThrow(/^This site's database was removed/);
+    expect(await siteBackendOf(db, owner, SITE)).toBeNull();
+
+    // An owner turning it on again is a choice, and publishing works from there.
+    await enableSiteBackend(deps, ctx("owner"), owner, { siteId: SITE });
+    expect(await migrateSiteBackend(release(), owner, { siteId: SITE, files: [logins] })).toEqual({
+      applied: ["0000_logins"],
+    });
   });
 });

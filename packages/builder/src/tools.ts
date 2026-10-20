@@ -679,7 +679,16 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       const files = await ws.snapshot();
       if (input.action === "add") {
         const before = new Map(files.map((file) => [file.path, file.content]));
-        const changed = withBackend(files).filter((file) => before.get(file.path) !== file.content);
+        let app: typeof files;
+        try {
+          app = withBackend(files);
+        } catch (error) {
+          if (error instanceof SyntaxError) {
+            throw new BuilderError("package.json isn't valid JSON. Fix it, then add again.");
+          }
+          throw error;
+        }
+        const changed = app.filter((file) => before.get(file.path) !== file.content);
         if (changed.length > 0) await ws.writeFiles(changed);
         return {
           changed: changed.map((file) => file.path),
