@@ -3,6 +3,7 @@ export {
   type ConnectDeps,
   ConnectError,
   checkClientGhl,
+  clientGhl,
   clientGhlSession,
   connectAgency,
   ghlSecretRef,
@@ -56,6 +57,7 @@ export {
 export {
   enableSiteBackend,
   ensureSiteBackendEnv,
+  LOGIN_SECRET_TABLES,
   migrateSiteBackend,
   removeSiteBackend,
   type SiteBackendDeps,
@@ -65,6 +67,7 @@ export {
   siteBackendOf,
   siteBackendOverview,
   siteBackendRows,
+  sitesWithBackend,
 } from "./site-backend.ts";
 export {
   BOOKING_LIMITS,
@@ -94,17 +97,44 @@ export {
   type CrmMediaFile,
   type CrmPrice,
   type CrmProduct,
+  type CrmSavedMedia,
   downloadMedia,
   isGhlStorageUrl,
   listCalendars,
   listMedia,
   listProducts,
   MAX_MEDIA_BYTES,
+  MEDIA_WRITE_SCOPE,
   type MediaFormat,
   mediaFormat,
   type SiteCrm,
+  saveSiteImage,
   siteCrm,
+  siteImagesFolderName,
 } from "./site-crm.ts";
+export {
+  type ClaimedSiteUpload,
+  claimSiteUploadTicket,
+  deleteSiteFiles,
+  hasSiteFilesKey,
+  issueSiteUploadTicket,
+  keepTicketedFile,
+  MAX_LARGE_SITE_FILE_BYTES,
+  MAX_SITE_FILE_BYTES,
+  MAX_SITE_VIDEO_BYTES,
+  SITE_BIG_FILE_LIMITS,
+  SITE_FILE_LIMITS,
+  SITE_FILE_TYPES,
+  SITE_VIDEO_TYPES,
+  type SiteFileAnswer,
+  type SiteFilesDeps,
+  type SiteMediaFile,
+  signSiteUploadTicket,
+  siteFilesFolderName,
+  siteFilesKey,
+  siteFilesOverview,
+  uploadSiteFile,
+} from "./site-files.ts";
 export {
   countSiteLead,
   hashVisitorIp,
@@ -122,6 +152,7 @@ export {
   type SiteLeadResult,
   submitSiteLead,
 } from "./site-leads.ts";
+export { SIGN_UP_FORM, SITE_MEMBER_LIMITS, siteMemberSignedUp } from "./site-members.ts";
 export {
   attachSiteDomain,
   type DnsRecord,

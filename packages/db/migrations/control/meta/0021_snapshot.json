@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "ba0e31a8-e4af-4cb4-8ad6-b7183f7980f2",
+  "id": "b0e1b769-0658-41dc-bcb6-5e725079914e",
   "prevId": "37a99f68-b302-4a03-a274-08b3bee28882",
   "tables": {
     "account": {
@@ -1463,14 +1463,6 @@
           "autoincrement": false,
           "default": "'draft'"
         },
-        "origin": {
-          "name": "origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'studio'"
-        },
         "booking_calendars": {
           "name": "booking_calendars",
           "type": "text",
@@ -1636,6 +1628,44 @@
           "tableTo": "location",
           "columnsFrom": [
             "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "site_checkout_items": {
+      "name": "site_checkout_items",
+      "columns": {
+        "site_id": {
+          "name": "site_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "items": {
+          "name": "items",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "site_checkout_items_site_id_site_id_fk": {
+          "name": "site_checkout_items_site_id_site_id_fk",
+          "tableFrom": "site_checkout_items",
+          "tableTo": "site",
+          "columnsFrom": [
+            "site_id"
           ],
           "columnsTo": [
             "id"

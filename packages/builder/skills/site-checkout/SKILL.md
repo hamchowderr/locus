@@ -25,6 +25,9 @@ payment service: everything goes through the `crm` tool.
   `<BuyButton productId="<productId>" priceId="<priceId>" />`, both ids copied from the
   `products` line and written out as text, with an optional `label="Book the deep clean"` and
   `form="deep-clean"` (the CRM tag "website form: <form>", lower case with dashes).
+- The published site sells only the product and price pairs written out like that: Locus reads
+  them from the code when the site is published. A button whose ids come from a variable or a
+  list (`productId={item.id}`) sells nothing, so write one `<BuyButton>` per product.
 - Show the product's name and price next to the button exactly as `products` lists them
   (e.g. "$149.50"). The page never sets the price: the invoice always charges the CRM's own
   price, so a price written differently on the page only misleads the visitor.

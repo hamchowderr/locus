@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { safeNext } from "@/lib/next-path";
 import { signIn } from "../actions";
-import { Button, Field, Notice, Page } from "../ui";
+import { AuthPage, Button, Field, Notice } from "../ui";
 
 export default async function SignIn({
   searchParams,
@@ -10,7 +10,7 @@ export default async function SignIn({
 }) {
   const { error, next, reset } = await searchParams;
   return (
-    <Page title="Sign in to Locus">
+    <AuthPage title="Sign in to Locus">
       {reset && <Notice tone="info">Your password is changed. Sign in with the new one.</Notice>}
       {error && <Notice tone="error">{error}</Notice>}
       <form action={signIn} className="space-y-4">
@@ -36,6 +36,6 @@ export default async function SignIn({
           Create an account
         </Link>
       </p>
-    </Page>
+    </AuthPage>
   );
 }

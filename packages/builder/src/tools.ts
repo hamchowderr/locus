@@ -54,7 +54,7 @@ export class BuilderError extends Error {
 
 /**
  * Thrown by the host's `onVersionSaved` with a message written for the person (e.g. "Connect
- * GitHub on the Connections page first."). Any other error is reported generically, so a git
+ * GitHub on the Integrations page first."). Any other error is reported generically, so a git
  * host's raw error text never reaches the model.
  */
 export class PublishError extends Error {
@@ -109,6 +109,8 @@ function writtenContents(writes: Map<string, string>): string {
 }
 
 const IMAGE_EXT = /\.(png)$/i;
+/** How long generate_image waits for the client's Media Library before answering without it. */
+export const MEDIA_LIBRARY_TIMEOUT_MS = 10_000;
 
 const FILE_ACTIONS = ["list", "read", "write", "edit", "delete"] as const;
 const CRM_ACTIONS = [
@@ -701,12 +703,29 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           throw error;
         }
         const changed = app.filter((file) => before.get(file.path) !== file.content);
+        // Locus's own code from an earlier version of a feature, which the new files replace.
+        const kept = new Set(app.map((file) => file.path));
+        const removed = files.map((file) => file.path).filter((path) => !kept.has(path));
         if (changed.length > 0) await ws.writeFiles(changed);
+        if (removed.length > 0) await ws.deleteFiles(removed);
+        const auth = app.find((file) => file.path === "lib/auth.ts")?.content;
+        const noSignUpHook = typeof auth === "string" && !auth.includes("memberSignedUp");
+        const filesRenewed =
+          changed.some((file) => file.path === "lib/files.ts") && before.has("lib/files.ts");
         return {
           changed: changed.map((file) => file.path),
+          ...(removed.length > 0 ? { removed } : {}),
           next:
             "Add the site's own tables as new db/migrations files with matching tables in " +
-            "db/schema.ts, then preview: it installs the new packages and applies them.",
+            "db/schema.ts, then preview: it installs the new packages and applies them." +
+            (filesRenewed
+              ? " File uploads were updated: uploadFile now returns { fileId, url }. Change any " +
+                "code that used pathname or fileUrl to store and show url, and delete by fileId."
+              : "") +
+            (noSignUpHook
+              ? " lib/auth.ts was changed before, so it was kept: add the memberSignedUp hook to " +
+                "it as the site-database skill says, so new members reach HighLevel."
+              : ""),
         };
       }
       if (!hasBackendFiles(files)) {
@@ -764,11 +783,57 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     ),
   });
 
+  /**
+   * Keeps a copy of a generated image in the client's own Media Library (their storage, not
+   * Otaku's). Best effort: the site already has its copy, so a connection that may not write
+   * there, or a GHL failure, only adds a note for the model.
+   */
+  const keepInMediaLibrary = async (
+    session: BuilderSession,
+    path: string,
+    image: { bytes: Uint8Array; mediaType: "image/png" | "image/jpeg" | "image/webp" },
+  ): Promise<{ mediaLibrary?: string; note?: string }> => {
+    if (!session.crm) return {};
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // The name is the site file's; the CRM tidies it and gives it the type's extension.
+      const saving = session.crm.saveImage({
+        siteId: session.workspace.siteId,
+        name: path.split("/").at(-1) ?? "",
+        bytes: image.bytes,
+        contentType: image.mediaType,
+      });
+      // A slow GHL doesn't hold the tool up: past the limit it answers with the note below.
+      const late = new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The Media Library took too long")),
+          MEDIA_LIBRARY_TIMEOUT_MS,
+        );
+      });
+      await Promise.race([saving, late]);
+      return { mediaLibrary: "A copy is in the client's Media Library too." };
+    } catch (error) {
+      const why =
+        error instanceof CrmMediaError
+          ? error.message
+          : "The Media Library couldn't be reached just now.";
+      console.error(
+        `Keeping a generated image of site ${session.workspace.siteId} in the Media Library failed: ${(error as Error)?.name ?? "Error"}`,
+      );
+      return {
+        note: `The image is in the site, but it wasn't saved to the client's Media Library. ${why}`,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const generate_image = createTool({
     id: "generate_image",
     description:
       "Generate an original image (photo or illustration) from a description and save it as " +
-      "a PNG under public/, e.g. public/images/hero.png. Reference it as /images/hero.png.",
+      "a PNG under public/, e.g. public/images/hero.png. Reference it as /images/hero.png. " +
+      "A copy is also kept in the client's Media Library when their CRM allows it.",
     requireApproval: noApproval,
     inputSchema: z.object({
       prompt: z.string().min(3).max(2000),
@@ -798,6 +863,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           saved: path,
           src: `/${path.slice("public/".length)}`,
           bytes: image.bytes.byteLength,
+          ...(await keepInMediaLibrary(session, path, image)),
         };
       },
     ),

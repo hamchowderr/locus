@@ -2,7 +2,13 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { AppServiceError } from "./apps.ts";
-import { appUserId, createComposioConnections, createComposioConnector } from "./composio.ts";
+import {
+  appUserId,
+  CATALOG_TTL_MS,
+  createComposioCatalog,
+  createComposioConnections,
+  createComposioConnector,
+} from "./composio.ts";
 
 // A pretend Composio API: the real SDK runs against it, so this proves what Locus asks Composio
 // for (which user, which apps, no sign-in links, no paid Instant accounts) with no key and no
@@ -16,7 +22,10 @@ interface Seen {
 let server: Server;
 let baseURL: string;
 let seen: Seen[] = [];
-let routes: Record<string, (body: Record<string, unknown> | undefined) => unknown> = {};
+let routes: Record<
+  string,
+  (body: Record<string, unknown> | undefined, query: URLSearchParams) => unknown
+> = {};
 
 const read = async (req: IncomingMessage) => {
   let text = "";
@@ -37,7 +46,7 @@ beforeAll(async () => {
       res.end(JSON.stringify({ error: { message: `no route ${req.method} ${path}` } }));
       return;
     }
-    res.end(JSON.stringify(route(body)));
+    res.end(JSON.stringify(route(body, url.searchParams)));
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   baseURL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -45,6 +54,51 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((ok) => server.close(() => ok())));
 
 const SESSION = "/api/v3.1/tool_router/session";
+const TOOLKITS = "/api/v3.1/toolkits";
+const ACCOUNTS = "/api/v3.1/connected_accounts";
+
+/** A toolkit as Composio lists it; `managed` is the sign-ins Composio runs itself. */
+const toolkitItem = (
+  slug: string,
+  { managed = ["OAUTH2"], noAuth = false }: { managed?: string[]; noAuth?: boolean } = {},
+) => ({
+  slug,
+  name: slug[0]?.toUpperCase() + slug.slice(1),
+  type: "native",
+  is_local_toolkit: false,
+  no_auth: noAuth,
+  auth_schemes: noAuth ? [] : ["OAUTH2"],
+  composio_managed_auth_schemes: managed,
+  deprecated: { toolkitId: slug },
+  meta: {
+    created_at: "2026-10-20T00:00:00Z",
+    updated_at: "2026-10-20T00:00:00Z",
+    description: `${slug} for teams`,
+    logo: `https://logos.test/${slug}.png`,
+    categories: [{ id: "communication", name: "Communication" }],
+    triggers_count: 0,
+    tools_count: 3,
+    version: "1",
+  },
+});
+const catalogBody = (items: unknown[], next: string | null = null) => ({
+  items,
+  next_cursor: next,
+  total_pages: next ? 2 : 1,
+  current_page: 1,
+  total_items: items.length,
+});
+/**
+ * Composio's catalog: three apps whose sign-in Composio manages, one it doesn't (GitHub here,
+ * standing for any app that needs Otaku's own OAuth app) and one with no sign-in at all.
+ */
+const CATALOG = [
+  toolkitItem("gmail"),
+  toolkitItem("slack"),
+  toolkitItem("googlecalendar"),
+  toolkitItem("github", { managed: [] }),
+  toolkitItem("codeinterpreter", { managed: [], noAuth: true }),
+];
 
 beforeEach(() => {
   seen = [];
@@ -55,8 +109,14 @@ beforeEach(() => {
       tool_router_tools: [],
       config: { user_id: "locus-client:client-1" },
     }),
+    [`GET ${TOOLKITS}`]: () => catalogBody(CATALOG),
   };
 });
+
+/** A fresh catalog per test, so one test's cache can't answer another's. */
+const catalog = (now?: () => number) =>
+  createComposioCatalog({ apiKey: "test-key", baseURL, ...(now ? { now } : {}) });
+const catalogReads = () => seen.filter((s) => s.path === TOOLKITS);
 
 /** A search answer as Composio sends it. */
 const searchBody = () => ({
@@ -66,9 +126,9 @@ const searchBody = () => ({
     {
       index: 0,
       use_case: "read my email",
-      primary_tool_slugs: ["GMAIL_FETCH_EMAILS"],
-      related_tool_slugs: ["GMAIL_GET_PROFILE"],
-      toolkits: ["gmail"],
+      primary_tool_slugs: ["GMAIL_FETCH_EMAILS", "SLACK_LIST_MESSAGES"],
+      related_tool_slugs: ["GMAIL_GET_PROFILE", "GITHUB_LIST_ISSUES"],
+      toolkits: ["gmail", "slack", "github"],
     },
   ],
   tool_schemas: {
@@ -78,20 +138,25 @@ const searchBody = () => ({
       description: "Fetch emails",
       input_schema: { type: "object", properties: { max_results: { type: "integer" } } },
     },
+    SLACK_LIST_MESSAGES: {
+      tool_slug: "SLACK_LIST_MESSAGES",
+      toolkit: "slack",
+      description: "List messages",
+      input_schema: { type: "object", properties: {} },
+    },
+    GITHUB_LIST_ISSUES: {
+      tool_slug: "GITHUB_LIST_ISSUES",
+      toolkit: "github",
+      description: "List issues",
+      input_schema: { type: "object", properties: {} },
+    },
   },
   toolkit_connection_statuses: [
-    {
-      toolkit: "gmail",
-      description: "Gmail",
-      has_active_connection: true,
-      status_message: "",
-    },
-    {
-      toolkit: "slack",
-      description: "Slack",
-      has_active_connection: false,
-      status_message: "",
-    },
+    { toolkit: "gmail", description: "Gmail", has_active_connection: true, status_message: "" },
+    { toolkit: "slack", description: "Slack", has_active_connection: false, status_message: "" },
+    // Connected somehow, but not an app Locus offers: neither its tools nor its name come back.
+    { toolkit: "github", description: "GitHub", has_active_connection: true, status_message: "" },
+    { toolkit: "notion", description: "Notion", has_active_connection: false, status_message: "" },
   ],
   next_steps_guidance: [],
   session: { id: "trs_1", generate_id: false, instructions: "" },
@@ -103,12 +168,12 @@ const searchBody = () => ({
 });
 
 /** A tool as Composio describes it. */
-const toolBody = (slug: string, tags: string[]) => ({
+const toolBody = (slug: string, tags: string[], toolkit = slug.split("_")[0]?.toLowerCase()) => ({
   slug,
   name: slug,
   description: "",
   tags,
-  toolkit: { slug: slug.split("_")[0]?.toLowerCase(), name: "", logo: "" },
+  toolkit: { slug: toolkit, name: "", logo: "" },
   input_parameters: {},
   output_parameters: {},
   available_versions: [],
@@ -125,10 +190,85 @@ const toolBody = (slug: string, tags: string[]) => ({
 });
 
 const connector = () =>
-  createComposioConnector({ apiKey: "test-key", clientId: "client-1", baseURL });
+  createComposioConnector({
+    apiKey: "test-key",
+    clientId: "client-1",
+    baseURL,
+    catalog: catalog(),
+  });
+
+describe("Composio catalog", () => {
+  test("offers Composio's apps whose sign-in Composio manages, and only those", async () => {
+    const apps = await catalog().apps();
+    expect(apps.map((app) => app.toolkit)).toEqual(["gmail", "slack", "googlecalendar"]);
+    expect(apps[0]).toEqual({
+      toolkit: "gmail",
+      name: "Gmail",
+      description: "gmail for teams",
+      logo: "https://logos.test/gmail.png",
+      categories: [{ id: "communication", name: "Communication" }],
+    });
+    const [read] = catalogReads();
+    expect(read?.query.get("type")).toBe("native");
+    expect(read?.query.get("include_deprecated")).toBe("false");
+    expect(read?.query.get("limit")).toBe("1000");
+  });
+
+  test("reads every page of the catalog", async () => {
+    routes[`GET ${TOOLKITS}`] = (_, query) =>
+      query.get("cursor") === "page-2"
+        ? catalogBody([toolkitItem("notion"), toolkitItem("gmail")])
+        : catalogBody([toolkitItem("gmail"), toolkitItem("slack")], "page-2");
+    const apps = await catalog().apps();
+    expect(apps.map((app) => app.toolkit)).toEqual(["gmail", "slack", "notion"]);
+    expect(catalogReads().map((r) => r.query.get("cursor"))).toEqual([null, "page-2"]);
+  });
+
+  test("says which apps it offers, by slug in any case", async () => {
+    const offered = catalog();
+    expect(await offered.offers("GMAIL")).toBe(true);
+    expect(await offered.offers("github")).toBe(false);
+    expect(await offered.offers("codeinterpreter")).toBe(false);
+    expect(await offered.offers("notion")).toBe(false);
+  });
+
+  test("is read once and kept for a while, then read again", async () => {
+    let now = 1_000;
+    const offered = catalog(() => now);
+    await Promise.all([offered.apps(), offered.offers("gmail"), offered.apps()]);
+    now += CATALOG_TTL_MS - 1;
+    await offered.offers("slack");
+    expect(catalogReads()).toHaveLength(1);
+    now += 1;
+    await offered.apps();
+    expect(catalogReads()).toHaveLength(2);
+  });
+
+  test("a failed read isn't kept: the next call reads again", async () => {
+    routes[`GET ${TOOLKITS}`] = () => ({ error: { message: "down" } });
+    const offered = catalog();
+    await expect(offered.apps()).rejects.toThrow();
+    routes[`GET ${TOOLKITS}`] = () => catalogBody(CATALOG);
+    expect(await offered.offers("gmail")).toBe(true);
+  });
+
+  test("while a refresh fails, the last catalog read is still served", async () => {
+    let now = 1_000;
+    const offered = catalog(() => now);
+    const before = await offered.apps();
+    routes[`GET ${TOOLKITS}`] = () => ({ error: { message: "down" } });
+    now += CATALOG_TTL_MS;
+    expect(await offered.apps()).toEqual(before);
+    expect(await offered.offers("gmail")).toBe(true);
+    // The failure itself isn't kept: once Composio is back, the next call reads afresh.
+    routes[`GET ${TOOLKITS}`] = () => catalogBody(CATALOG);
+    await offered.apps();
+    expect(catalogReads()).toHaveLength(4);
+  });
+});
 
 describe("Composio connector", () => {
-  test("opens one session for the client, with Locus's apps only and no sign-in links", async () => {
+  test("opens one session for the client, with no sign-in links and no Instant accounts", async () => {
     routes[`POST ${SESSION}/trs_1/execute`] = () => ({
       data: { messages: [] },
       error: null,
@@ -143,7 +283,6 @@ describe("Composio connector", () => {
     expect(created).toHaveLength(1);
     expect(created[0]?.body).toMatchObject({
       user_id: appUserId("client-1"),
-      toolkits: { enable: ["gmail", "googlecalendar", "slack"] },
       manage_connections: { enable: false },
       // Never a Composio-owned account, which Composio bills for.
       instant: false,
@@ -154,7 +293,7 @@ describe("Composio connector", () => {
     ]);
   });
 
-  test("search lists tools with their arguments, and which apps aren't connected", async () => {
+  test("search lists the connected apps' tools, and offered apps that aren't connected", async () => {
     routes[`POST ${SESSION}/trs_1/search`] = (body) => {
       expect(body).toMatchObject({ queries: [{ use_case: "read my email" }] });
       return searchBody();
@@ -162,7 +301,8 @@ describe("Composio connector", () => {
 
     const found = await connector().search("read my email");
 
-    // A tool Composio named without a schema isn't offered: the model couldn't call it right.
+    // GMAIL_GET_PROFILE came without a schema, so the model couldn't call it right; Slack's tool
+    // waits for Slack to be connected; GitHub and Notion aren't apps Locus offers.
     expect(found).toEqual({
       tools: [
         {
@@ -189,6 +329,88 @@ describe("Composio connector", () => {
     expect(seen.filter((s) => s.path.startsWith("/api/v3.1/tools/"))).toHaveLength(2);
   });
 
+  test("a tool is offered by its own toolkit in Composio's metadata, not by its name", async () => {
+    routes["GET /api/v3.1/tools/GMAIL_FETCH_EMAILS"] = () =>
+      toolBody("GMAIL_FETCH_EMAILS", ["readOnlyHint"]);
+    routes["GET /api/v3.1/tools/GITHUB_LIST_ISSUES"] = () =>
+      toolBody("GITHUB_LIST_ISSUES", ["readOnlyHint"]);
+    routes["GET /api/v3.1/tools/GMAIL_SNEAKY"] = () =>
+      toolBody("GMAIL_SNEAKY", ["readOnlyHint"], "github");
+    const apps = connector();
+
+    expect(await apps.offers("GMAIL_FETCH_EMAILS")).toBe(true);
+    expect(await apps.offers("GITHUB_LIST_ISSUES")).toBe(false);
+    expect(await apps.offers("GMAIL_SNEAKY")).toBe(false);
+    // A tool from an app Locus doesn't offer never counts as read-only either.
+    expect(await apps.readOnly("GMAIL_SNEAKY")).toBe(false);
+    expect(await apps.readOnly("GITHUB_LIST_ISSUES")).toBe(false);
+  });
+
+  test("a tool's app comes from its own metadata, and only for apps Locus offers", async () => {
+    routes["GET /api/v3.1/tools/GMAIL_FETCH_EMAILS"] = () =>
+      toolBody("GMAIL_FETCH_EMAILS", ["readOnlyHint"], "GMAIL");
+    routes["GET /api/v3.1/tools/SLACK_SNEAKY"] = () => toolBody("SLACK_SNEAKY", [], "github");
+    const apps = connector();
+
+    expect(await apps.toolkit("GMAIL_FETCH_EMAILS")).toBe("gmail");
+    expect(await apps.toolkit("SLACK_SNEAKY")).toBeNull();
+  });
+
+  test("a tool deletes when Composio tags it destructive or its name says so", async () => {
+    const tags: Record<string, string[]> = {
+      GMAIL_SEND_EMAIL: ["openWorldHint"],
+      GMAIL_FETCH_EMAILS: ["readOnlyHint"],
+      GMAIL_DELETE_MESSAGE: [],
+      GMAIL_MOVE_TO_TRASH: [],
+      GMAIL_EMPTY_FOLDER: ["destructiveHint"],
+      GMAIL_REMOVED_LABELS_LIST: ["readOnlyHint"],
+      GOOGLESHEETS_CLEAR_VALUES: [],
+      NOTION_ARCHIVE_NOTION_PAGE: [],
+      SLACK_ARCHIVE_CONVERSATION: [],
+      GOOGLECALENDAR_CANCEL_EVENT: [],
+      GITHUB_REVOKE_TOKEN: [],
+      GOOGLEDRIVE_EMPTY_TRASH: [],
+      SUPABASE_DROP_TABLE: [],
+      SUPABASE_TRUNCATE_TABLE: [],
+      SLACK_UNINSTALL_APP: [],
+      GMAIL_DISCARD_DRAFTS: [],
+    };
+    for (const [slug, t] of Object.entries(tags)) {
+      routes[`GET /api/v3.1/tools/${slug}`] = () => toolBody(slug, t);
+    }
+    routes["GET /api/v3.1/tools/GITHUB_LIST_ISSUES"] = () =>
+      toolBody("GITHUB_LIST_ISSUES", ["readOnlyHint"]);
+    const apps = connector();
+
+    expect(await apps.deletes("GMAIL_SEND_EMAIL")).toBe(false);
+    expect(await apps.deletes("GMAIL_FETCH_EMAILS")).toBe(false);
+    expect(await apps.deletes("GMAIL_REMOVED_LABELS_LIST")).toBe(false);
+    expect(await apps.deletes("GMAIL_DELETE_MESSAGE")).toBe(true);
+    expect(await apps.deletes("GMAIL_MOVE_TO_TRASH")).toBe(true);
+    expect(await apps.deletes("GMAIL_EMPTY_FOLDER")).toBe(true);
+    // Untagged tools that clear, archive, cancel or revoke count as deletes too.
+    for (const slug of [
+      "GOOGLESHEETS_CLEAR_VALUES",
+      "NOTION_ARCHIVE_NOTION_PAGE",
+      "SLACK_ARCHIVE_CONVERSATION",
+      "GOOGLECALENDAR_CANCEL_EVENT",
+      "GITHUB_REVOKE_TOKEN",
+      "GOOGLEDRIVE_EMPTY_TRASH",
+      "SUPABASE_DROP_TABLE",
+      "SUPABASE_TRUNCATE_TABLE",
+      "SLACK_UNINSTALL_APP",
+      "GMAIL_DISCARD_DRAFTS",
+    ]) {
+      expect(await apps.deletes(slug), slug).toBe(true);
+    }
+    // A tool from an app Locus doesn't offer is never vouched for.
+    expect(await apps.deletes("GITHUB_LIST_ISSUES")).toBe(true);
+  });
+
+  test("a tool Composio doesn't know isn't offered: the lookup fails as a service error", async () => {
+    await expect(connector().offers("NOPE_TOOL")).rejects.toThrow(AppServiceError);
+  });
+
   test("a tool that ran and failed comes back as an error the model can read", async () => {
     routes[`POST ${SESSION}/trs_1/execute`] = () => ({
       data: {},
@@ -205,12 +427,12 @@ describe("Composio connector", () => {
   test("a session that failed to open is opened again on the next call", async () => {
     let fail = true;
     const open = routes[`POST ${SESSION}`];
-    routes[`POST ${SESSION}`] = (body) => {
+    routes[`POST ${SESSION}`] = (body, query) => {
       if (fail) {
         fail = false;
         return { error: { message: "down" } };
       }
-      return open?.(body);
+      return open?.(body, query);
     };
     routes[`POST ${SESSION}/trs_1/execute`] = () => ({
       data: {},
@@ -254,56 +476,25 @@ describe("Composio connector", () => {
       "Composio: toolkit index unavailable",
     );
   });
-
-  test("a tool from another toolkit never counts as read-only", async () => {
-    routes["GET /api/v3.1/tools/GMAIL_SNEAKY"] = () => ({
-      ...toolBody("GMAIL_SNEAKY", ["readOnlyHint"]),
-      toolkit: { slug: "github", name: "", logo: "" },
-    });
-    expect(await connector().readOnly("GMAIL_SNEAKY")).toBe(false);
-  });
 });
 
 describe("Composio connections", () => {
-  const connections = () => createComposioConnections({ apiKey: "test-key", baseURL });
-  const toolkitsBody = (gmail: "ACTIVE" | null) => ({
-    items: [
-      {
-        slug: "gmail",
-        name: "Gmail",
-        is_no_auth: false,
-        meta: { logo: "" },
-        connected_account: gmail
-          ? {
-              id: "ca_gmail",
-              status: gmail,
-              auth_config: { id: "ac_1", auth_scheme: "OAUTH2", is_composio_managed: true },
-            }
-          : null,
-      },
-      {
-        slug: "slack",
-        name: "Slack",
-        is_no_auth: false,
-        meta: { logo: "" },
-        connected_account: null,
-      },
-    ],
-    next_cursor: null,
-    total_pages: 1,
-  });
+  const connections = () =>
+    createComposioConnections({ apiKey: "test-key", baseURL, catalog: catalog() });
 
-  const ACCOUNTS = "/api/v3.1/connected_accounts";
-  /** The client's accounts for an app as Composio lists them, `next` naming a further page. */
-  const accountsBody = (accounts: [id: string, status: string][], next: string | null = null) => ({
-    items: accounts.map(([id, status]) => ({
+  /** The client's accounts as Composio lists them, `next` naming a further page. */
+  const accountsBody = (
+    accounts: [id: string, status: string, toolkit?: string][],
+    next: string | null = null,
+  ) => ({
+    items: accounts.map(([id, status, toolkit = "gmail"]) => ({
       id,
       status,
       status_reason: null,
       is_disabled: false,
       created_at: "2026-10-20T00:00:00Z",
       updated_at: "2026-10-20T00:00:00Z",
-      toolkit: { slug: "gmail" },
+      toolkit: { slug: toolkit },
       auth_config: {
         id: "ac_1",
         auth_scheme: "OAUTH2",
@@ -319,16 +510,24 @@ describe("Composio connections", () => {
   const deleted = () =>
     seen.filter((s) => s.method === "DELETE").map((s) => s.path.slice(ACCOUNTS.length + 1));
 
-  test("lists Locus's apps for the client, connected or not", async () => {
-    routes[`GET ${SESSION}/trs_1/toolkits`] = () => toolkitsBody("ACTIVE");
-    expect(await connections().list("client-1")).toEqual([
-      { toolkit: "gmail", name: "Gmail", connected: true },
-      { toolkit: "googlecalendar", name: "googlecalendar", connected: false },
-      { toolkit: "slack", name: "Slack", connected: false },
+  test("lists every app Locus offers for the client, with the ones it connected", async () => {
+    routes[`GET ${ACCOUNTS}`] = () =>
+      accountsBody([
+        ["ca_gmail", "ACTIVE", "gmail"],
+        ["ca_slack", "EXPIRED", "slack"],
+        // Connected before the app left Locus's catalog: still listed, so it can be removed.
+        ["ca_old", "ACTIVE", "oldapp"],
+      ]);
+    const listed = await connections().list("client-1");
+    expect(listed.map((app) => [app.toolkit, app.connected])).toEqual([
+      ["gmail", true],
+      ["slack", false],
+      ["googlecalendar", false],
+      ["oldapp", true],
     ]);
-    expect(seen.find((s) => s.path === SESSION)?.body).toMatchObject({
-      user_id: appUserId("client-1"),
-    });
+    expect(listed[0]).toMatchObject({ name: "Gmail", logo: "https://logos.test/gmail.png" });
+    const [list] = seen.filter((s) => s.path === ACCOUNTS);
+    expect(list?.query.getAll("user_ids").join(",")).toBe(appUserId("client-1"));
   });
 
   test("connecting gives the app's sign-in link, coming back to Locus", async () => {
@@ -340,14 +539,22 @@ describe("Composio connections", () => {
     expect(await connections().connect("client-1", "gmail", "https://locus.test/apps")).toBe(
       "https://accounts.google.test/o",
     );
+    expect(seen.find((s) => s.path === SESSION)?.body).toMatchObject({
+      user_id: appUserId("client-1"),
+      toolkits: { enable: ["gmail"] },
+      manage_connections: { enable: false },
+      instant: false,
+    });
   });
 
-  test("only apps Locus offers can be connected or disconnected", async () => {
-    await expect(connections().connect("client-1", "github", "https://x")).rejects.toThrow(
-      AppServiceError,
-    );
-    await expect(connections().disconnect("client-1", "github")).rejects.toThrow(AppServiceError);
-    expect(seen).toEqual([]);
+  test("only apps Locus offers can be connected", async () => {
+    for (const toolkit of ["github", "codeinterpreter", "notion"]) {
+      await expect(connections().connect("client-1", toolkit, "https://x")).rejects.toThrow(
+        AppServiceError,
+      );
+    }
+    // Only the catalog was read: no account, session or sign-in reached Composio.
+    expect(seen.filter((s) => s.path !== TOOLKITS)).toEqual([]);
   });
 
   test("disconnecting deletes every account the client has for that app, found by Locus", async () => {
@@ -367,6 +574,16 @@ describe("Composio connections", () => {
     }
     expect(lists[1]?.query.get("cursor")).toBe("page-2");
     expect(deleted()).toEqual(["ca_gmail", "ca_second"]);
+  });
+
+  test("an app that left the catalog can still be disconnected; a strange name can't", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_old", "ACTIVE", "oldapp"]]);
+    routes[`DELETE ${ACCOUNTS}/ca_old`] = () => ({ success: true });
+    await connections().disconnect("client-1", "oldapp");
+    expect(deleted()).toEqual(["ca_old"]);
+    seen = [];
+    await expect(connections().disconnect("client-1", "a&b")).rejects.toThrow(AppServiceError);
+    expect(seen).toEqual([]);
   });
 
   test("disconnecting an app that isn't connected does nothing", async () => {
@@ -390,10 +607,5 @@ describe("Composio connections", () => {
     });
     await connections().connect("client-1", "gmail", "https://locus.test/apps");
     expect(deleted()).toEqual(["ca_expired", "ca_abandoned"]);
-    expect(seen.find((s) => s.path === SESSION)?.body).toMatchObject({
-      user_id: appUserId("client-1"),
-      manage_connections: { enable: false },
-      instant: false,
-    });
   });
 });

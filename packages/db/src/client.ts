@@ -33,7 +33,15 @@ export function openTenantDb(url: string, authToken?: string): TenantDb {
   return drizzle(client, { schema: tenantSchema });
 }
 
-/** The control database is one database, so Drizzle's own migrator is enough for it. */
-export async function migrateControlDb(db: ControlDb): Promise<void> {
-  await migrate(db, { migrationsFolder: CONTROL_MIGRATIONS });
+/** One client's database over a connection already open with that client's own token. */
+export function tenantDbOver(client: Client): TenantDb {
+  return drizzle(client, { schema: tenantSchema });
+}
+
+/**
+ * The control database is one database, so Drizzle's own migrator is enough for it. `folder`
+ * is another set of control migrations, e.g. `main`'s from `downloadControlMigrations`.
+ */
+export async function migrateControlDb(db: ControlDb, folder = CONTROL_MIGRATIONS): Promise<void> {
+  await migrate(db, { migrationsFolder: folder });
 }

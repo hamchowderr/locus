@@ -64,14 +64,61 @@ describe("an app-style site's files", () => {
       FIRST_MIGRATION_PATH,
       "lib/db.ts",
       "lib/auth.ts",
+      "lib/members.ts",
       "lib/auth-client.ts",
       "lib/local-migrations.ts",
       "instrumentation.ts",
       "app/api/auth/[...all]/route.ts",
+      "lib/files.ts",
+      "lib/files-client.ts",
+      "app/api/files/upload/route.ts",
+      "app/api/files/ticket/route.ts",
+      "app/api/files/preview/[fileId]/route.ts",
     ]) {
       expect(app.map((f) => f.path)).toContain(path);
     }
     expect(withBackend(app)).toEqual(app);
+
+    // An older version of the uploads is replaced; Locus's own file code is kept current.
+    const older = [
+      ...app.map((f) => (f.path === "lib/files.ts" ? { ...f, content: "// old" } : f)),
+      { path: "app/api/files/[action]/route.ts", content: "// old" },
+    ];
+    const renewed = withBackend(older);
+    expect(text(renewed, "lib/files.ts")).toContain("keepFile");
+    expect(renewed.map((f) => f.path)).not.toContain("app/api/files/[action]/route.ts");
+
+    // A login file from before sign-ups went to HighLevel gets the hook; a changed one is kept.
+    expect(text(app, "lib/auth.ts")).toContain(
+      "databaseHooks: { user: { create: { after: memberSignedUp } } }",
+    );
+    const withAuth = (content: string) =>
+      app.map((f) => (f.path === "lib/auth.ts" ? { ...f, content } : f));
+    // lib/auth.ts exactly as sites got it before (#110), frozen so a template edit can't hide it.
+    const before = [
+      'import { betterAuth } from "better-auth";',
+      'import { drizzleAdapter } from "better-auth/adapters/drizzle";',
+      'import * as schema from "@/db/schema";',
+      'import { db, isPreviewDatabase } from "@/lib/db";',
+      "",
+      "// The site's own logins: email and password, stored in the site's own database. Server code",
+      "// only. The published site's secret is set by Locus on its host; the preview uses a fixed one,",
+      "// which is fine because the preview's database is a throwaway file.",
+      "export const auth = betterAuth({",
+      "  secret:",
+      "    process.env.SITE_AUTH_SECRET ??",
+      '    (isPreviewDatabase ? "locus-preview-only-not-a-secret-at-all" : undefined),',
+      '  database: drizzleAdapter(db, { provider: "sqlite", schema }),',
+      "  emailAndPassword: { enabled: true },",
+      "  telemetry: { enabled: false },",
+      "});",
+    ]
+      .join("\n")
+      .concat("\n");
+    expect(before).not.toContain("memberSignedUp");
+    expect(text(withBackend(withAuth(before)), "lib/auth.ts")).toBe(text(app, "lib/auth.ts"));
+    const custom = `${before}// magic links\n`;
+    expect(text(withBackend(withAuth(custom)), "lib/auth.ts")).toBe(custom);
 
     const grown = app.map((f) =>
       f.path === SITE_SCHEMA_PATH ? { ...f, content: `${f.content}// bookings\n` } : f,
@@ -99,6 +146,7 @@ describe("an app-style site's files", () => {
       .join("\n");
     expect(all).not.toMatch(/libsql:\/\/|eyJ[a-zA-Z0-9_-]{10,}/);
     expect(text(withBackend(site()), "lib/db.ts")).toContain("process.env.SITE_DATABASE_TOKEN");
+    expect(text(withBackend(site()), "lib/files.ts")).toContain("process.env.SITE_FILES_KEY");
   });
 
   it("runs the preview's migrations with the same ledger as Locus", () => {
@@ -232,6 +280,168 @@ describe("the generated preview database", () => {
       expect(Number(ledger.rows[0]?.n)).toBe(1);
     } finally {
       client.close();
+    }
+  });
+
+  it("keeps the preview's uploads in the sandbox, taking what a published site takes", async () => {
+    const files = await import(join(root, "lib/files.ts"));
+    expect(files.previewFiles).toBe(true);
+    const kept = await files.keepFile(new File(["png"], "../My photo.png", { type: "image/png" }));
+    expect(kept).toMatchObject({ name: "My-photo.png", contentType: "image/png", size: 3 });
+    expect(kept.url).toBe(`/api/files/preview/${kept.fileId}`);
+    const sent = await files.previewFileResponse(kept.fileId);
+    expect(await sent?.text()).toBe("png");
+    expect(sent?.headers.get("content-type")).toBe("image/png");
+    expect(sent?.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await files.previewFileResponse("../package.json")).toBeNull();
+
+    await expect(
+      files.keepFile(new File(["<svg/>"], "a.svg", { type: "image/svg+xml" })),
+    ).rejects.toThrow(/can't be uploaded/);
+    await expect(
+      files.keepFile(new File(["<script>"], "a.html", { type: "text/html" })),
+    ).rejects.toThrow(/can't be uploaded/);
+    // The preview has no upload server, so its own route takes files up to 25 MB.
+    expect(files.MAX_ROUTE_BYTES).toBe(25 * 1024 * 1024);
+    const big = await files.keepFile(
+      new File([new Uint8Array(files.MAX_FILE_BYTES + 1)], "big.png", { type: "image/png" }),
+    );
+    expect(big.size).toBe(files.MAX_FILE_BYTES + 1);
+    await expect(
+      files.keepFile(
+        new File([new Uint8Array(files.MAX_ROUTE_BYTES + 1)], "a.png", { type: "image/png" }),
+      ),
+    ).rejects.toThrow(/up to 25 MB/);
+    const video = await files.keepFile(new File(["mp4"], "clip.mp4", { type: "video/mp4" }));
+    const played = await files.previewFileResponse(video.fileId);
+    expect(played?.headers.get("content-type")).toBe("video/mp4");
+    expect(played?.headers.get("content-disposition")).toBeNull();
+    await expect(
+      files.startBigUpload({ name: "big.png", contentType: "image/png", size: 5_000_000 }),
+    ).resolves.toEqual({ uploadUrl: null, preview: true });
+
+    await files.deleteFiles([kept.fileId, big.fileId, video.fileId]);
+    expect(await files.previewFileResponse(kept.fileId)).toBeNull();
+  });
+
+  it("asks Locus for a ticket for a published site's bigger files", async () => {
+    await writeFile(
+      join(root, "lib/locus.ts"),
+      'export const locus = { siteApi: "https://locus.test/api/sites/s1" as string | null };\n',
+    );
+    vi.stubEnv("SITE_FILES_KEY", "files-key");
+    const sent: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return Response.json({
+        uploadUrl: "https://agent.test/site-files/upload",
+        ticket: "t.mac",
+        contentType: "video/mp4",
+        expiresAt: 1,
+      });
+    });
+    try {
+      const files = await import(join(root, "lib/files.ts"));
+      expect(files.previewFiles).toBe(false);
+      expect(files.MAX_ROUTE_BYTES).toBe(4 * 1024 * 1024);
+      const started = await files.startBigUpload(
+        { name: "clip.mp4", contentType: "video/mp4; codecs=avc1", size: 100 * 1024 * 1024 },
+        "203.0.113.9",
+      );
+      expect(started).toMatchObject({ uploadUrl: "https://agent.test/site-files/upload" });
+      expect(sent[0]?.url).toBe("https://locus.test/api/sites/s1/files/ticket");
+      const headers = sent[0]?.init.headers as Record<string, string>;
+      expect(headers.authorization).toBe("Bearer files-key");
+      expect(headers["x-locus-visitor-ip"]).toBe("203.0.113.9");
+      expect(JSON.parse(String(sent[0]?.init.body))).toEqual({
+        name: "clip.mp4",
+        contentType: "video/mp4",
+        size: 100 * 1024 * 1024,
+      });
+      // Checked here first: a video over 500 MB, or another file over 25 MB, never asks.
+      await expect(
+        files.startBigUpload({ name: "a.mp4", contentType: "video/mp4", size: 501 * 1024 * 1024 }),
+      ).rejects.toThrow(/up to 500 MB/);
+      await expect(
+        files.startBigUpload({
+          name: "a.pdf",
+          contentType: "application/pdf",
+          size: 26 * 1024 * 1024,
+        }),
+      ).rejects.toThrow(/up to 25 MB/);
+      await expect(
+        files.keepFile(
+          new File([new Uint8Array(files.MAX_FILE_BYTES + 1)], "a.png", { type: "image/png" }),
+        ),
+      ).rejects.toThrow(/up to 4 MB/);
+      expect(sent).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  /** Signs a member up with the site's own lib/auth.ts, as its sign-up page would. */
+  const signUp = async (email: string) => {
+    const { auth } = await import(join(root, "lib/auth.ts"));
+    await auth.api.signUpEmail({
+      body: { name: "Ann", email, password: "correct horse battery" },
+      headers: new Headers({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" }),
+    });
+  };
+  const closeDb = async () => (await import(join(root, "lib/db.ts"))).client.close();
+
+  it("sends nothing about the preview's members", async () => {
+    const sent: unknown[] = [];
+    vi.stubGlobal("fetch", async (...args: unknown[]) => {
+      sent.push(args);
+      return Response.json({ ok: true });
+    });
+    vi.stubEnv("SITE_FILES_KEY", "files-key");
+    try {
+      await (await import(join(root, "lib/local-migrations.ts"))).applyLocalMigrations();
+      await signUp("preview@example.test");
+      expect(sent).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+      await closeDb();
+    }
+  });
+
+  it("tells Locus about each new member of a published site, and never fails a sign-up", async () => {
+    await writeFile(
+      join(root, "lib/locus.ts"),
+      'export const locus = { siteApi: "https://locus.test/api/sites/s1" as string | null };\n',
+    );
+    vi.stubEnv("SITE_FILES_KEY", "files-key");
+    const sent: { url: string; init: RequestInit }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent.push({ url, init });
+      return Response.json({ ok: true });
+    });
+    try {
+      await (await import(join(root, "lib/local-migrations.ts"))).applyLocalMigrations();
+      await signUp("ann@example.test");
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.url).toBe("https://locus.test/api/sites/s1/members/signup");
+      const headers = sent[0]?.init.headers as Record<string, string>;
+      expect(headers.authorization).toBe("Bearer files-key");
+      expect(headers["x-locus-visitor-ip"]).toBe("203.0.113.9");
+      expect(JSON.parse(String(sent[0]?.init.body))).toEqual({
+        email: "ann@example.test",
+        name: "Ann",
+      });
+
+      // Locus being down never stops the sign-up.
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.stubGlobal("fetch", async () => {
+        throw new Error("offline");
+      });
+      await expect(signUp("bo@example.test")).resolves.toBeUndefined();
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("couldn't be reached"));
+      error.mockRestore();
+    } finally {
+      vi.unstubAllGlobals();
+      await closeDb();
     }
   });
 
