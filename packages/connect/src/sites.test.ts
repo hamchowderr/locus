@@ -152,9 +152,10 @@ describe("linking a Vercel project to a client", () => {
     const fake = fakeVercel({
       "GET /v10/projects": () => [200, { projects: [{ id: "prj_1", name: "acme", extra: 1 }] }],
     });
-    expect(await listHostProjects(deps(fake.fetch), ctx("owner"))).toEqual([
-      { id: "prj_1", name: "acme" },
-    ]);
+    expect(await listHostProjects(deps(fake.fetch), ctx("owner"))).toEqual({
+      projects: [{ id: "prj_1", name: "acme" }],
+      complete: true,
+    });
     expect(fake.calls[0]?.url.searchParams.get("teamId")).toBe(STUB_VERCEL_TEAM.id);
   });
 
@@ -197,10 +198,26 @@ describe("linking a Vercel project to a client", () => {
           ? [200, { projects: [{ id: "prj_old", name: "old" }], pagination: { next: null } }]
           : [200, { projects: [{ id: "prj_new", name: "new" }], pagination: { next: 1700 } }],
     });
-    expect((await listHostProjects(deps(fake.fetch), ctx("owner"))).map((p) => p.id)).toEqual([
-      "prj_new",
-      "prj_old",
-    ]);
+    const listing = await listHostProjects(deps(fake.fetch), ctx("owner"));
+    expect(listing.projects.map((p) => p.id)).toEqual(["prj_new", "prj_old"]);
+    expect(listing.complete).toBe(true);
+  });
+
+  it("says the listing is incomplete when it stops at the page cap", async () => {
+    let page = 0;
+    const fake = fakeVercel({
+      "GET /v10/projects": () => {
+        page++;
+        return [
+          200,
+          { projects: [{ id: `prj_${page}`, name: `p${page}` }], pagination: { next: page } },
+        ];
+      },
+    });
+    const listing = await listHostProjects(deps(fake.fetch), ctx("owner"));
+    expect(listing.complete).toBe(false);
+    expect(listing.projects).toHaveLength(10);
+    expect(fake.calls).toHaveLength(10);
   });
 
   it("holds one site per project in the database too, for agencies sharing a team", async () => {
