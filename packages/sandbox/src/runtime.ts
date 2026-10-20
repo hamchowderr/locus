@@ -38,4 +38,9 @@ export interface SiteRuntime {
 export interface RuntimeProvider {
   /** Opens (or reuses, if still alive) the runtime for one site. `key` identifies the site. */
   open(key: string): Promise<SiteRuntime>;
+  /**
+   * Deletes the site's runtime and its files for good, when the site is deleted. Nothing
+   * happens if it doesn't exist. A provider that can't do this leaves it out.
+   */
+  destroy?(key: string): Promise<void>;
 }

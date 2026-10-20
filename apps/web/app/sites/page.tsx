@@ -23,7 +23,14 @@ import {
   type SiteDeployment,
   siteDomainStatus,
 } from "@locus/connect";
-import { SITE_KINDS, TEMPLATES } from "@locus/studio";
+import {
+  DESIGN_QUESTIONS,
+  FONT_PRESETS,
+  MAX_SCREENSHOT_BYTES,
+  PALETTE_PRESETS,
+  SITE_KINDS,
+  TEMPLATES,
+} from "@locus/studio";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { publishDeps, siteDeps } from "@/lib/hosts";
@@ -459,6 +466,7 @@ export default async function Sites({
               ))}
             </select>
           </label>
+          <StartingPoints />
           <Button>Create site</Button>
         </form>
       )}
@@ -834,5 +842,92 @@ function FormLeads({ totals }: { totals: { delivered: number; failed: number } |
       )}
       {failed === 0 && "."}
     </p>
+  );
+}
+
+const SELECT = "mt-1 block w-full rounded-md border border-neutral-300 px-3 py-2 text-base";
+const options = (id: string) => DESIGN_QUESTIONS.find((q) => q.id === id)?.options ?? [];
+
+/**
+ * Optional starting points for a new site: the guided design questions, a site the person
+ * likes and a screenshot. The builder asks in the chat for anything left out.
+ */
+function StartingPoints() {
+  return (
+    <details className="space-y-3 rounded-md border border-neutral-200 p-3 text-sm">
+      <summary className="cursor-pointer text-neutral-700">
+        Describe it, or start from a site you like (optional)
+      </summary>
+      <label className="block">
+        <span className="text-neutral-700">What should the site do?</span>
+        <textarea
+          name="description"
+          rows={3}
+          maxLength={4000}
+          placeholder="A friendly site for a family dental practice that gets people to book a cleaning."
+          className={SELECT}
+        />
+      </label>
+      <Choice name="goal" label="What should a visitor do?" choices={options("goal")} />
+      <Choice name="audience" label="Who is it for?" choices={options("audience")} />
+      <Choice name="palette" label="Colours" choices={Object.keys(PALETTE_PRESETS)} />
+      <Choice name="fonts" label="Lettering" choices={Object.keys(FONT_PRESETS)} />
+      <label className="block">
+        <span className="text-neutral-700">Layout</span>
+        <select name="layout" defaultValue="" className={SELECT}>
+          <option value="">Let the builder decide</option>
+          <option value="single-page">One page</option>
+          <option value="multi-page">Several pages</option>
+        </select>
+      </label>
+      <fieldset>
+        <legend className="text-neutral-700">Pages it needs</legend>
+        <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
+          {options("pages").map((page) => (
+            <label key={page} className="flex items-center gap-1">
+              <input type="checkbox" name="pages" value={page} />
+              {page}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <Field
+        label="A site you like"
+        name="referenceUrl"
+        placeholder="example.com"
+        maxLength={2000}
+        autoComplete="off"
+      />
+      <label className="block">
+        <span className="text-neutral-700">
+          A screenshot you like (PNG, JPEG or WebP, up to {MAX_SCREENSHOT_BYTES / 1024 / 1024} MB)
+        </span>
+        <input
+          type="file"
+          name="screenshot"
+          accept="image/png,image/jpeg,image/webp"
+          className="mt-1 block w-full text-sm"
+        />
+      </label>
+      <p className="text-neutral-600">
+        The builder takes ideas from the site and screenshot, never their words or pictures.
+      </p>
+    </details>
+  );
+}
+
+function Choice({ name, label, choices }: { name: string; label: string; choices: string[] }) {
+  return (
+    <label className="block">
+      <span className="text-neutral-700">{label}</span>
+      <select name={name} defaultValue="" className={SELECT}>
+        <option value="">Let the builder ask</option>
+        {choices.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
