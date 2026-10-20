@@ -147,7 +147,11 @@ function op(id: string): GhlOperation {
  * published app-style site of an active client. Every answer for a wrong key, a site without
  * files or an unknown site is the same 401, so the route reveals nothing about other sites.
  */
-async function siteFor(deps: SiteFilesDeps, siteId: string, authorization: string | null) {
+export async function siteFor(
+  deps: Pick<SiteFilesDeps, "db" | "filesKey">,
+  siteId: string,
+  authorization: string | null,
+) {
   if (!/^[A-Za-z0-9-]{1,64}$/.test(siteId)) return null;
   if (!hasSiteFilesKey(deps.filesKey, siteId, authorization)) return null;
   const [row] = await deps.db
