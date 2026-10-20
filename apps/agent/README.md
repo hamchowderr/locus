@@ -41,6 +41,7 @@ docker build -f apps/agent/Dockerfile -t locus-agent .
 | The model provider's key | e.g. `ANTHROPIC_API_KEY`; not needed with `scripted` |
 | `LOCUS_WEB_VERCEL_BYPASS` | Only when the web app is behind Vercel's deployment protection (staging): the project's automation bypass, so the site builder's sandbox calls get through. The route still checks its own token |
 | `LOCUS_IMAGE_API_KEY` | Optional: image generation for the site builder, as the web app's |
+| `COMPOSIO_API_KEY` | Optional: Otaku's Composio project key. Set, every client's chat can use the apps that client connected (Gmail, Google Calendar, Slack; see `packages/harness/src/apps.ts`); unset, the chat has GHL tools only |
 | `PORT` | Defaults to 3000 |
 
 `GET /health` answers `ok`.
