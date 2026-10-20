@@ -999,3 +999,79 @@ describe("crm media", () => {
     });
   });
 });
+
+describe("crm tracking", () => {
+  const SNIPPET =
+    '<script src="https://link.msgsndr.com/js/external-tracking.js" data-tracking-id="tk_abc12345def"></script>';
+  const LAYOUT = `import type { Metadata } from "next";
+import "./globals.css";
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+      </body>
+    </html>
+  );
+}
+`;
+
+  it("writes the script component and renders it once in the layout", async () => {
+    const { call } = await setup();
+    await t.session.workspace.writeFile("app/layout.tsx", LAYOUT);
+    expect(await call("crm", { action: "add_tracking", snippet: SNIPPET })).toMatchObject({
+      written: "components/ghl-tracking.tsx",
+      layout: "added <GhlTracking />",
+    });
+    const component = String(await t.session.workspace.readFile("components/ghl-tracking.tsx"));
+    expect(component).toContain('src="https://link.msgsndr.com/js/external-tracking.js"');
+    expect(component).toContain('data-tracking-id="tk_abc12345def"');
+    expect(component).toContain("if (!locus.leadEndpoint) return null;");
+    const layout = String(await t.session.workspace.readFile("app/layout.tsx"));
+    expect(layout).toContain(
+      'import "./globals.css";\nimport { GhlTracking } from "@/components/ghl-tracking";',
+    );
+    expect(layout).toContain("        {children}\n        <GhlTracking />\n      </body>");
+    expect(await call("crm", { action: "add_tracking", snippet: SNIPPET })).toMatchObject({
+      layout: "already had it",
+    });
+    expect(
+      String(await t.session.workspace.readFile("app/layout.tsx")).match(/<GhlTracking/g),
+    ).toHaveLength(1);
+  });
+
+  it("refuses anything but GHL's tracking snippet, and a layout without a body", async () => {
+    const { call } = await setup();
+    await t.session.workspace.writeFile("app/layout.tsx", LAYOUT);
+    for (const snippet of [
+      '<script src="https://evil.example/x.js" data-tracking-id="tk_abc12345def"></script>',
+      '<script src="http://link.msgsndr.com/js/external-tracking.js" data-tracking-id="tk_abc12345def"></script>',
+      '<script src="https://link.msgsndr.com/js/external-tracking.js"></script>',
+      '<script src="https://link.msgsndr.com/js/external-tracking.js" data-tracking-id="abc"></script>',
+    ]) {
+      expect(await call("crm", { action: "add_tracking", snippet })).toMatchObject({
+        error: expect.stringContaining("isn't the CRM's tracking snippet"),
+      });
+    }
+    await t.session.workspace.writeFile("app/layout.tsx", "export default function L() {}");
+    expect(await call("crm", { action: "add_tracking", snippet: SNIPPET })).toMatchObject({
+      error: expect.stringContaining("no <body>"),
+    });
+    expect(await t.session.workspace.readFile("components/ghl-tracking.tsx")).toBeNull();
+  });
+
+  it("asks a person before adding a script from a domain that isn't GHL's own", async () => {
+    const { tools } = await setup();
+    // biome-ignore lint/suspicious/noExplicitAny: the rule takes the tool's input
+    const rule = tools.crm.requireApproval as (input: any) => boolean;
+    expect(rule({ action: "add_tracking", snippet: SNIPPET })).toBe(false);
+    expect(
+      rule({
+        action: "add_tracking",
+        snippet: SNIPPET.replace("link.msgsndr.com", "link.myagency.com"),
+      }),
+    ).toBe(true);
+    expect(rule({ action: "calendars" })).toBe(false);
+  });
+});

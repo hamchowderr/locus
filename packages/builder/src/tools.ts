@@ -5,12 +5,17 @@ import {
   briefForAgent,
   calendarEmbedFile,
   DesignBrief,
+  GHL_TRACKING_PATH,
+  ghlTrackingFile,
+  isGhlTrackingHost,
   LOCUS_PROXY_PATH,
   LOCUS_SETTINGS_PATH,
+  layoutWithTracking,
   locusProxyFile,
   locusSettingsFile,
   normalizeSitePath,
   openQuestions,
+  parseTrackingSnippet,
   readBrief,
   SCREENSHOT_TYPES,
   seoIssues,
@@ -108,6 +113,7 @@ const CRM_ACTIONS = [
   "add_calendar_embed",
   "media",
   "use_media",
+  "add_tracking",
 ] as const;
 const MEDIA_USES = ["favicon", "share", "image"] as const;
 
@@ -929,8 +935,17 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "site-booking skill first. media: the client's Media Library images (id, name, format), " +
       "newest first; `search` matches names. use_media: copy image `id` into the site `as` " +
       "favicon (the site's icon), share (the link-preview image) or image (under public/, at " +
-      "`path` if given); pass the same `search` it was found with.",
-    requireApproval: noApproval,
+      "`path` if given); pass the same `search` it was found with. add_tracking: put the CRM's " +
+      "external tracking script (`snippet`, the <script> tag the person copies from Settings → " +
+      "External Tracking) on every page; it links visitors to contacts and lets CRM workflows " +
+      "trigger on page views and forms.",
+    // A tracking script from anywhere but GHL's own domains (an agency's white-label link
+    // domain, or a snippet the agent was talked into) runs on every page: a person says yes.
+    requireApproval: (input) => {
+      if (input?.action !== "add_tracking") return false;
+      const tracking = parseTrackingSnippet(input.snippet ?? "");
+      return tracking !== null && !isGhlTrackingHost(tracking.src);
+    },
     inputSchema: z.object({
       action: z.enum(CRM_ACTIONS),
       overwrite: z.boolean().optional(),
@@ -938,6 +953,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       id: z.string().max(64).optional(),
       as: z.enum(MEDIA_USES).optional(),
       path: z.string().optional(),
+      snippet: z.string().max(2000).optional(),
     }),
     execute: withSession(
       async (
@@ -949,6 +965,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           id?: string | undefined;
           as?: (typeof MEDIA_USES)[number] | undefined;
           path?: string | undefined;
+          snippet?: string | undefined;
         },
       ) => {
         switch (input.action) {
@@ -1003,6 +1020,36 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
               media: media
                 .map((m) => `id: ${m.id} | name: ${m.name} | format: ${m.format}`)
                 .join("\n"),
+            };
+          }
+          case "add_tracking": {
+            const tracking = parseTrackingSnippet(
+              need(
+                input.snippet,
+                "add_tracking needs the snippet from the CRM's External Tracking",
+              ),
+            );
+            if (!tracking) {
+              throw new BuilderError(
+                "That isn't the CRM's tracking snippet. Ask for the whole <script> tag from " +
+                  "Settings → External Tracking (its src ends in /js/external-tracking.js and it " +
+                  "has a data-tracking-id starting tk_).",
+              );
+            }
+            const layout = await session.workspace.readFile("app/layout.tsx");
+            const updated = typeof layout === "string" ? layoutWithTracking(layout) : null;
+            if (!updated) {
+              throw new BuilderError(
+                "app/layout.tsx has no <body> to add the script to. Fix the layout first.",
+              );
+            }
+            const file = ghlTrackingFile(tracking);
+            await session.workspace.writeFile(file.path, file.content);
+            if (updated !== layout) await session.workspace.writeFile("app/layout.tsx", updated);
+            return {
+              written: GHL_TRACKING_PATH,
+              layout: updated === layout ? "already had it" : "added <GhlTracking />",
+              note: "It loads on the published site only, never in the preview.",
             };
           }
           case "use_media":
