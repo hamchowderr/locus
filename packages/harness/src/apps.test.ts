@@ -50,7 +50,7 @@ const context = () => {
 };
 
 describe("app tools", () => {
-  test("only apps Locus offers are listed, and unconnected ones point to the Apps page", async () => {
+  test("only apps Locus offers are listed, and unconnected ones point to the Connect button", async () => {
     const tools = createAppTools(fakeApps().connector);
     const found = await tools.find_app_tools.execute?.({ task: "email" }, {} as never);
     expect(found).toEqual({
@@ -59,7 +59,7 @@ describe("app tools", () => {
         expect.objectContaining({ slug: "GMAIL_SEND_EMAIL" }),
       ],
       notConnected: ["slack"],
-      note: expect.stringMatching(/Apps page/),
+      note: expect.stringMatching(/Connect button/),
     });
   });
 

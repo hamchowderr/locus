@@ -34,6 +34,7 @@ import {
   useApprovalViews,
 } from '@/components/chat/approval-view';
 import { ChatMarkdown } from '@/components/chat/chat-markdown';
+import { appName, ConnectAppsCard } from '@/components/chat/connect-apps-card';
 import { GeneratedImage } from '@/components/chat/tool-views';
 import { Button } from '@/components/ui/button';
 import type { AgentControllerContentPart, PendingApproval } from '@/lib/agent-controller/events';
@@ -335,7 +336,7 @@ export function TranscriptPart({
         />
       );
     }
-    return (
+    const tool = (
       <Tool>
         <ToolHeader
           type={`tool-${call.name}`}
@@ -356,6 +357,22 @@ export function TranscriptPart({
         </ToolContent>
       </Tool>
     );
+    // find_app_tools names the apps the client hasn't connected: offer to connect them here.
+    const notConnected = (result?.result as { notConnected?: unknown } | undefined)?.notConnected;
+    if (call.name === 'find_app_tools' && Array.isArray(notConnected) && notConnected.length > 0) {
+      return (
+        <>
+          {tool}
+          <ConnectAppsCard
+            toolkits={notConnected.filter((t): t is string => typeof t === 'string')}
+            onConnected={(toolkit) =>
+              void controller.sendMessage(`I've connected ${appName(toolkit)}. Please carry on.`)
+            }
+          />
+        </>
+      );
+    }
+    return tool;
   }
   return null;
 }
