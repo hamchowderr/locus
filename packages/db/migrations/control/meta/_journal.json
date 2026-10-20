@@ -131,8 +131,15 @@
     {
       "idx": 18,
       "version": "6",
-      "when": 1792477311596,
-      "tag": "0018_site_folder",
+      "when": 1792478368975,
+      "tag": "0018_site_booking_calendars",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792481183542,
+      "tag": "0019_site_folder",
       "breakpoints": true
     }
   ]
