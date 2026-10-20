@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import type { ControlDb } from "./client.ts";
-import { location } from "./control/schema.ts";
+import { location, siteBackend } from "./control/schema.ts";
 import type { TenantProvisioner } from "./provisioner.ts";
 import { migrateTenant, type TenantMigration } from "./tenant-migrations.ts";
 
@@ -50,7 +50,10 @@ export async function finishProvisioning(deps: ProvisionDeps, locationId: string
   await deps.control.update(location).set({ status: "active" }).where(eq(location.id, locationId));
 }
 
-/** Deletes the client's database, then its registry row (which cascades to everything else). */
+/**
+ * Deletes the databases of the client's app-style sites, then the client's own database, then
+ * its registry row (which cascades to everything else). Safe to repeat after a failure.
+ */
 export async function offboardLocation(deps: ProvisionDeps, locationId: string) {
   const [loc] = await deps.control.select().from(location).where(eq(location.id, locationId));
   if (!loc) return;
@@ -58,6 +61,14 @@ export async function offboardLocation(deps: ProvisionDeps, locationId: string) 
     .update(location)
     .set({ status: "offboarding" })
     .where(eq(location.id, locationId));
+  const backends = await deps.control
+    .select()
+    .from(siteBackend)
+    .where(eq(siteBackend.locationId, locationId));
+  for (const backend of backends) {
+    await deps.provisioner.destroy(backend.tursoDbName);
+    await deps.control.delete(siteBackend).where(eq(siteBackend.siteId, backend.siteId));
+  }
   await deps.provisioner.destroy(loc.tursoDbName);
   await deps.control.delete(location).where(eq(location.id, locationId));
 }

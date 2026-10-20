@@ -77,6 +77,12 @@ export const site = sqliteTable(
     origin: text("origin", { enum: ["studio", "linked"] })
       .notNull()
       .default("studio"),
+    /**
+     * The client's calendars the published site books on, as a JSON array of GHL calendar ids,
+     * read from the site's code each time it is published. A booking on any other calendar is
+     * refused, so a visitor can't book a calendar the site doesn't offer.
+     */
+    bookingCalendars: text("booking_calendars", { mode: "json" }).$type<string[]>(),
     createdAt: createdAt(),
   },
   (t) => [
@@ -86,6 +92,74 @@ export const site = sqliteTable(
     // Each save replaces the whole repository, so a repository is one site.
     unique("site_repo_full_name_unique").on(t.repoFullName),
   ],
+);
+
+/**
+ * Clients the agency turned the site builder off for, on the Clients page. No row means on. Its
+ * own table (not a `location` column) so its migration can be safely re-run.
+ */
+export const siteBuilderOff = sqliteTable("site_builder_off", {
+  locationId: text("location_id")
+    .primaryKey()
+    .references(() => location.id, { onDelete: "cascade" }),
+});
+
+/**
+ * A member's access to one site, for members who don't already reach every client. No row
+ * means "manage": anyone who may work on the client may build its sites unless an owner or
+ * admin made them view-only here.
+ */
+export const siteMemberAccess = sqliteTable(
+  "site_member_role",
+  {
+    siteId: text("site_id")
+      .notNull()
+      .references(() => site.id, { onDelete: "cascade" }),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => member.id, { onDelete: "cascade" }),
+    level: text("level", { enum: ["view", "manage"] }).notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.siteId, t.memberId] }),
+    index("site_member_role_member_idx").on(t.memberId),
+  ],
+);
+
+/**
+ * The folder the agency filed a site under on the Sites page. No row means no folder. Its own
+ * table (not a `site` column) so its migration can be safely re-run.
+ */
+export const siteFolder = sqliteTable("site_folder", {
+  siteId: text("site_id")
+    .primaryKey()
+    .references(() => site.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+});
+
+/**
+ * The database of an app-style site (member logins, bookings, its own records), on Otaku's
+ * Turso. Plain websites have no row here. Like `location`, a registry row only: the site's
+ * data lives in that database, never in this one.
+ */
+export const siteBackend = sqliteTable(
+  "site_backend",
+  {
+    // Restrict, not cascade: deleting the site or client row must never leave its Turso
+    // database behind unreachable. Whatever removes them destroys the database first.
+    siteId: text("site_id")
+      .primaryKey()
+      .references(() => site.id, { onDelete: "restrict" }),
+    /** The site's client, so every lookup is scoped by the session's client as well. */
+    locationId: text("location_id")
+      .notNull()
+      .references(() => location.id, { onDelete: "restrict" }),
+    tursoDbName: text("turso_db_name").notNull().unique(),
+    /** Read from the provisioner's response, never constructed. */
+    tursoDbHostname: text("turso_db_hostname").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("site_backend_location_idx").on(t.locationId)],
 );
 
 // The three connections. Each names its credential by path (`secretRef`); the value lives in
@@ -223,11 +297,22 @@ export const usageEvent = sqliteTable(
     credits: integer("credits").notNull(),
     /** The measurement the credits were priced from: model and tokens, image count, seconds. */
     detail: text("detail", { mode: "json" }),
+    /**
+     * The part of `credits` past the plan's monthly credits that the agency pays for as extra
+     * usage (`usage_overage`). Zero unless extra usage was on when the event was recorded.
+     */
+    overageCredits: integer("overage_credits").notNull().default(0),
+    /** When the overage was sent to Stripe's meter; null while it is still to send. */
+    overageReportedAt: integer("overage_reported_at", { mode: "timestamp_ms" }),
     createdAt: createdAt(),
   },
   (t) => [
     index("usage_event_location_created_idx").on(t.locationId, t.createdAt),
     index("usage_event_org_created_idx").on(t.organizationId, t.createdAt),
+    // Only events still to send to Stripe, so the report job reads nothing else.
+    index("usage_event_overage_unreported_idx")
+      .on(t.createdAt)
+      .where(sql`${t.overageCredits} > 0 and ${t.overageReportedAt} is null`),
   ],
 );
 
@@ -247,6 +332,8 @@ export const usageMonth = sqliteTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     /** Hundredths of a credit. */
     credits: integer("credits").notNull(),
+    /** The part of `credits` billed as extra usage, in hundredths of a credit. */
+    overageCredits: integer("overage_credits").notNull().default(0),
   },
   (t) => [
     primaryKey({ columns: [t.locationId, t.month] }),
@@ -263,6 +350,21 @@ export const usageLimit = sqliteTable("usage_limit", {
   monthlyCreditCap: integer("monthly_credit_cap"),
   alertAtPercent: integer("alert_at_percent").notNull().default(80),
   paused: integer("paused", { mode: "boolean" }).notNull().default(false),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/**
+ * An agency's extra usage: credits past its plan's monthly credits, billed through Stripe's meter
+ * at the end of the billing period. No row, or `enabled` false, means generation stops at the
+ * plan's credits.
+ */
+export const usageOverage = sqliteTable("usage_overage", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(false),
+  /** Extra credits the agency allows per calendar month (UTC), in hundredths of a credit. */
+  monthlyCreditLimit: integer("monthly_credit_limit").notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 

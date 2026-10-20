@@ -14,8 +14,37 @@ export {
   type ProvisionDeps,
   provisionLocation,
 } from "./locations.ts";
-export { LocalProvisioner, type TenantProvisioner, tenantDbName } from "./provisioner.ts";
+export {
+  type CreatedDatabase,
+  type DatabaseFork,
+  LocalProvisioner,
+  siteDbName,
+  type TenantProvisioner,
+  tenantDbName,
+} from "./provisioner.ts";
 export { DbSecretStore } from "./secrets.ts";
+export {
+  listSiteTables,
+  listSiteUsers,
+  openSiteDb,
+  readSiteRows,
+  type SiteColumn,
+  type SiteRows,
+  type SiteTable,
+  type SiteUser,
+} from "./site-db.ts";
+export {
+  applySiteMigrations,
+  migrationStatements,
+  pendingSiteMigrations,
+  SITE_DATABASE_ENV,
+  SITE_MIGRATIONS_DIR,
+  SITE_MIGRATIONS_TABLE,
+  type SiteMigration,
+  SiteMigrationError,
+  STATEMENT_BREAKPOINT,
+  siteMigrationsIn,
+} from "./site-migrations.ts";
 export {
   loadTenantMigrations,
   type MigrateTenantsDeps,

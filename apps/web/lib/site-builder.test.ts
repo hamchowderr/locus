@@ -9,9 +9,14 @@ import {
   authorizeClient,
   ClientAccessDenied,
   creditsFor,
+  listSiteMembers,
   mintAgentToWebToken,
   type SessionContext,
   selectClient,
+  setSiteAccess,
+  setSiteBuilder,
+  siteAccessLevel,
+  viewOnlySites,
 } from "@locus/auth";
 import { BuilderError, PublishError } from "@locus/builder";
 import {
@@ -23,6 +28,7 @@ import {
   type PublishDeps,
   STUB_GITHUB_INSTALLATION,
   type StubGithub,
+  setSiteFolder,
 } from "@locus/connect";
 import {
   type ControlDb,
@@ -41,14 +47,24 @@ import {
   organization,
   session,
   site,
+  siteBackend,
+  siteFolder,
+  siteMemberAccess,
   subscription,
   usageEvent,
   usageLimit,
   user,
 } from "@locus/db/control";
+import { siteBrief } from "@locus/db/tenant";
 import { FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
-import { readBrief, SiteWorkspace } from "@locus/studio";
+import {
+  annotateSource,
+  draftFingerprint,
+  readBrief,
+  SiteWorkspace,
+  SOURCE_ATTR,
+} from "@locus/studio";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -66,12 +82,14 @@ import {
   chooseActiveSite,
   closeClientDbs,
   cookieValue,
+  copyClientSite,
   createClientSite,
   createSiteBuilder,
   deleteClientSite,
   leaseClientDb,
   newSiteRefusal,
   openClientDb,
+  POOL_IDLE_MS,
   pooledUsers,
   publishLatestVersion,
   publishMessage,
@@ -81,8 +99,11 @@ import {
   SITE_ID_KEY,
   type SiteBuilderDeps,
   SiteInputError,
+  saveVisualEdits,
   siteLeadTotals,
+  siteNames,
   siteRuntimeKey,
+  siteSeo,
   toMeasurement,
   usageMeter,
 } from "./site-builder.ts";
@@ -408,6 +429,16 @@ describe("publishing saved versions", () => {
       { action: "write", path: "app/about/page.tsx", content: "about" },
       rc,
     );
+    await call(
+      builder.tools,
+      "files",
+      {
+        action: "write",
+        path: "app/book/page.tsx",
+        content: '<Booking calendarId="cal1" form="consult" />\n<Booking calendarId={someVar} />',
+      },
+      rc,
+    );
     const saved = await call(
       builder.tools,
       "versions",
@@ -432,6 +463,34 @@ describe("publishing saved versions", () => {
     expect(latest?.commitSha).toMatch(/\w+/);
     const [row] = await db.select().from(site).where(eq(site.id, siteId));
     expect(row?.status).toBe("pushed");
+    // Bookings are taken on the calendars the published code names, and only those.
+    expect(row?.bookingCalendars).toEqual(["cal1"]);
+  });
+
+  it("publishes with its Vercel address until its domain is live, and checks its search basics", async () => {
+    const { client, siteId } = await startedSite();
+    const { repoFullName } = await ensureSiteRepo(publishDeps(), ctx("owner"), client, {
+      siteId,
+      name: "a-site",
+    });
+    // A domain Vercel can't confirm is live (here, no Vercel at all) isn't the address yet.
+    await db
+      .update(site)
+      .set({ customDomain: "www.a-site.test", deployUrl: "https://a-site.vercel.app" })
+      .where(eq(site.id, siteId));
+    await publishLatestVersion(deps(), ctx("owner"), client, siteId);
+    const pushed = github.repoFiles(repoFullName as string);
+    expect(pushed?.["lib/locus.ts"]).toContain('siteUrl: "https://a-site.vercel.app"');
+    expect(pushed?.["app/sitemap.ts"]).toContain("locus.pages.map");
+    expect(pushed?.["app/llms.txt/route.ts"]).toContain("export function GET");
+
+    const checks = await siteSeo(deps(), client, [siteId, "not-a-site"]);
+    expect([...checks.keys()]).toEqual([siteId]);
+    expect(checks.get(siteId)).toMatchObject({
+      version: 1,
+      issues: [],
+      pages: [expect.objectContaining({ path: "/", canonical: "/" })],
+    });
   });
 
   it("publishes the latest saved version from the Sites page, without the chat", async () => {
@@ -803,6 +862,291 @@ describe("publishing saved versions", () => {
   });
 });
 
+describe("copying a site", () => {
+  async function built(userId = "owner") {
+    const client = await authorized(userId, clientA);
+    const { siteId } = await createClientSite(deps(), ctx(userId), client, {
+      name: "Bright Smiles",
+      kind: "website",
+      templateId: "blank",
+    });
+    const builder = createSiteBuilder(deps(), { client });
+    const rc = context({ [SITE_ID_KEY]: siteId });
+    await call(builder.tools, "files", { action: "write", path: "extra.txt", content: "v2" }, rc);
+    await call(builder.tools, "versions", { action: "save", message: "Add extra" }, rc);
+    // Unsaved work isn't copied: only the latest saved version is.
+    await call(builder.tools, "files", { action: "write", path: "draft.txt", content: "x" }, rc);
+    await db.update(site).set({ repoFullName: "agency/smiles" }).where(eq(site.id, siteId));
+    await db.insert(siteFolder).values({ siteId, name: "Dental" });
+    return { client, siteId };
+  }
+
+  async function contents(client: AuthorizedClient, siteId: string) {
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      const ws = new SiteWorkspace(tenant, siteId);
+      const latest = await ws.latestVersion();
+      const files = latest ? await ws.versionFiles(latest.id) : [];
+      return {
+        brief: await readBrief(tenant, siteId),
+        latest,
+        files: Object.fromEntries(files.map((f) => [f.path, f.content])),
+      };
+    } finally {
+      tenant.$client.close();
+    }
+  }
+
+  it("makes a new draft for another client from the latest saved version only", async () => {
+    const { client, siteId } = await built();
+    const to = await authorized("owner", clientB);
+    const copy = await copyClientSite(deps(), ctx("owner"), client, siteId, to, {
+      name: " Smiles Two ",
+    });
+    expect(copy.version).toMatchObject({ number: 1, source: "copy", parentId: null });
+
+    const [row] = await db.select().from(site).where(eq(site.id, copy.siteId));
+    // A fresh draft: nothing published, and folders stay with their own client.
+    expect(row).toMatchObject({
+      locationId: clientB,
+      status: "draft",
+      repoFullName: null,
+      hostProjectId: null,
+      customDomain: null,
+    });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual(
+      [],
+    );
+    const original = await contents(client, siteId);
+    const copied = await contents(to, copy.siteId);
+    expect(copied.files).toEqual(original.files);
+    expect(copied.files["extra.txt"]).toBe("v2");
+    expect(copied.files).not.toHaveProperty("draft.txt");
+    expect(copied.brief).toEqual({ ...original.brief, name: "Smiles Two" });
+    expect(copied.latest?.message).toBe("Copied from Bright Smiles, version 2");
+    // The original is untouched.
+    expect(original.latest?.number).toBe(2);
+    expect(original.brief?.name).toBe("Bright Smiles");
+
+    const audits = await db.select().from(auditLog).where(eq(auditLog.action, "site.create"));
+    expect(audits.at(-1)).toMatchObject({
+      locationId: clientB,
+      actorUserId: "owner",
+      detail: {
+        siteId: copy.siteId,
+        copiedFrom: { locationId: clientA, siteId, version: 2 },
+      },
+    });
+  });
+
+  it("keeps the folder when copying within the same client", async () => {
+    const { client, siteId } = await built();
+    const copy = await copyClientSite(deps(), ctx("owner"), client, siteId, client, {
+      name: "Again",
+    });
+    const [row] = await db.select().from(site).where(eq(site.id, copy.siteId));
+    expect(row).toMatchObject({ locationId: clientA, repoFullName: null });
+    expect(await db.select().from(siteFolder).where(eq(siteFolder.siteId, copy.siteId))).toEqual([
+      { siteId: copy.siteId, name: "Dental" },
+    ]);
+  });
+
+  it("only copies between clients the member passed the staff check for", async () => {
+    const { client, siteId } = await built("staff");
+    await expect(authorized("staff", clientB)).rejects.toBeInstanceOf(ClientAccessDenied);
+    const forged = {
+      location: { id: clientB, organizationId: "agency-a" },
+      memberId: "staff@agency-a",
+    } as AuthorizedClient;
+    await expect(
+      copyClientSite(deps(), ctx("staff"), client, siteId, forged, { name: "X" }),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    // And a site of another client can't be named as the source.
+    const b = await authorized("owner", clientB);
+    await expect(
+      copyClientSite(deps(), ctx("owner"), b, siteId, b, { name: "X" }),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(await db.select().from(site)).toHaveLength(1);
+  });
+
+  it("refuses a site not built in Locus, and a blank name, leaving nothing behind", async () => {
+    const client = await authorized("owner", clientA);
+    await db.insert(site).values({ id: "linked", locationId: clientA, hostProjectId: "prj_1" });
+    await expect(
+      copyClientSite(deps(), ctx("owner"), client, "linked", client, { name: "X" }),
+    ).rejects.toThrow(/built in Locus/);
+    const { siteId } = await built();
+    await expect(
+      copyClientSite(deps(), ctx("owner"), client, siteId, client, { name: "  " }),
+    ).rejects.toBeInstanceOf(SiteInputError);
+    expect(await db.select().from(site)).toHaveLength(2);
+  });
+
+  it("counts against the plan's new sites a month", async () => {
+    const { client, siteId } = await built();
+    await expect(
+      copyClientSite(deps({ billing: true }), ctx("owner"), client, siteId, client, { name: "X" }),
+    ).rejects.toThrow(/Choose a Locus plan/);
+    expect(await db.select().from(site)).toHaveLength(1);
+  });
+});
+
+describe("turning the site builder off for clients", () => {
+  it("is for owners and admins, only for the agency's clients, and counts what changed", async () => {
+    await expect(setSiteBuilder(db, ctx("staff"), [clientA], false)).rejects.toBeInstanceOf(
+      ClientAccessDenied,
+    );
+    await expect(
+      setSiteBuilder(db, ctx("owner"), [clientA, "someone-elses"], false),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(await setSiteBuilder(db, ctx("owner"), [clientA, clientB, clientA], false)).toBe(2);
+    expect(await setSiteBuilder(db, ctx("owner"), [clientA], false)).toBe(0);
+    expect(await setSiteBuilder(db, ctx("owner"), [clientB], true)).toBe(1);
+    expect((await authorized("owner", clientA)).location.siteBuilder).toBe(false);
+    expect((await authorized("owner", clientB)).location.siteBuilder).toBe(true);
+  });
+
+  it("stops creating, copying in, choosing and building, but not deleting a draft", async () => {
+    const owner = await authorized("owner", clientA);
+    const { siteId } = await createClientSite(deps(), ctx("owner"), owner, {
+      name: "A",
+      kind: "website",
+      templateId: "blank",
+    });
+    const intoB = await createClientSite(deps(), ctx("owner"), await authorized("owner", clientB), {
+      name: "B",
+      kind: "website",
+      templateId: "blank",
+    });
+    await db.insert(session).values({
+      id: "s-owner",
+      token: "t-owner",
+      userId: "owner",
+      expiresAt: new Date(Date.now() + 3_600_000),
+      createdAt: now,
+      updatedAt: now,
+    });
+    await chooseActiveSite(db, ctx("owner"), owner, siteId);
+    await setSiteBuilder(db, ctx("owner"), [clientA], false);
+
+    // A fresh staff check sees the switch.
+    const off = await authorized("owner", clientA);
+    await expect(
+      createClientSite(deps(), ctx("owner"), off, { name: "X", kind: "website" }),
+    ).rejects.toThrow(/turned off for this client/);
+    const b = await authorized("owner", clientB);
+    await expect(
+      copyClientSite(deps(), ctx("owner"), b, intoB.siteId, off, { name: "X" }),
+    ).rejects.toThrow(/turned off for this client/);
+    await expect(chooseActiveSite(db, ctx("owner"), off, siteId)).rejects.toThrow(
+      /turned off for this client/,
+    );
+    expect(await activeSiteIdForSession(db, ctx("owner"), off)).toBeNull();
+    const builder = createSiteBuilder(deps(), { client: off });
+    await expect(
+      builder.resolve(context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: off })),
+    ).rejects.toThrow(/turned off for this client/);
+
+    await deleteClientSite(deps(), ctx("owner"), off, siteId);
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+  });
+});
+
+describe("view-only access to a site", () => {
+  async function siteWithStaff() {
+    const owner = await authorized("owner", clientA);
+    const { siteId } = await createClientSite(deps(), ctx("owner"), owner, {
+      name: "A",
+      kind: "website",
+      templateId: "blank",
+    });
+    const other = await createClientSite(deps(), ctx("owner"), owner, {
+      name: "Other",
+      kind: "website",
+      templateId: "blank",
+    });
+    return { owner, siteId, otherId: other.siteId };
+  }
+
+  it("lists the members restricted to this client, and only an owner or admin sets them", async () => {
+    const { owner, siteId } = await siteWithStaff();
+    const staff = await authorized("staff", clientA);
+    expect(await listSiteMembers(db, ctx("owner"), owner, siteId)).toEqual([
+      { memberId: "staff@agency-a", name: "staff", email: "staff@agency.test", level: "manage" },
+    ]);
+    await expect(
+      setSiteAccess(db, ctx("staff"), staff, siteId, ["staff@agency-a"]),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    // Owners always manage, so they can't be made view-only, nor can a stranger.
+    await expect(
+      setSiteAccess(db, ctx("owner"), owner, siteId, ["owner@agency-a"]),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    await setSiteAccess(db, ctx("owner"), owner, siteId, ["staff@agency-a"]);
+    expect(await listSiteMembers(db, ctx("owner"), owner, siteId)).toMatchObject([
+      { level: "view" },
+    ]);
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("view");
+    expect(await siteAccessLevel(db, owner, siteId)).toBe("manage");
+    // Promoted to admin: they manage everything, and saving the site's access leaves their
+    // setting alone for if they're made a member again.
+    await db.update(member).set({ role: "admin" }).where(eq(member.id, "staff@agency-a"));
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("manage");
+    await setSiteAccess(db, ctx("owner"), owner, siteId, []);
+    await db.update(member).set({ role: "member" }).where(eq(member.id, "staff@agency-a"));
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("view");
+    await setSiteAccess(db, ctx("owner"), owner, siteId, []);
+    expect(await siteAccessLevel(db, staff, siteId)).toBe("manage");
+  });
+
+  it("refuses a view-only member building, choosing, copying and filing that site only", async () => {
+    const { owner, siteId, otherId } = await siteWithStaff();
+    await setSiteAccess(db, ctx("owner"), owner, siteId, ["staff@agency-a"]);
+    const staff = await authorized("staff", clientA);
+    expect([...(await viewOnlySites(db, staff))]).toEqual([siteId]);
+    expect((await viewOnlySites(db, owner)).size).toBe(0);
+
+    const builder = createSiteBuilder(deps(), { client: staff });
+    await expect(
+      builder.resolve(context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: staff })),
+    ).rejects.toThrow(/view this site but not change it/);
+    await expect(chooseActiveSite(db, ctx("staff"), staff, siteId)).rejects.toThrow(
+      /view this site/,
+    );
+    await expect(
+      copyClientSite(deps(), ctx("staff"), staff, siteId, staff, { name: "X" }),
+    ).rejects.toThrow(/view this site/);
+    await expect(
+      setSiteFolder(db, ctx("staff"), staff, { siteId, folder: "Mine" }),
+    ).rejects.toThrow(/view this site/);
+
+    // Saving clicked-in changes (Visual edits) is building too.
+    await expect(
+      saveVisualEdits(
+        deps(),
+        staff,
+        siteId,
+        [{ kind: "text", target: "app/page.tsx:1", from: "a", to: "b" }],
+        "",
+      ),
+    ).rejects.toThrow(/view this site but not change it/);
+
+    // Their other site, and the owner on this one, work as before.
+    const session = await builder.resolve(context({ [SITE_ID_KEY]: otherId, [CLIENT_KEY]: staff }));
+    session.release?.();
+    const ownerSession = await createSiteBuilder(deps(), { client: owner }).resolve(
+      context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: owner }),
+    );
+    ownerSession.release?.();
+  });
+
+  it("is forgotten when the site is deleted", async () => {
+    const { owner, siteId } = await siteWithStaff();
+    await setSiteAccess(db, ctx("owner"), owner, siteId, ["staff@agency-a"]);
+    await deleteClientSite(deps(), ctx("owner"), owner, siteId);
+    expect(await db.select().from(siteMemberAccess)).toEqual([]);
+  });
+});
+
 describe("deleting a site", () => {
   async function draft(userId = "owner", name = "A") {
     const client = await authorized(userId, clientA);
@@ -832,6 +1176,28 @@ describe("deleting a site", () => {
     }
   }
 
+  it("names the client's sites, skipping one whose brief no longer reads", async () => {
+    const good = await draft("owner", "Good");
+    const { client, siteId: bad } = await draft("owner", "Bad");
+    const tenant = await openClientDb(provisioner, client);
+    try {
+      await tenant
+        .update(siteBrief)
+        .set({ brief: { old: true } })
+        .where(eq(siteBrief.siteId, bad));
+    } finally {
+      tenant.$client.close();
+    }
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const names = await siteNames(deps(), client, [good.siteId, bad, "unknown"]);
+      expect([...names]).toEqual([[good.siteId, "Good"]]);
+    } finally {
+      error.mockRestore();
+    }
+    expect(await siteNames(deps(), client, [])).toEqual(new Map());
+  });
+
   it("removes a draft and everything Locus keeps for it, and only that site", async () => {
     const kept = await draft("owner", "Kept");
     const { client, siteId } = await draft();
@@ -857,9 +1223,11 @@ describe("deleting a site", () => {
     }
     const before = await tenantCounts(client, kept.siteId);
 
+    await runtimes.open(`${clientA}/${siteId}`);
     await deleteClientSite(deps(), ctx("owner"), client, siteId);
 
     expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(runtimes.runtimes.has(`${clientA}/${siteId}`)).toBe(false);
     expect(await activeSiteIdForSession(db, ctx("owner"), client)).toBeNull();
     const after = await tenantCounts(client, siteId);
     expect(after).toMatchObject({ versions: 0, drafts: 0, briefs: 0, leadDays: 0 });
@@ -920,6 +1288,21 @@ describe("deleting a site", () => {
     await db.update(site).set(live).where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
       /unlink its Vercel project first/,
+    );
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
+  });
+
+  it("refuses a site with its own database, and leaves it as it was", async () => {
+    const { client, siteId } = await draft();
+    await db.insert(siteBackend).values({
+      siteId,
+      locationId: client.location.id,
+      tursoDbName: `site-${siteId}`,
+      tursoDbHostname: `site-${siteId}.local`,
+    });
+    await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
+      /own database/,
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });
@@ -1091,6 +1474,43 @@ describe("pooled client connections", () => {
     (await leaseClientDb(open, client, Date.now() + 46 * 60_000)).release();
     expect(opens).toBe(2);
   });
+
+  it("closes a connection nobody has used for a while", async () => {
+    const client = await authorized("owner", clientA);
+    closeClientDbs();
+    let opens = 0;
+    const open = (c: AuthorizedClient) => {
+      opens++;
+      return openClientDb(provisioner, c);
+    };
+    let idleDb!: Awaited<ReturnType<typeof openClientDb>>;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const first = await leaseClientDb(open, client);
+      idleDb = first.db;
+      first.release();
+      vi.advanceTimersByTime(POOL_IDLE_MS - 1);
+      // Still pooled: used again before the idle time ran out, which restarts it.
+      (await leaseClientDb(open, client)).release();
+      expect(opens).toBe(1);
+      vi.advanceTimersByTime(POOL_IDLE_MS - 1);
+      expect(pooledUsers(clientA)).toBe(0);
+      // A lease held across the idle time keeps it open.
+      const held = await leaseClientDb(open, client);
+      vi.advanceTimersByTime(POOL_IDLE_MS * 2);
+      expect(pooledUsers(clientA)).toBe(1);
+      held.release();
+      vi.advanceTimersByTime(POOL_IDLE_MS);
+      expect(pooledUsers(clientA)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+    // The connection itself is closed, not just dropped from the pool.
+    await new Promise((r) => setTimeout(r, 10));
+    await expect(idleDb.$client.execute("select 1")).rejects.toThrow();
+    (await leaseClientDb(open, client)).release();
+    expect(opens).toBe(2);
+  });
 });
 
 describe("site creation limits and failures", () => {
@@ -1255,5 +1675,134 @@ describe("storing the GitHub App key", () => {
         { localFile },
       ),
     ).rejects.toThrow(/only stored sealed/);
+  });
+});
+
+describe("visual edits", () => {
+  /** A new site and the preview location of its About page's heading. */
+  async function siteWithHeading() {
+    const client = await authorized("staff", clientA);
+    const { siteId } = await createClientSite(deps(), ctx("staff"), client, {
+      name: "Bright Smiles",
+      kind: "website",
+      templateId: "local-business",
+    });
+    const tenant = await openClientDb(provisioner, client);
+    const ws = new SiteWorkspace(tenant, siteId);
+    const page = (await ws.readFile("app/services/page.tsx")) as string;
+    const annotated = annotateSource("app/services/page.tsx", page);
+    const target = new RegExp(`<h1 ${SOURCE_ATTR}="([^"]+)"`).exec(annotated)?.[1] ?? "";
+    const draft = draftFingerprint(await ws.snapshot());
+    return { client, siteId, ws, target, draft };
+  }
+
+  it("saves the changes as an edit version and updates the preview", async () => {
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
+    const saved = await saveVisualEdits(
+      deps(),
+      client,
+      siteId,
+      [
+        { kind: "text", target, from: "Services", to: "What we do" },
+        { kind: "text", target: "app/page.tsx:1", from: "x", to: "y" },
+      ],
+      draft,
+    );
+    expect(saved).toMatchObject({ version: 2, applied: 1 });
+    expect(saved.failed).toHaveLength(1);
+    expect(await ws.latestVersion()).toMatchObject({
+      number: 2,
+      source: "edit",
+      message: "Visual edits: 1 change",
+      createdByUserId: "staff",
+    });
+    expect(await ws.readFile("app/services/page.tsx")).toContain(">What we do</h1>");
+    // The sandbox has the preview's copy: annotated, with the editor script.
+    const runtime = await runtimes.open(siteRuntimeKey(client, siteId));
+    const preview = runtime.files.get("app/services/page.tsx") as string;
+    expect(preview).toContain(SOURCE_ATTR);
+    expect(preview).toContain("What we do");
+    // The script only answers the Locus web app itself.
+    expect(runtime.files.get("public/__locus/visual-edits.js")).toContain(
+      'var ORIGINS = ["https://locus.test"]',
+    );
+    // The draft never carries the preview's annotations.
+    expect(await ws.readFile("app/services/page.tsx")).not.toContain(SOURCE_ATTR);
+    // The preview's script knows which draft it shows, and the save says what the draft is now.
+    expect(saved.draft).toBe(draftFingerprint(await ws.snapshot()));
+    expect(runtime.files.get("public/__locus/visual-edits.js")).toContain(
+      `var DRAFT = "${saved.draft}"`,
+    );
+  });
+
+  it("refuses edits made on a preview of older files", async () => {
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
+    // The site builder changed the page after the preview loaded.
+    const page = (await ws.readFile("app/services/page.tsx")) as string;
+    await ws.writeFiles([{ path: "app/services/page.tsx", content: `\n${page}` }]);
+    await expect(
+      saveVisualEdits(
+        deps(),
+        client,
+        siteId,
+        [{ kind: "text", target, from: "Services", to: "What we do" }],
+        draft,
+      ),
+    ).rejects.toThrow(/changed since this preview loaded/);
+    expect((await ws.latestVersion())?.number).toBe(1);
+  });
+
+  it("saves nothing when no change applies", async () => {
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
+    const saved = await saveVisualEdits(
+      deps(),
+      client,
+      siteId,
+      [{ kind: "text", target, from: "Not what it says", to: "x" }],
+      draft,
+    );
+    expect(saved).toMatchObject({ version: null, applied: 0 });
+    expect((await ws.latestVersion())?.number).toBe(1);
+  });
+
+  it("refuses another client's site and staff without access", async () => {
+    const { siteId, target, draft } = await siteWithHeading();
+    const owner = await authorized("owner", clientB);
+    await expect(
+      saveVisualEdits(
+        deps(),
+        owner,
+        siteId,
+        [{ kind: "text", target, from: "Services", to: "x" }],
+        draft,
+      ),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    await db.delete(memberLocation);
+    const staff = { ...(await authorized("owner", clientA)), memberId: "staff@agency-a" };
+    await expect(
+      saveVisualEdits(
+        deps(),
+        staff,
+        siteId,
+        [{ kind: "text", target, from: "Services", to: "x" }],
+        draft,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("commits the edit version to the site's repository", async () => {
+    const { client, siteId, ws, target, draft } = await siteWithHeading();
+    await db.update(site).set({ repoFullName: "agency/bright" }).where(eq(site.id, siteId));
+    const saved = await saveVisualEdits(
+      deps(),
+      client,
+      siteId,
+      [{ kind: "text", target, from: "Services", to: "What we do" }],
+      draft,
+    );
+    expect(saved.version).toBe(2);
+    // Without a GitHub installation the save stands and says why it wasn't sent.
+    expect(saved.publishError ?? "").not.toBe("");
+    expect((await ws.latestVersion())?.number).toBe(2);
   });
 });

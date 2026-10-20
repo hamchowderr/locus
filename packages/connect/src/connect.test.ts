@@ -304,7 +304,10 @@ describe("sub-account sessions", () => {
 
   it("refuses a client that didn't come from the staff check, before asking GHL", async () => {
     const harbor = await clientNamed("Harbor Realty");
-    const forged: AuthorizedClient = { location: harbor, memberId: "owner@agency-a" };
+    const forged: AuthorizedClient = {
+      location: { ...harbor, siteBuilder: true },
+      memberId: "owner@agency-a",
+    };
     seen = [];
     await expect(clientGhlSession(deps, forged)).rejects.toBeInstanceOf(ClientAccessDenied);
     expect(seen).toEqual([]);

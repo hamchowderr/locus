@@ -42,7 +42,12 @@ export const ATTEMPT_LIMITS: Record<string, AttemptRule[]> = {
   ],
 };
 
-const LONGEST_WINDOW_MS = Math.max(
+/**
+ * How long an unused key is kept: the longest window any caller counts in. Site checkouts count
+ * per invoice recipient and per site for a day, so keys are kept that long.
+ */
+export const LONGEST_WINDOW_MS = Math.max(
+  24 * 60 * MINUTE,
   ...Object.values(ATTEMPT_LIMITS).flatMap((rules) => rules.map((rule) => rule.windowMs)),
 );
 
@@ -57,6 +62,10 @@ export async function consumeAttempt(
   rule: Pick<AttemptRule, "max" | "windowMs">,
   now = Date.now(),
 ): Promise<{ allowed: true } | { allowed: false; retryAfterSeconds: number }> {
+  // A longer window would be swept away before it ended, and never limit anything.
+  if (rule.windowMs > LONGEST_WINDOW_MS) {
+    throw new RangeError(`A window longer than ${LONGEST_WINDOW_MS} ms is never kept`);
+  }
   const t = authRateLimit;
   const expired = sql`${t.windowStart} <= ${now - rule.windowMs}`;
   const [row] = await db

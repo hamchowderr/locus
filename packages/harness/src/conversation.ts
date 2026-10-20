@@ -37,8 +37,9 @@ export const HISTORY_TOKENS = 24_000;
  */
 export const NOT_KEPT =
   "Not kept: this tool really ran and returned a result, which was removed afterwards because " +
-  "it may hold GoHighLevel data, and that is not stored. What you said from it was right when " +
-  "you said it, but it may have changed since: read it again before you rely on its details.";
+  "it may hold data from GoHighLevel or a connected app, and that is not stored. What you said " +
+  "from it was right when you said it, but it may have changed since: read it again before you " +
+  "rely on its details.";
 
 export function createLocusMemory(storage: ConversationStore): Memory {
   return new Memory({
@@ -134,7 +135,8 @@ export class ForgetGhlData implements Processor<"locus-forget-ghl-data"> {
   }
 }
 
-function forgetAll(
+/** Stubs every result `forgetResult` doesn't keep, with any model output stored for it. */
+export function forgetAll(
   messages: ProcessOutputResultArgs["messages"],
   messageList: ProcessOutputResultArgs["messageList"],
   keepTaint: boolean,
@@ -149,6 +151,9 @@ function forgetAll(
       messageList.updateToolInvocation({
         type: "tool-invocation",
         toolInvocation: { ...part.toolInvocation, result: kept },
+        // A tool's `toModelOutput` (e.g. a picture for the model) is stored beside the result
+        // and sent in its place on later turns; the stub replaces that too.
+        providerMetadata: { mastra: { modelOutput: null } },
       });
     }
   }
