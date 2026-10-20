@@ -1,5 +1,6 @@
 import { createFakeGhl, type FakeGhl, type FakeRoutes } from "@locus/testing";
 import { describe, expect, it, vi } from "vitest";
+import { MediaUploadError } from "./media-library.ts";
 import {
   CrmMediaError,
   downloadMedia,
@@ -8,6 +9,9 @@ import {
   listMedia,
   listProducts,
   MAX_MEDIA_BYTES,
+  saveSiteImage,
+  siteCrm,
+  siteImagesFolderName,
 } from "./site-crm.ts";
 
 // Level-1 plumbing for the site builder's CRM reads: the fake GHL plays GoHighLevel and a fake
@@ -253,5 +257,55 @@ describe("the builder's Media Library reads", () => {
     expect(isGhlStorageUrl("http://assets.cdn.filesafe.space/x.png")).toBe(false);
     expect(isGhlStorageUrl("https://filesafe.space.evil.test/x.png")).toBe(false);
     expect(isGhlStorageUrl("https://user@assets.cdn.filesafe.space/x.png")).toBe(false);
+  });
+});
+
+describe("keeping a generated image in the Media Library", () => {
+  const STORE = `https://storage.googleapis.com/msgsndr/${GHL_LOCATION}/media`;
+  const session = { token: "t", tokenKind: "location" as const, locationId: GHL_LOCATION };
+  const image = {
+    siteId: "site-1",
+    name: "../Hero Shot.png",
+    bytes: new Uint8Array([137, 80, 78, 71]),
+    contentType: "image/png" as const,
+  };
+
+  it("uses the site's folder by name and sends the file as multipart", async () => {
+    const options = http({
+      "GET /medias/files": {
+        body: { files: [{ _id: "fold1", type: "folder", name: siteImagesFolderName("site-1") }] },
+      },
+      "POST /medias/upload-file": {
+        body: { fileId: "f1", url: `${STORE}/hero.png` },
+      },
+    });
+    expect(await saveSiteImage(session, options, image)).toEqual({
+      fileId: "f1",
+      url: `${STORE}/hero.png`,
+    });
+    const form = fake.requests[1]?.body as FormData;
+    expect(form.get("name")).toBe("Hero-Shot.png");
+    expect(form.get("parentId")).toBe("fold1");
+  });
+
+  it("takes back a file GHL kept outside this sub-account's storage", async () => {
+    const options = http({
+      "GET /medias/files": {
+        body: { files: [{ _id: "fold1", type: "folder", name: siteImagesFolderName("site-1") }] },
+      },
+      "POST /medias/upload-file": {
+        body: { fileId: "f1", url: "https://storage.googleapis.com/msgsndr/other-loc/x.png" },
+      },
+      "DELETE /medias/f1": { body: {} },
+    });
+    await expect(saveSiteImage(session, options, image)).rejects.toThrow(MediaUploadError);
+    expect(fake.requests.at(-1)).toMatchObject({ method: "DELETE" });
+  });
+
+  it("writes nothing without the medias.write scope", async () => {
+    const options = http({ "*": { body: {} } });
+    const crm = siteCrm(async () => ({ session, http: options, scopes: ["medias.readonly"] }));
+    await expect(crm.saveImage(image)).rejects.toThrow(CrmMediaError);
+    expect(fake.requests).toEqual([]);
   });
 });

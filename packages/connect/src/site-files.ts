@@ -2,11 +2,18 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { type AuthorizedClient, assertAuthorizedClient } from "@locus/auth";
 import { MAX_SITE_FILE_BYTES, SITE_FILE_TYPES } from "@locus/db";
 import { location, site, siteBackend } from "@locus/db/control";
-import { type GhlOperation, ghlRequest } from "@locus/ghl";
-import { operationById } from "@locus/skills";
+import { ghlRequest } from "@locus/ghl";
 import { and, eq } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
-import { isGhlStorageUrl } from "./site-crm.ts";
+import {
+  listMediaItems,
+  MEDIA_LIST_PAGE,
+  MediaUploadError,
+  mediaFolder,
+  mediaFoldersNamed,
+  mediaOp,
+  uploadMedia,
+} from "./media-library.ts";
 import {
   consumeSiteLimits,
   logGhlFailure,
@@ -40,8 +47,7 @@ export const SITE_FILE_LIMITS: Pick<SiteLeadLimits, "perIp" | "perSiteBurst" | "
 
 /** The most files one delete may name. */
 const MAX_DELETE = 20;
-/** Files listed per page, and the most pages read to find a site's file. */
-const PAGE = 100;
+/** The most pages read to find a site's file. */
 const MAX_PAGES = 20;
 
 export type SiteFilesDeps = Pick<
@@ -110,12 +116,6 @@ const refuse = (status: 400 | 401 | 403 | 413 | 415 | 502, error: string): SiteF
 
 const CANT_KEEP = "This site can't keep files.";
 
-function op(id: string): GhlOperation {
-  const found = operationById(id);
-  if (!found) throw new Error(`The skill catalog is missing ${id}`);
-  return found;
-}
-
 /**
  * Checks that the call comes from the site itself (its files key) and that the site is a
  * published app-style site of an active client. Every answer for a wrong key, a site without
@@ -134,89 +134,9 @@ async function siteFor(deps: SiteFilesDeps, siteId: string, authorization: strin
   return row;
 }
 
-/** GHL's file objects are only loosely documented; read them defensively. */
-function mediaItem(
-  raw: unknown,
-  locationId: string,
-  asked: string,
-): (SiteMediaFile & { type: string }) | null {
-  if (!raw || typeof raw !== "object") return null;
-  const f = raw as Record<string, unknown>;
-  const id = typeof f._id === "string" ? f._id : typeof f.id === "string" ? f.id : "";
-  if (!/^[A-Za-z0-9]{1,64}$/.test(id)) return null;
-  // GHL may leave the type out; then it is what the listing asked for.
-  const type = typeof f.type === "string" ? f.type : asked;
-  const url = typeof f.url === "string" ? f.url : "";
-  if (type === "file" && !isGhlStorageUrl(url, locationId)) return null;
-  const name = typeof f.name === "string" ? f.name.slice(0, 200) : "";
-  const created = typeof f.createdAt === "string" ? new Date(f.createdAt) : null;
-  return {
-    id,
-    type,
-    name: name || id,
-    url,
-    createdAt: created && !Number.isNaN(created.getTime()) ? created : null,
-  };
-}
-
-async function listMedia(
-  ghl: SiteGhl,
-  query: Record<string, string>,
-  offset: number,
-): Promise<{ items: (SiteMediaFile & { type: string })[]; more: boolean }> {
-  const found = await ghlRequest<{ files?: unknown[] }>(
-    op("medias.fetch-media-content"),
-    ghl.session,
-    {
-      query: {
-        sortBy: "createdAt",
-        sortOrder: "desc",
-        offset: String(offset),
-        limit: String(PAGE),
-        ...query,
-      },
-    },
-    ghl.options,
-  );
-  const raw = Array.isArray(found.files) ? found.files : [];
-  return {
-    items: raw
-      .map((f) => mediaItem(f, ghl.session.locationId ?? "-", query.type ?? "file"))
-      .filter((f): f is SiteMediaFile & { type: string } => f !== null),
-    more: raw.length >= PAGE,
-  };
-}
-
-/**
- * The site's folders in the Media Library, oldest first. There is normally one, made the first
- * time a member uploads; two uploads at once can make two, and every one of them is the site's.
- */
-async function siteFolders(ghl: SiteGhl, siteId: string): Promise<string[]> {
-  const name = siteFilesFolderName(siteId);
-  const { items } = await listMedia(ghl, { type: "folder", query: name }, 0);
-  return items
-    .filter((f) => f.type === "folder" && f.name === name)
-    .reverse()
-    .map((f) => f.id);
-}
-
-/** The folder new files go into, made when the site has none yet. */
-async function uploadFolder(ghl: SiteGhl, siteId: string): Promise<string> {
-  const [existing] = await siteFolders(ghl, siteId);
-  if (existing) return existing;
-  const made = await ghlRequest<{ _id?: string; id?: string }>(
-    op("medias.create-media-folder"),
-    ghl.session,
-    { body: { name: siteFilesFolderName(siteId) } },
-    ghl.options,
-  );
-  const id = made._id ?? made.id;
-  if (id && /^[A-Za-z0-9]{1,64}$/.test(id)) return id;
-  // GHL's documented answer names no id: find the folder it just made.
-  const [found] = await siteFolders(ghl, siteId);
-  if (!found) throw new Error("GHL made a folder that can't be found");
-  return found;
-}
+/** The site's folders in the Media Library, oldest first (every one with the site's name). */
+const siteFolders = (ghl: SiteGhl, siteId: string) =>
+  mediaFoldersNamed(ghl, siteFilesFolderName(siteId));
 
 /**
  * The files in the site's folders, newest first per folder, up to `pages` pages in all. With
@@ -236,10 +156,10 @@ async function folderFiles(
     for (let page = 0; ; page++) {
       if (read >= pages) return { files, more: true };
       read++;
-      const { items, more } = await listMedia(
+      const { items, more } = await listMediaItems(
         ghl,
         { type: "file", parentId: folderId },
-        page * PAGE,
+        page * MEDIA_LIST_PAGE,
       );
       for (const { type, ...file } of items) if (type === "file") files.push(file);
       if (seen()) return { files, more };
@@ -291,35 +211,21 @@ export async function uploadSiteFile(
   if (!canWriteMedia(ghl)) return refuse(403, "This site's HighLevel connection can't keep files.");
   const name = safeName(file.name);
   try {
-    const folderId = await uploadFolder(ghl, row.site.id);
-    const sent = await ghlRequest<{ fileId?: string; url?: string }>(
-      op("medias.upload-media-content"),
-      ghl.session,
-      {
-        body: {
-          file: new File([file], name, { type: contentType }),
-          name,
-          parentId: folderId,
-        },
-      },
-      ghl.options,
+    const folderId = await mediaFolder(ghl, siteFilesFolderName(row.site.id));
+    const sent = await uploadMedia(
+      ghl,
+      { file: new File([file], name, { type: contentType }), name, parentId: folderId },
+      (error) => logGhlFailure(`Taking back a file for site ${row.site.id}`, error),
     );
-    const url = sent.url ?? "";
-    if (!sent.fileId || !isGhlStorageUrl(url, row.location.ghlLocationId)) {
-      // Kept, but not where Locus can vouch for it: take it back rather than leave a stray.
+    return {
+      status: 200,
+      body: { fileId: sent.fileId, url: sent.url, name, contentType, size: file.size },
+    };
+  } catch (error) {
+    if (error instanceof MediaUploadError) {
       console.error(`GHL kept a file for site ${row.site.id} at an unexpected address`);
-      if (sent.fileId && /^[A-Za-z0-9]{1,64}$/.test(sent.fileId)) {
-        await ghlRequest(
-          op("medias.delete-media-content"),
-          ghl.session,
-          { path: { id: sent.fileId } },
-          ghl.options,
-        ).catch((error) => logGhlFailure(`Taking back a file for site ${row.site.id}`, error));
-      }
       return refuse(502, "The file couldn't be kept just now. Try again.");
     }
-    return { status: 200, body: { fileId: sent.fileId, url, name, contentType, size: file.size } };
-  } catch (error) {
     logGhlFailure(`Uploading a file for site ${row.site.id}`, error);
     return refuse(502, "The file couldn't be kept just now. Try again.");
   }
@@ -363,7 +269,7 @@ export async function deleteSiteFiles(
     const mine = ids.filter((id) => listed.files.some((f) => f.id === id));
     for (const id of mine) {
       await ghlRequest(
-        op("medias.delete-media-content"),
+        mediaOp("medias.delete-media-content"),
         ghl.session,
         { path: { id } },
         ghl.options,
