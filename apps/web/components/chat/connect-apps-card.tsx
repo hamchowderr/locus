@@ -11,7 +11,9 @@ const NAMES: Record<string, string> = {
   slack: 'Slack',
 };
 
-export const appName = (toolkit: string) => NAMES[toolkit.toLowerCase()] ?? toolkit;
+/** The app's name for a toolkit slug: a known one, or the slug with a capital. */
+export const appName = (toolkit: string) =>
+  NAMES[toolkit.toLowerCase()] ?? toolkit.charAt(0).toUpperCase() + toolkit.slice(1);
 
 /**
  * Shown in the chat when the AI needs an app the client hasn't connected: a Connect button per
