@@ -72,6 +72,7 @@ import {
   leaseClientDb,
   newSiteRefusal,
   openClientDb,
+  POOL_IDLE_MS,
   pooledUsers,
   publishLatestVersion,
   publishMessage,
@@ -1089,6 +1090,38 @@ describe("pooled client connections", () => {
     };
     (await leaseClientDb(open, client)).release();
     (await leaseClientDb(open, client, Date.now() + 46 * 60_000)).release();
+    expect(opens).toBe(2);
+  });
+
+  it("closes a connection nobody has used for a while", async () => {
+    const client = await authorized("owner", clientA);
+    closeClientDbs();
+    let opens = 0;
+    const open = (c: AuthorizedClient) => {
+      opens++;
+      return openClientDb(provisioner, c);
+    };
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const first = await leaseClientDb(open, client);
+      first.release();
+      vi.advanceTimersByTime(POOL_IDLE_MS - 1);
+      // Still pooled: used again before the idle time ran out, which restarts it.
+      (await leaseClientDb(open, client)).release();
+      expect(opens).toBe(1);
+      vi.advanceTimersByTime(POOL_IDLE_MS - 1);
+      expect(pooledUsers(clientA)).toBe(0);
+      // A lease held across the idle time keeps it open.
+      const held = await leaseClientDb(open, client);
+      vi.advanceTimersByTime(POOL_IDLE_MS * 2);
+      expect(pooledUsers(clientA)).toBe(1);
+      held.release();
+      vi.advanceTimersByTime(POOL_IDLE_MS);
+      expect(pooledUsers(clientA)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+    (await leaseClientDb(open, client)).release();
     expect(opens).toBe(2);
   });
 });
