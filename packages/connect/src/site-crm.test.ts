@@ -6,6 +6,7 @@ import {
   isGhlStorageUrl,
   listCalendars,
   listMedia,
+  listProducts,
   MAX_MEDIA_BYTES,
 } from "./site-crm.ts";
 
@@ -46,6 +47,91 @@ describe("the builder's calendar list", () => {
     ]);
     expect(fake.requests[0]?.url.searchParams.get("locationId")).toBe(GHL_LOCATION);
     expect(fake.requests[0]?.url.searchParams.get("showDrafted")).toBe("false");
+  });
+});
+
+describe("the builder's product list", () => {
+  it("lists the client's products, newest first, with their one-time prices only", async () => {
+    const options = http({
+      "GET /products/": {
+        body: {
+          products: [
+            { _id: "prod1", locationId: GHL_LOCATION, name: "Deep\nClean | Package" },
+            { _id: "prod2", locationId: GHL_LOCATION, name: "Membership" },
+            { _id: "prod3", locationId: "ghl-loc-other", name: "Someone else's" },
+            { _id: "../x", locationId: GHL_LOCATION, name: "Bad id" },
+          ],
+          total: [{ total: 4 }],
+        },
+      },
+      "GET /products/prod1/price": {
+        body: {
+          prices: [
+            {
+              _id: "price1",
+              product: "prod1",
+              name: "Standard",
+              type: "one_time",
+              currency: "USD",
+              amount: 149.5,
+            },
+            {
+              _id: "price2",
+              product: "prod1",
+              name: "Free",
+              type: "one_time",
+              currency: "USD",
+              amount: 0,
+            },
+            {
+              _id: "price3",
+              product: "prod9",
+              name: "Other",
+              type: "one_time",
+              currency: "USD",
+              amount: 5,
+            },
+          ],
+          total: 3,
+        },
+      },
+      "GET /products/prod2/price": {
+        body: {
+          prices: [
+            {
+              _id: "price4",
+              product: "prod2",
+              name: "Monthly",
+              type: "recurring",
+              currency: "USD",
+              amount: 30,
+              recurring: { interval: "month", intervalCount: 1 },
+            },
+          ],
+          total: 1,
+        },
+      },
+    });
+    const list = await listProducts(
+      { token: "t", tokenKind: "location", locationId: GHL_LOCATION },
+      options,
+    );
+    expect(list).toEqual([
+      {
+        id: "prod1",
+        name: "Deep Clean Package",
+        prices: [{ id: "price1", name: "Standard", amount: 149.5, currency: "USD" }],
+      },
+    ]);
+    const query = fake.requests[0]?.url.searchParams;
+    expect(query?.get("locationId")).toBe(GHL_LOCATION);
+    expect(query?.get("sortOrder")).toBe("desc");
+    expect(query?.get("limit")).toBe("20");
+    expect(fake.requests.map((r) => r.url.pathname)).toEqual([
+      "/products/",
+      "/products/prod1/price",
+      "/products/prod2/price",
+    ]);
   });
 });
 

@@ -20,6 +20,7 @@ export {
   CALENDAR_EMBED_PATH,
   calendarEmbedFile,
 } from "./booking.ts";
+export { BUY_BUTTON_PATH, buyButtonFile } from "./checkout.ts";
 export {
   LEAD_ROUTE_PATH,
   LOCUS_PROXY_CALLS,
