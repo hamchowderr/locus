@@ -2,9 +2,9 @@ import { ClientAccessDenied, listAccessibleClients, listTeam } from "@locus/auth
 import { agencyGhlConnection } from "@locus/db/control";
 import { eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
+import { importStaff, inviteMember, saveMemberClients } from "@/app/actions";
+import { Button, Field, Notice, Page } from "@/app/ui";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { importStaff, inviteMember, saveMemberClients } from "../actions";
-import { Button, Field, Notice, Page } from "../ui";
 
 export default async function Team({
   searchParams,

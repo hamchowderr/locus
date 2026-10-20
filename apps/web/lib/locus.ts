@@ -2,6 +2,7 @@ import { createAuth, emailFromEnv, type SessionContext } from "@locus/auth";
 import { type ControlDb, DEV_CONTROL_DB_URL, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { headers } from "next/headers";
+import { cache } from "react";
 import { deploymentBaseUrl } from "./base-url.ts";
 
 /**
@@ -74,13 +75,16 @@ export function configured(): boolean {
   }
 }
 
-/** The signed-in user's session, from the request's cookies — or null. */
-export async function currentSession() {
+/**
+ * The signed-in user's session, from the request's cookies — or null. Cached per request: the
+ * menu's layout and the page both ask, and it is one lookup.
+ */
+export const currentSession = cache(async () => {
   // Read the request first: it marks the page as dynamic, so it is never prerendered at build.
   const requestHeaders = await headers();
   if (!configured()) return null;
   return locus().auth.api.getSession({ headers: requestHeaders });
-}
+});
 
 /** What the access checks read from a Better Auth session. */
 export function sessionContext(

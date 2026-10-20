@@ -2,6 +2,7 @@ import { ClientAccessDenied } from "@locus/auth";
 import { CheckIcon } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Notice } from "@/app/ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,7 +15,6 @@ import {
 } from "@/components/ui/card";
 import { appConnectionsFromEnv, type ClientApp, clientApps, clientDbFromEnv } from "@/lib/apps";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { Notice } from "../ui";
 import { AccessPicker } from "./access-picker";
 import { disconnectApp } from "./actions";
 import { ConnectButton } from "./connect-button";
@@ -32,10 +32,10 @@ type Search = {
 
 function Shell({ children }: { children: React.ReactNode }) {
   return (
-    <main className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
+    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
       <h1 className="text-2xl font-semibold tracking-tight">Connectors</h1>
       <div className="mt-6 space-y-6">{children}</div>
-    </main>
+    </div>
   );
 }
 
