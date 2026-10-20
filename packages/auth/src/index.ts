@@ -20,15 +20,22 @@ export {
   ClientAccessDenied,
   type LocationRow,
   listAccessibleClients,
+  listSiteMembers,
   listTeam,
   mintClientDbToken,
   requireAgencyManager,
   resolveActiveClient,
   rolesOf,
   type SessionContext,
+  type SiteAccessLevel,
+  type SiteMember,
   selectClient,
   setMemberClients,
+  setSiteAccess,
+  setSiteBuilder,
+  siteAccessLevel,
   type TeamMember,
+  viewOnlySites,
 } from "./client-access.ts";
 export { consoleEmail, emailFromEnv, resendEmail } from "./email.ts";
 export {

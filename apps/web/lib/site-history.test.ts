@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { authorizeClient, ClientAccessDenied, type SessionContext } from "@locus/auth";
+import {
+  authorizeClient,
+  ClientAccessDenied,
+  type SessionContext,
+  setSiteBuilder,
+} from "@locus/auth";
 import {
   type ControlDb,
   LocalProvisioner,
@@ -223,6 +228,27 @@ describe("the site preview", () => {
     const { client, siteId, tenant } = await siteWithTwoVersions();
     await expect(startSitePreview(deps(), ctx("staff"), client, siteId)).rejects.toThrow(
       /didn't install/,
+    );
+    tenant.$client.close();
+  });
+});
+
+describe("versions when the site builder is off for the client", () => {
+  it("still lists them, but refuses bookmarking, restoring and previewing", async () => {
+    const { siteId, tenant } = await siteWithTwoVersions();
+    await setSiteBuilder(db, ctx("staff"), [clientA], false);
+    const client = await authorized(clientA);
+    const history = await siteHistory(deps(), client, siteId);
+    expect(history.versions).toHaveLength(2);
+    expect(history.refusal).toMatch(/turned off/);
+    await expect(
+      bookmarkSiteVersion(deps(), client, siteId, { number: 1, bookmarked: true }),
+    ).rejects.toThrow(/turned off/);
+    await expect(restoreSiteVersion(deps(), ctx("staff"), client, siteId, 1)).rejects.toThrow(
+      /turned off/,
+    );
+    await expect(startSitePreview(deps(), ctx("staff"), client, siteId)).rejects.toThrow(
+      /turned off/,
     );
     tenant.$client.close();
   });
