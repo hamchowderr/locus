@@ -24,7 +24,7 @@ export interface CheckoutItem {
  */
 const literalProp = (prop: string) =>
   new RegExp(
-    String.raw`(?:^|\s)${prop}=(?:\{\s*(["'\x60])([A-Za-z0-9]{1,64})\1\s*\}|(["'\x60])([A-Za-z0-9]{1,64})\3)`,
+    String.raw`(?:^|\s)${prop}\s*=\s*(?:\{\s*(["'\x60])([A-Za-z0-9]{1,64})\1\s*\}|(["'\x60])([A-Za-z0-9]{1,64})\3)`,
   );
 const PRODUCT_ID = literalProp("productId");
 const PRICE_ID = literalProp("priceId");
