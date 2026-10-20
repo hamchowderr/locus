@@ -192,8 +192,8 @@ export function ProjectChat({
 }
 
 /**
- * Picks the main chat once: the newest conversation that is not a work thread, opened
- * into `main`. With none, the first message makes one, and that becomes the main chat.
+ * Picks the main chat once: the newest conversation that is not a work thread or a site's
+ * own conversation, opened into `main`. With none, the first message makes one, and that becomes the main chat.
  */
 function useMainThread(main: UseAgentControllerChat): string | null {
   const [mainId, setMainId] = useState<string | null>(null);
@@ -206,7 +206,9 @@ function useMainThread(main: UseAgentControllerChat): string | null {
       try {
         const res = await fetch('/api/agent-controller/threads', { cache: 'no-store' });
         const data = (await res.json()) as { threads?: ThreadItem[] };
-        const first = (data.threads ?? []).find((t) => !t.parentThreadId && !t.archived);
+        const first = (data.threads ?? []).find(
+          (t) => !t.parentThreadId && !t.siteId && !t.archived,
+        );
         if (first) {
           setMainId(first.id);
           await openThread(first.id);
@@ -223,7 +225,7 @@ function useMainThread(main: UseAgentControllerChat): string | null {
 }
 
 /** One conversation: its messages (with thread rows), and what it waits on. */
-function ChatView({
+export function ChatView({
   controller,
   approvalViews,
   emptyText,
@@ -329,7 +331,8 @@ function ChatView({
   );
 }
 
-function Composer({
+/** The message box, with a mode picker when there is more than one mode. */
+export function Composer({
   placeholder,
   busy,
   disabled = false,
