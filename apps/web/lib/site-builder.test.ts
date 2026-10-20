@@ -823,13 +823,23 @@ describe("deleting a site", () => {
 
   it.each([
     { repoFullName: "agency/a-site" },
-    { hostProjectId: "prj_1" },
-    { customDomain: "www.example.com" },
-  ])("refuses a published site (%o), and leaves it as it was", async (published) => {
+    { repoFullName: "agency/a-site", hostProjectId: "prj_1" },
+  ])("deletes a site saved to GitHub or Vercel (%o) from Locus only", async (published) => {
     const { client, siteId } = await draft();
     await db.update(site).set(published).where(eq(site.id, siteId));
+    await deleteClientSite(deps(), ctx("owner"), client, siteId);
+    expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+    expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 0, briefs: 0 });
+  });
+
+  it("refuses a site live on its own domain, and leaves it as it was", async () => {
+    const { client, siteId } = await draft();
+    await db
+      .update(site)
+      .set({ hostProjectId: "prj_1", customDomain: "www.example.com" })
+      .where(eq(site.id, siteId));
     await expect(deleteClientSite(deps(), ctx("owner"), client, siteId)).rejects.toThrow(
-      /can't be deleted here/,
+      /Remove the domain first/,
     );
     expect(await db.select().from(site).where(eq(site.id, siteId))).toHaveLength(1);
     expect(await tenantCounts(client, siteId)).toMatchObject({ versions: 1, briefs: 1 });

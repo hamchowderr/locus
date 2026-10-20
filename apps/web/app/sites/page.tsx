@@ -277,14 +277,21 @@ export default async function Sites({
                 </button>
               </form>
             )}
-            {manager && !s.repoFullName && !s.hostProjectId && !s.customDomain && (
+            {manager && !s.customDomain && (
               <details className="text-sm">
                 <summary className="cursor-pointer text-neutral-600">Delete this site</summary>
                 <form action={deleteSite} className="space-y-2 pt-2">
                   <input type="hidden" name="siteId" value={s.id} />
+                  {(s.repoFullName || s.hostProjectId) && (
+                    <p className="text-neutral-600">
+                      Its GitHub repository and Vercel project stay where they are; delete them
+                      there if you no longer need them. Forms on the published copy stop sending
+                      leads to the CRM.
+                    </p>
+                  )}
                   <label className="flex items-center gap-2">
                     <input type="checkbox" name="confirm" value="yes" required />
-                    Delete this site and all its versions. This can't be undone.
+                    Delete this site and all its versions from Locus. This can't be undone.
                   </label>
                   <Button>Delete site</Button>
                 </form>
