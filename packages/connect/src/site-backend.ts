@@ -511,8 +511,22 @@ export async function ensureSiteBackendEnv(
   const projectId = await siteProjectId(deps.db, client, row.siteId);
   if (!projectId) return [];
   if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
-  const provisioner = deps.provisioner;
+  // Held so a restore or key reset can't change the database or its key while this writes.
+  const { backend, until } = await holdSite(deps.db, row, Date.now());
+  try {
+    return await writeMissingEnv(deps, client, backend, projectId, deps.provisioner);
+  } finally {
+    await letGo(deps.db, row.siteId, until);
+  }
+}
 
+async function writeMissingEnv(
+  deps: SiteReleaseDeps,
+  client: AuthorizedClient,
+  row: SiteBackendRow,
+  projectId: string,
+  provisioner: TenantProvisioner,
+): Promise<string[]> {
   let env = await projectEnv(deps, client, projectId);
   const restore = await restoreOf(deps.db, row.siteId);
   const rewritten: string[] = [];

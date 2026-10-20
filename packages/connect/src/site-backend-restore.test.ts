@@ -589,6 +589,17 @@ describe("resetting a site's database key", () => {
     expect(calls).toEqual([]);
   });
 
+  it("also revokes the keys of the databases a restore replaced", async () => {
+    const { owner, row } = await withDatabase();
+    clock += 60_000;
+    await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
+    clock += 60_000;
+    await restoreSiteBackend(deps(), ctx("owner"), owner, { siteId: SITE, to: new Date(clock) });
+    const kept = (await restoreRow())?.keptDbName;
+    await resetSiteDatabaseKey(revoking(), ctx("owner"), owner, { siteId: SITE });
+    expect(revoked).toEqual([await current(owner), kept, row.tursoDbName]);
+  });
+
   it("only resets the key of a site that isn't published yet", async () => {
     const { owner, row } = await withDatabase();
     await db.update(site).set({ hostProjectId: null }).where(eq(site.id, SITE));
