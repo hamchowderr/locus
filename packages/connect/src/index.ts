@@ -55,10 +55,13 @@ export {
 } from "./publish.ts";
 export {
   enableSiteBackend,
+  ensureSiteBackendEnv,
+  migrateSiteBackend,
   removeSiteBackend,
   type SiteBackendDeps,
   type SiteBackendOverview,
   type SiteBackendRow,
+  type SiteReleaseDeps,
   siteBackendOf,
   siteBackendOverview,
   siteBackendRows,
