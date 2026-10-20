@@ -1,8 +1,9 @@
 import { type AuthorizedClient, authorizeClient, ClientAccessDenied } from "@locus/auth";
 import { imagesFromEnv } from "@locus/builder";
+import { clientGhlSession, siteCrm } from "@locus/connect";
 import { provisionerFromEnv } from "@locus/db";
 import type { RuntimeProvider } from "@locus/sandbox";
-import { baseUrl, configured } from "./connect.ts";
+import { baseUrl, configured, connectDeps } from "./connect.ts";
 import { publishDeps } from "./hosts.ts";
 import { billingEnabled, locus, configured as locusConfigured, sessionContext } from "./locus.ts";
 import {
@@ -36,6 +37,14 @@ export function siteBuilderDeps(): SiteBuilderDeps {
     publish: publishDeps,
     locusUrl: baseUrl(),
     billing: billingEnabled(),
+    crm: (client) =>
+      siteCrm(async () => {
+        const connect = connectDeps();
+        return {
+          session: await clientGhlSession(connect, client),
+          ...(connect.http ? { http: connect.http } : {}),
+        };
+      }),
   };
 }
 

@@ -846,3 +846,55 @@ describe("add_dependency with a component", () => {
     expect((await t.session.workspace.listFiles()).map((f) => f.path)).toEqual(["package.json"]);
   });
 });
+
+describe("crm tool", () => {
+  it("lists the client's calendars as one line each, for the model to pick from", async () => {
+    const { call } = await setup();
+    t.session.crm = {
+      calendars: async () => [
+        {
+          id: "cal1",
+          name: "Consultation",
+          type: "event",
+          embedUrl: "https://api.leadconnectorhq.com/widget/booking/cal1",
+        },
+      ],
+    };
+    expect(await call("crm", { action: "calendars" })).toEqual({
+      calendars:
+        "id: cal1 | name: Consultation | type: event | embedUrl: https://api.leadconnectorhq.com/widget/booking/cal1",
+    });
+  });
+
+  it("says when there are no calendars, or no CRM to ask", async () => {
+    const { call } = await setup();
+    expect(await call("crm", { action: "calendars" })).toEqual({
+      error: "The CRM isn't reachable from here.",
+    });
+    t.session.crm = { calendars: async () => [] };
+    expect(await call("crm", { action: "calendars" })).toMatchObject({
+      note: expect.stringContaining("no active calendars"),
+    });
+  });
+
+  it("writes Locus's booking pieces, keeping a site's own copy unless told to replace it", async () => {
+    const { call } = await setup();
+    expect(await call("crm", { action: "add_booking" })).toEqual({
+      written: "components/booking.tsx",
+    });
+    expect(String(await t.session.workspace.readFile("components/booking.tsx"))).toContain(
+      'fetch("/api/locus/booking"',
+    );
+    await t.session.workspace.writeFile("components/booking.tsx", "mine");
+    expect(await call("crm", { action: "add_booking" })).toEqual({
+      kept: "components/booking.tsx",
+    });
+    expect(await t.session.workspace.readFile("components/booking.tsx")).toBe("mine");
+    expect(await call("crm", { action: "add_booking", overwrite: true })).toEqual({
+      written: "components/booking.tsx",
+    });
+    expect(await call("crm", { action: "add_calendar_embed" })).toEqual({
+      written: "components/calendar-embed.tsx",
+    });
+  });
+});
