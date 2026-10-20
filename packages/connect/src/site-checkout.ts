@@ -1,8 +1,10 @@
+import { consumeAttempt } from "@locus/auth";
 import { GhlError, ghlRequest } from "@locus/ghl";
 import { operationById } from "@locus/skills";
 import {
   consumeSiteLimits,
   countWithDeadline,
+  hashVisitorIp,
   type LeadContact,
   logGhlFailure,
   MAX_LEAD_BODY_BYTES,
@@ -35,6 +37,11 @@ import {
 // a card. Whether it is a real charge or a test one is the deployment's `liveMode`, never the
 // request's.
 //
+// Each checkout emails someone, so besides the usual limits there is one per recipient (anyone
+// can type anyone's email) and a daily ceiling per site, all counted before GHL is called. And a
+// connection that wasn't granted `invoices.write` is refused before anything is written, rather
+// than leaving a tagged contact behind an invoice GHL will refuse.
+//
 // Only one-time prices are sold for now: a recurring price would need GHL's recurring invoices,
 // with their own schedule and consent.
 
@@ -43,8 +50,15 @@ export const CHECKOUT_LIMITS = {
   perSite: { max: 100, windowMs: 60 * 60_000 },
   perSiteBurst: { max: 10, windowMs: 60_000 },
   perIp: { max: 5, windowMs: 10 * 60_000 },
+  /** Invoices one email address may be sent from one site a day. */
+  perRecipient: { max: 2, windowMs: 24 * 60 * 60_000 },
+  /** Invoices one site may send a day, from anyone. */
+  perSiteDay: { max: 300, windowMs: 24 * 60 * 60_000 },
   minFillMs: 3_000,
 };
+
+/** The scope GHL's invoice endpoint needs; a connection without it can't sell. */
+export const CHECKOUT_SCOPE = "invoices.write";
 
 /** The most of one price a single checkout may buy. */
 export const MAX_CHECKOUT_QTY = 10;
@@ -64,13 +78,17 @@ const TERMS_FIELDS = ["amount", "price", "currency", "total", "liveMode", "type"
 const NOT_CONNECTED = "Checkout isn't connected on this site.";
 const NOT_FOR_SALE = "That isn't for sale here.";
 const NOT_STARTED = "We couldn't start the checkout just now. Please try again.";
+const NOT_SWITCHED_ON = "Checkout isn't switched on for this site yet.";
+/** When GHL may have made the invoice after all: a retry could send a second one. */
+const NOT_CONFIRMED =
+  "We couldn't confirm your checkout. Please check your email for an invoice before trying again.";
 
 export type SiteCheckoutResult =
   | { status: 200; body: Record<string, unknown> }
-  | { status: 400 | 404 | 413 | 422 | 502; body: { error: string } }
+  | { status: 400 | 404 | 413 | 422 | 502 | 503; body: { error: string } }
   | { status: 429; body: { error: string }; retryAfterSeconds: number };
 
-const refuse = (status: 400 | 404 | 413 | 422 | 502, error: string): SiteCheckoutResult => ({
+const refuse = (status: 400 | 404 | 413 | 422 | 502 | 503, error: string): SiteCheckoutResult => ({
   status,
   body: { error },
 });
@@ -217,19 +235,41 @@ async function sellable(
   return { productId, priceId, productName, amount, currency, qty };
 }
 
-/** The user GHL says made the invoice: the sub-account's first user, or null when it has none. */
+interface GhlUser {
+  id?: unknown;
+  deleted?: unknown;
+  roles?: { role?: unknown; locationIds?: unknown };
+}
+
+/**
+ * The user GHL says made the invoice: an admin of this sub-account (the one with the lowest id,
+ * so it's the same one every time), else its first user, or null when it has none.
+ */
 async function invoicingUser(ghl: SiteGhl): Promise<string | null> {
-  const found = await ghlRequest<{ users?: { id?: unknown; deleted?: unknown }[] }>(
+  const found = await ghlRequest<{ users?: GhlUser[] }>(
     operation("users.search-users"),
     ghl.session,
-    { query: { limit: "10" } },
+    { query: { limit: "25" } },
     ghl.options,
   );
-  const user = (found.users ?? []).find(
-    (u) => typeof u.id === "string" && GHL_ID.test(u.id) && u.deleted !== true,
+  const users = (found.users ?? []).filter(
+    (u): u is GhlUser & { id: string } =>
+      typeof u.id === "string" && GHL_ID.test(u.id) && u.deleted !== true,
   );
-  return (user?.id as string | undefined) ?? null;
+  const admins = users
+    .filter(
+      (u) =>
+        u.roles?.role === "admin" &&
+        Array.isArray(u.roles.locationIds) &&
+        u.roles.locationIds.includes(ghl.session.locationId),
+    )
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return (admins[0] ?? users[0])?.id ?? null;
 }
+
+/** Whether GHL refused the request itself (4xx), so the invoice certainly wasn't made. */
+const refusedByGhl = (error: unknown) =>
+  error instanceof GhlError && error.status >= 400 && error.status < 500;
 
 /** The invoice, made and emailed by GHL; its number and payment page. */
 async function invoiceFor(
@@ -356,6 +396,38 @@ export async function startSiteCheckout(
       retryAfterSeconds: limited,
     };
   }
+  // Each checkout emails the address typed, so one address gets only a few a day. Kept as a
+  // keyed hash, like a visitor's IP: the counter only needs to tell addresses apart.
+  const recipient = hashVisitorIp(deps.ipHashKey, email.trim().toLowerCase());
+  const perRecipient = await consumeAttempt(
+    deps.db,
+    `site-checkout|email|${row.site.id}|${recipient}`,
+    CHECKOUT_LIMITS.perRecipient,
+    now,
+  );
+  if (!perRecipient.allowed) {
+    return {
+      status: 429,
+      body: { error: "We've already sent invoices to that email today. Please check your inbox." },
+      retryAfterSeconds: perRecipient.retryAfterSeconds,
+    };
+  }
+  const perSiteDay = await consumeAttempt(
+    deps.db,
+    `site-checkout|day|${row.site.id}`,
+    CHECKOUT_LIMITS.perSiteDay,
+    now,
+  );
+  if (!perSiteDay.allowed) {
+    console.warn(
+      `Site ${row.site.id} reached its daily checkout ceiling (${CHECKOUT_LIMITS.perSiteDay.max})`,
+    );
+    return {
+      status: 429,
+      body: { error: "Checkout is busy just now. Please try again later." },
+      retryAfterSeconds: perSiteDay.retryAfterSeconds,
+    };
+  }
 
   // What is sold and who invoices it, before anything is written to the CRM.
   let ghl: SiteGhl;
@@ -363,6 +435,12 @@ export async function startSiteCheckout(
   let userId: string | null;
   try {
     ghl = await siteGhl(deps, row.location);
+    // The invoice needs a scope the connection may not have been granted (GHL answers 401):
+    // refused now, before a contact is written for a sale that can't happen.
+    if (!ghl.scopes.includes(CHECKOUT_SCOPE)) {
+      console.error(`Checkout for site ${row.site.id} refused: no ${CHECKOUT_SCOPE} scope`);
+      return refuse(503, NOT_SWITCHED_ON);
+    }
     const found = await sellable(ghl, productId, priceId, qty);
     if ("refused" in found) return refuse(422, found.refused);
     sale = found;
@@ -377,9 +455,17 @@ export async function startSiteCheckout(
   }
 
   // The contact first, then the invoice, then the note, which says what really happened: a
-  // contact whose invoice couldn't be made gets a note saying nothing was charged.
-  const what = `${sale.productName} × ${sale.qty} (${amountText(sale.amount, sale.currency)}${sale.qty > 1 ? " each" : ""})`;
-  const done: { invoice?: { number: string; url: unknown }; failure?: unknown } = {};
+  // contact whose invoice GHL refused gets a note saying nothing was charged; one whose invoice
+  // may have been made after all (a timeout, a 5xx, an answer Locus couldn't read) says so.
+  const testMode = deps.liveMode ? "" : " (test mode)";
+  const what = `${sale.productName} × ${sale.qty} (${amountText(sale.amount, sale.currency)}${sale.qty > 1 ? " each" : ""})${testMode}`;
+  const done: {
+    invoice?: { number: string; url: unknown };
+    /** Why the invoice wasn't made, when it was tried. */
+    invoiceFailure?: unknown;
+    /** Why the contact wasn't. */
+    failure?: unknown;
+  } = {};
   try {
     await sendToGhl(ghl, lead, async (contactId, contact) => {
       try {
@@ -394,10 +480,12 @@ export async function startSiteCheckout(
           now,
         );
       } catch (error) {
-        done.failure = error;
-        return [
-          `Tried to check out ${what}, but the invoice couldn't be made. Nothing was charged.`,
-        ];
+        done.invoiceFailure = error;
+        return refusedByGhl(error)
+          ? [`Tried to check out ${what}, but the invoice couldn't be made. Nothing was charged.`]
+          : [
+              `Tried to check out ${what}, but GHL didn't confirm the invoice, so it may not have been made. Check the invoices before making another.`,
+            ];
       }
       const started = `Started checkout: ${what}, invoice ${done.invoice.number}`;
       return isGhlPayUrl(done.invoice.url)
@@ -405,21 +493,22 @@ export async function startSiteCheckout(
         : [`${started}. It was emailed; the site couldn't open its payment page.`];
     });
   } catch (error) {
-    // The contact itself failed (no invoice was tried), or only the note did.
-    if (!done.invoice) done.failure ??= error;
+    // The contact itself failed (no invoice was tried), or only the note did: then the invoice
+    // stands, and the visitor is answered as if the note had been written.
+    if (!done.invoice && done.invoiceFailure === undefined) done.failure = error;
     else logGhlFailure(`Checkout note for site ${row.site.id}`, error);
   }
   const made = done.invoice;
-  if (made && isGhlPayUrl(made.url)) {
-    await countWithDeadline(deps, row, "delivered", now);
-    return { status: 200, body: { ok: true, payUrl: made.url } };
-  }
   if (made) {
-    console.error(`Checkout for site ${row.site.id} failed: the invoice's address isn't GHL's`);
-    await countWithDeadline(deps, row, "failed", now);
-    return refuse(502, "We couldn't open the payment page. Your invoice is on its way by email.");
+    await countWithDeadline(deps, row, "delivered", now);
+    if (isGhlPayUrl(made.url)) return { status: 200, body: { ok: true, payUrl: made.url } };
+    // GHL made and emailed the invoice; only its payment page can't be opened from here.
+    console.error(`Checkout for site ${row.site.id}: the invoice's address isn't GHL's`);
+    return { status: 200, body: { ok: true, emailed: true } };
   }
-  logGhlFailure(`Checkout for site ${row.site.id}`, done.failure);
+  logGhlFailure(`Checkout for site ${row.site.id}`, done.invoiceFailure ?? done.failure);
   await countWithDeadline(deps, row, "failed", now);
-  return refuse(502, NOT_STARTED);
+  // A refused invoice, or no contact at all, can be tried again; one that may exist can't safely.
+  const maybeMade = done.invoiceFailure !== undefined && !refusedByGhl(done.invoiceFailure);
+  return refuse(502, maybeMade ? NOT_CONFIRMED : NOT_STARTED);
 }

@@ -41,6 +41,9 @@ payment service: everything goes through the `crm` tool.
 - The CRM makes an invoice for that contact at the CRM's price and emails it, then the visitor
   is taken to the invoice's payment page to pay. The client sees the invoice and the payment in
   their CRM.
+- If the payment page can't be opened from the site, the visitor is told the invoice was
+  emailed and pays from the email instead.
+- One email address is sent at most two invoices a day from a site, and a site at most 300.
 
 ## Rules
 - Don't edit `components/buy-button.tsx`'s requests, `app/api/locus/[...path]/route.ts` or

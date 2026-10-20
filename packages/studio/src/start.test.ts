@@ -189,6 +189,12 @@ describe("the buy button", () => {
     expect(source).toContain('payUrl.startsWith("https://")');
     expect(source).toContain("window.location.assign(payUrl)");
     expect(source).toContain("Checkout works on the published site.");
+    // An invoice that was emailed without a payment page to open says so, and goes nowhere.
+    expect(source).toContain('result?.emailed === true) return setState("emailed")');
+    expect(source).toContain("We've emailed you an invoice to pay.");
+    expect(source.indexOf('setState("emailed")')).toBeLessThan(
+      source.indexOf("window.location.assign"),
+    );
     // Name, email and phone are all required (GHL's invoice needs them), with the spam checks.
     for (const field of ['name="name"', 'name="email"', 'name="phone"']) {
       expect(source).toMatch(new RegExp(`${field}[^>]*required`));
