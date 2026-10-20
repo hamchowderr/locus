@@ -1,5 +1,6 @@
 import {
   deleteSiteFiles,
+  hasSiteFilesKey,
   MAX_SITE_FILE_BYTES,
   type SiteFileAnswer,
   uploadSiteFile,
@@ -72,6 +73,10 @@ export async function POST(request: Request, { params }: Params) {
   const authorization = request.headers.get("authorization");
   try {
     if (action === "upload") {
+      // The key first: nobody else gets Locus to read a file's worth of body.
+      if (!hasSiteFilesKey(siteFilesDeps().filesKey, siteId, authorization)) {
+        return refused("This site can't keep files.", 401);
+      }
       const file = await uploadedFile(request);
       if (file instanceof Response) return file;
       return answer(

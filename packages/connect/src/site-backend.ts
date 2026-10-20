@@ -157,7 +157,8 @@ async function provisionSiteBackend(
  * Deletes the site's database and everything in it, then its registry row. Owners and admins
  * only. It cannot be undone, so callers confirm with the person first. The site's project
  * loses its database settings first: a database made again later under the same name gets
- * new ones on the next publish instead of the dead token.
+ * new ones on the next publish instead of the dead token. Files members uploaded stay in the
+ * client's Media Library (the agency's own), in the site's "Site uploads" folder.
  */
 export async function removeSiteBackend(
   deps: SiteBackendDeps & Partial<Pick<VercelCallDeps, "secrets" | "http">>,
