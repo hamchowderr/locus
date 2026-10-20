@@ -137,6 +137,33 @@ export class VercelRuntimeProvider implements RuntimeProvider {
     }
     return runtime;
   }
+
+  /** Deletes the site's sandbox and the snapshots only it used. A sandbox that's gone is fine. */
+  async destroy(key: string): Promise<void> {
+    if (!key) throw new Error("destroy() needs a site key");
+    const open = this.runtimes.get(key);
+    this.runtimes.delete(key);
+    await open?.stop().catch(() => {
+      // Deleting below ends it anyway.
+    });
+    const { Sandbox } = await import("@vercel/sandbox");
+    try {
+      const sandbox = await Sandbox.get({
+        name: sandboxName(key, this.config.namePrefix),
+        ...vercelCredentials(this.config),
+      });
+      await sandbox.delete({ deleteOrphanSnapshots: true });
+    } catch (error) {
+      if (!isGone(error)) throw error;
+    }
+  }
+}
+
+/** The SDK's credentials argument. With OIDC none are passed: the SDK reads the token itself. */
+function vercelCredentials(config: VercelSandboxConfig) {
+  return "oidc" in config
+    ? {}
+    : { token: config.token, teamId: config.teamId, projectId: config.projectId };
 }
 
 /** The SDK's APIError, duck-typed so this module never loads the SDK eagerly. */
@@ -218,15 +245,7 @@ class VercelSiteRuntime implements SiteRuntime {
 
   private async connect(): Promise<Sandbox> {
     const { Sandbox } = await import("@vercel/sandbox");
-    // With OIDC no credentials are passed: the SDK reads the deployment's token itself.
-    const credentials =
-      "oidc" in this.config
-        ? {}
-        : {
-            token: this.config.token,
-            teamId: this.config.teamId,
-            projectId: this.config.projectId,
-          };
+    const credentials = vercelCredentials(this.config);
     let created = false;
     const image =
       this.config.image ??
