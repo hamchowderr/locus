@@ -181,3 +181,53 @@ export async function writeBrief(
     .onConflictDoUpdate({ target: siteBrief.siteId, set: { brief, updatedAt: now } });
   return brief;
 }
+
+/** The colours each suggested palette answer stands for, so a choice on a form is a real palette. */
+export const PALETTE_PRESETS: Record<string, NonNullable<DesignBrief["palette"]>> = {
+  "Blue and white, trustworthy": {
+    primary: "#1d4ed8",
+    accent: "#0ea5e9",
+    background: "#ffffff",
+    foreground: "#0f172a",
+  },
+  "Warm and earthy": {
+    primary: "#b45309",
+    accent: "#4d7c0f",
+    background: "#fffbeb",
+    foreground: "#292524",
+  },
+  "Bold and dark": {
+    primary: "#f43f5e",
+    accent: "#f59e0b",
+    background: "#0a0a0a",
+    foreground: "#fafafa",
+  },
+  "Soft pastels": {
+    primary: "#7c3aed",
+    accent: "#f472b6",
+    background: "#fdf4ff",
+    foreground: "#3b0764",
+  },
+};
+
+/** The heading and body fonts each suggested lettering answer stands for. */
+export const FONT_PRESETS: Record<string, NonNullable<DesignBrief["fonts"]>> = {
+  "Modern (Inter)": { heading: "Inter", body: "Inter" },
+  "Friendly (Poppins)": { heading: "Poppins", body: "Open Sans" },
+  "Elegant (Playfair Display)": { heading: "Playfair Display", body: "Inter" },
+  "Classic (Lora)": { heading: "Lora", body: "Open Sans" },
+};
+
+/** Image types a reference screenshot may be, by media type → file extension. */
+export const SCREENSHOT_TYPES = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+} as const;
+export type ScreenshotType = keyof typeof SCREENSHOT_TYPES;
+
+/** Largest reference screenshot kept: big enough for a full-page capture, small for the model. */
+export const MAX_SCREENSHOT_BYTES = 3 * 1024 * 1024;
+
+/** Where a site keeps its reference screenshots (published with the site, harmless there). */
+export const REFERENCE_FOLDER = "design/references";
