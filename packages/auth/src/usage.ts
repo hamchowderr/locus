@@ -7,6 +7,7 @@ import {
   usageEvent,
   usageLimit,
   usageMonth,
+  usageOverage,
 } from "@locus/db/control";
 import { and, asc, eq, gt, lt, sql } from "drizzle-orm";
 import { agencyEntitlement, type Entitlement } from "./billing.ts";
@@ -37,6 +38,11 @@ import { CREDIT } from "./plans.ts";
  *
  * Monthly totals are read from `usage_month`, a rollup written in the same batch as each event;
  * only the 5-hour window sums events.
+ *
+ * Extra usage: an agency that turns it on (`setUsageOverage`) keeps generating past its plan's
+ * monthly credits, up to a monthly limit of its own. `recordUsage` marks the part of each event
+ * past the plan's credits as `overage_credits`, and `reportOverage` (`overage-billing.ts`) sends
+ * it to Stripe's meter, which bills it on the agency's next invoice.
  */
 
 /** Provider cost in USD that one credit stands for, before the markup. */
@@ -181,6 +187,26 @@ async function windowEvents(db: ControlDb, locationId: string, now: Date) {
     .orderBy(asc(usageEvent.createdAt));
 }
 
+/** The agency's extra credits used this month, from the same rollup. */
+async function agencyOverageUsed(db: ControlDb, organizationId: string, now: Date) {
+  const [row] = await db
+    .select({ total: sql<number>`coalesce(sum(${usageMonth.overageCredits}), 0)`.mapWith(Number) })
+    .from(usageMonth)
+    .where(
+      and(eq(usageMonth.organizationId, organizationId), eq(usageMonth.month, monthOf(now).key)),
+    );
+  return row?.total ?? 0;
+}
+
+/** The agency's extra-usage setting, or null when it never turned it on. */
+export async function usageOverageOf(db: ControlDb, organizationId: string) {
+  const [row] = await db
+    .select()
+    .from(usageOverage)
+    .where(eq(usageOverage.organizationId, organizationId));
+  return row ?? null;
+}
+
 async function limitRow(db: ControlDb, locationId: string) {
   const [row] = await db.select().from(usageLimit).where(eq(usageLimit.locationId, locationId));
   return row;
@@ -199,6 +225,7 @@ export type Allowance =
       ok: true;
       /** The smallest of the remaining amounts below; `null` when nothing limits it. */
       remaining: number | null;
+      /** The plan's credits left this month, plus any extra credits still allowed. */
       agencyMonth: number | null;
       locationMonth: number | null;
       window: number | null;
@@ -255,10 +282,21 @@ export async function checkAllowance(
   let agencyMonth: number | null = null;
   if (plan?.creditsPerMonth != null) {
     agencyMonth = plan.creditsPerMonth - (await agencyMonthUsed(db, organizationId, now));
-    if (agencyMonth <= 0) {
+    const overage = agencyMonth <= 0 ? await usageOverageOf(db, organizationId) : null;
+    if (overage?.enabled) {
+      // The plan's credits are spent; what is left is the agency's own extra-usage limit.
+      agencyMonth = overage.monthlyCreditLimit - (await agencyOverageUsed(db, organizationId, now));
+      if (agencyMonth <= 0) {
+        return {
+          ok: false,
+          reason: `Your agency has used this month's AI credits and its ${formatCredits(overage.monthlyCreditLimit)} extra credits. An owner or admin can raise the extra-usage limit on the Billing page.`,
+          retryAt: month.end,
+        };
+      }
+    } else if (agencyMonth <= 0) {
       return {
         ok: false,
-        reason: `Your agency has used this month's ${formatCredits(plan.creditsPerMonth)} AI credits on the ${entitlement.plan?.title ?? ""} plan. Upgrade on the Billing page, or wait for next month.`,
+        reason: `Your agency has used this month's ${formatCredits(plan.creditsPerMonth)} AI credits on the ${entitlement.plan?.title ?? ""} plan. Upgrade or turn on extra usage on the Billing page, or wait for next month.`,
         retryAt: month.end,
       };
     }
@@ -323,8 +361,9 @@ export interface UsageRecord {
 }
 
 export interface UsageAlert {
-  scope: "agency" | "location";
-  /** Null for the agency's monthly credits. */
+  /** `overage` is the agency's extra-usage limit. */
+  scope: "agency" | "location" | "overage";
+  /** Null for the agency's monthly credits and its extra-usage limit. */
   locationId: string | null;
   /** "YYYY-MM", UTC. */
   period: string;
@@ -334,7 +373,7 @@ export interface UsageAlert {
   limit: number;
 }
 
-/** Thresholds of the agency's monthly credits that alert. */
+/** Thresholds of the agency's monthly credits, and of its extra-usage limit, that alert. */
 const AGENCY_ALERTS = [80, 100] as const;
 
 /**
@@ -343,19 +382,28 @@ const AGENCY_ALERTS = [80, 100] as const;
  * the agency reaching 80% or 100% of its monthly credits. Each alert fires once per period
  * (`usage_alert`) and is written to the audit log in the same batch. See `checkAllowance` on
  * why there is no reservation.
+ *
+ * With extra usage on, the part of the event past the plan's monthly credits is marked as
+ * overage in the same batch, so concurrent writers each see the totals before them and an extra
+ * credit is never counted twice. It never goes past the agency's extra-usage limit: an event
+ * that overshoots a limit (see above) is not billed for the part beyond it.
  */
 export async function recordUsage(
   db: ControlDb,
   client: AuthorizedClient,
   record: UsageRecord,
-): Promise<{ id: string; credits: number; alerts: UsageAlert[] }> {
+): Promise<{ id: string; credits: number; overageCredits: number; alerts: UsageAlert[] }> {
   const { organizationId, locationId } = idsOf(client);
   const now = record.now ?? new Date();
   const period = monthOf(now).key;
   const credits = creditsFor(record.usage);
   const { kind, ...detail } = record.usage;
   const id = randomUUID();
-  await db.batch([
+  const { limits } = await agencyEntitlement(db, organizationId);
+  const overage = await usageOverageOf(db, organizationId);
+  const included = overage?.enabled ? (limits?.creditsPerMonth ?? null) : null;
+  const inMonth = and(eq(usageMonth.organizationId, organizationId), eq(usageMonth.month, period));
+  const writes = [
     db.insert(usageEvent).values({
       id,
       organizationId,
@@ -374,7 +422,35 @@ export async function recordUsage(
         target: [usageMonth.locationId, usageMonth.month],
         set: { credits: sql`${usageMonth.credits} + excluded.credits` },
       }),
-  ]);
+  ] as const;
+  if (included === null || !overage) {
+    await db.batch(writes);
+  } else {
+    // The agency's total now includes this event: whatever is past the plan's credits is extra,
+    // up to what is left of the extra-usage limit. Read inside the batch, so writers serialize.
+    const agencyTotal = sql`(select coalesce(sum(${usageMonth.credits}), 0) from ${usageMonth} where ${inMonth})`;
+    const overageTotal = sql`(select coalesce(sum(${usageMonth.overageCredits}), 0) from ${usageMonth} where ${inMonth})`;
+    await db.batch([
+      ...writes,
+      db
+        .update(usageEvent)
+        .set({
+          overageCredits: sql`max(0, min(${credits}, ${agencyTotal} - ${included}, ${overage.monthlyCreditLimit} - ${overageTotal}))`,
+        })
+        .where(eq(usageEvent.id, id)),
+      db
+        .update(usageMonth)
+        .set({
+          overageCredits: sql`${usageMonth.overageCredits} + (select ${usageEvent.overageCredits} from ${usageEvent} where ${usageEvent.id} = ${id})`,
+        })
+        .where(and(eq(usageMonth.locationId, locationId), eq(usageMonth.month, period))),
+    ]);
+  }
+  const [written] = await db
+    .select({ overageCredits: usageEvent.overageCredits })
+    .from(usageEvent)
+    .where(eq(usageEvent.id, id));
+  const overageCredits = written?.overageCredits ?? 0;
 
   const candidates: UsageAlert[] = [];
 
@@ -395,7 +471,6 @@ export async function recordUsage(
     }
   }
 
-  const { limits } = await agencyEntitlement(db, organizationId);
   if (limits?.creditsPerMonth != null && limits.creditsPerMonth > 0) {
     const used = await agencyMonthUsed(db, organizationId, now);
     for (const t of AGENCY_ALERTS) {
@@ -412,9 +487,25 @@ export async function recordUsage(
     }
   }
 
+  if (overage?.enabled && overage.monthlyCreditLimit > 0 && overageCredits > 0) {
+    const used = await agencyOverageUsed(db, organizationId, now);
+    for (const t of AGENCY_ALERTS) {
+      if (used * 100 >= overage.monthlyCreditLimit * t) {
+        candidates.push({
+          scope: "overage",
+          locationId: null,
+          period,
+          thresholdPercent: t,
+          used,
+          limit: overage.monthlyCreditLimit,
+        });
+      }
+    }
+  }
+
   const fired: UsageAlert[] = [];
   for (const alert of candidates) {
-    const subject = alert.scope === "agency" ? "agency" : `location:${alert.locationId}`;
+    const subject = alert.scope === "location" ? `location:${alert.locationId}` : alert.scope;
     // One batch, so an alert is never marked fired without its audit row. The unique key is the
     // once-per-period check, even with concurrent writers; the audit row's id is derived from the
     // same key, so a writer that lost the race adds no second audit row either.
@@ -446,7 +537,7 @@ export async function recordUsage(
     ]);
     if (inserted.length > 0) fired.push(alert);
   }
-  return { id, credits, alerts: fired };
+  return { id, credits, overageCredits, alerts: fired };
 }
 
 // The usage page
@@ -469,6 +560,11 @@ export interface UsageSummary {
    * caller is an owner or admin: the total covers clients a restricted member can't open.
    */
   agency: { used: number; limit: number | null } | null;
+  /**
+   * The agency's extra usage this month: null unless the caller is an owner or admin and the
+   * agency has turned it on at some point. `used` is in `CREDIT` units, like `limit`.
+   */
+  overage: { enabled: boolean; used: number; limit: number } | null;
   /** The per-client burst limit over the last 5 hours; null means none. */
   windowLimit: number | null;
   clients: ClientUsage[];
@@ -576,7 +672,16 @@ export async function usageSummary(
   }
 
   let agency: UsageSummary["agency"] = null;
+  let overage: UsageSummary["overage"] = null;
   if (manager) {
+    const setting = await usageOverageOf(db, organizationId);
+    if (setting) {
+      overage = {
+        enabled: setting.enabled,
+        used: await agencyOverageUsed(db, organizationId, now),
+        limit: setting.monthlyCreditLimit,
+      };
+    }
     agency = {
       used: locationId
         ? await agencyMonthUsed(db, organizationId, now)
@@ -588,6 +693,7 @@ export async function usageSummary(
   return {
     period,
     agency,
+    overage,
     windowLimit: limits?.creditsPer5Hours ?? null,
     clients: rows.sort((a, b) => b.monthUsed - a.monthUsed),
   };
@@ -652,5 +758,54 @@ export async function setUsageLimit(
     db.select().from(usageLimit).where(eq(usageLimit.locationId, locationId)),
   ]);
   if (!row) throw new Error("usage limit was not saved");
+  return row;
+}
+
+// Extra usage
+
+/** The most extra credits an agency may allow itself per month, in `CREDIT` units. */
+export const MAX_OVERAGE_CREDITS = 1_000_000 * CREDIT;
+
+export interface UsageOverageChange {
+  enabled: boolean;
+  /** Extra credits allowed per calendar month (UTC), in `CREDIT` units. */
+  monthlyCreditLimit: number;
+}
+
+/**
+ * Turns the session agency's extra usage on or off and sets its monthly limit. Owners and admins
+ * only; the agency is the session's, never one the caller names. Audited. Billing it is the
+ * caller's part: before turning it on, make sure the agency's subscription has the metered price
+ * (`ensureOverageItem`), or Stripe records the usage without charging it.
+ */
+export async function setUsageOverage(
+  db: ControlDb,
+  ctx: SessionContext,
+  change: UsageOverageChange,
+): Promise<typeof usageOverage.$inferSelect> {
+  const { organizationId } = await requireAgencyManager(db, ctx);
+  const cap = change.monthlyCreditLimit;
+  if (!Number.isInteger(cap) || cap < 0 || cap > MAX_OVERAGE_CREDITS) {
+    throw new RangeError(
+      `The extra-usage limit must be a whole number of credit units from 0 to ${MAX_OVERAGE_CREDITS}`,
+    );
+  }
+  const set = { enabled: change.enabled, monthlyCreditLimit: cap, updatedAt: new Date() };
+  const [, , [row]] = await db.batch([
+    db
+      .insert(usageOverage)
+      .values({ organizationId, ...set })
+      .onConflictDoUpdate({ target: usageOverage.organizationId, set }),
+    db.insert(auditLog).values({
+      id: randomUUID(),
+      organizationId,
+      actorUserId: ctx.userId,
+      locationId: null,
+      action: "usage.overage.set",
+      detail: change,
+    }),
+    db.select().from(usageOverage).where(eq(usageOverage.organizationId, organizationId)),
+  ]);
+  if (!row) throw new Error("extra-usage setting was not saved");
   return row;
 }

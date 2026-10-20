@@ -14,6 +14,7 @@ import {
   usageAlert,
   usageEvent,
   usageMonth,
+  usageOverage,
   user,
 } from "@locus/db/control";
 import { eq, sql } from "drizzle-orm";
@@ -31,6 +32,7 @@ import {
   monthOf,
   recordUsage,
   setUsageLimit,
+  setUsageOverage,
   type UsageMeasurement,
   usageSummary,
 } from "./usage.ts";
@@ -333,7 +335,13 @@ describe("recordUsage and alerts", () => {
     expect(result.credits).toBe(105);
     await record();
     expect(await db.select().from(usageMonth)).toEqual([
-      { organizationId: "agency-a", locationId: "a1", month: "2026-10", credits: 105 + 1_500 },
+      {
+        organizationId: "agency-a",
+        locationId: "a1",
+        month: "2026-10",
+        credits: 105 + 1_500,
+        overageCredits: 0,
+      },
     ]);
   });
 
@@ -525,5 +533,143 @@ describe("setUsageLimit", () => {
     await expect(setUsageLimit(db, owner, a1, { monthlyCreditCap: -1 })).rejects.toThrow(
       RangeError,
     );
+  });
+});
+
+describe("extra usage", () => {
+  /** Spends all but `left` of the plan's credits, spread so the 5-hour window doesn't refuse. */
+  async function spendPlan(left = 0) {
+    await spent("a2", MONTH_LIMIT / 2, new Date("2026-10-02T00:00:00Z"));
+    await spent("a2", MONTH_LIMIT / 2 - left, new Date("2026-10-05T00:00:00Z"));
+  }
+  const extra = (limit: number, enabled = true) =>
+    setUsageOverage(db, owner, { enabled, monthlyCreditLimit: limit });
+
+  it("keeps generating past the plan's credits while it's on, up to the agency's limit", async () => {
+    await subscribe("agency-a");
+    await spendPlan();
+    expect(await check()).toMatchObject({ ok: false, reason: /turn on extra usage/ });
+
+    await extra(20 * CREDIT);
+    expect(await check()).toMatchObject({ ok: true, agencyMonth: 20 * CREDIT });
+
+    // 15 credits each: the first is all extra; the second only fills the limit's last 5.
+    const a1 = await client("a1");
+    expect(await recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW })).toMatchObject({
+      credits: 15 * CREDIT,
+      overageCredits: 15 * CREDIT,
+    });
+    expect(await check()).toMatchObject({ ok: true, agencyMonth: 5 * CREDIT });
+    expect(await recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW })).toMatchObject({
+      overageCredits: 5 * CREDIT,
+    });
+    const refused = await check();
+    expect(refused).toMatchObject({ ok: false, reason: /extra-usage limit/ });
+    expect(!refused.ok && refused.retryAt).toEqual(new Date("2026-11-01T00:00:00Z"));
+
+    // Next month starts with the plan's credits again, and nothing extra.
+    const next = new Date("2026-11-02T12:00:00Z");
+    expect(await recordUsage(db, a1, { usage: SANDBOX_1000S, now: next })).toMatchObject({
+      overageCredits: 0,
+    });
+  });
+
+  it("bills only the part of an event past the plan's credits", async () => {
+    await subscribe("agency-a");
+    await extra(100 * CREDIT);
+    await spendPlan(10 * CREDIT);
+    const a1 = await client("a1");
+    const r = await recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW });
+    expect(r).toMatchObject({ credits: 15 * CREDIT, overageCredits: 5 * CREDIT });
+    const rows = await db.select().from(usageMonth).where(eq(usageMonth.locationId, "a1"));
+    expect(rows).toEqual([expect.objectContaining({ overageCredits: 5 * CREDIT })]);
+  });
+
+  it("never counts an extra credit twice when records race past the plan's credits", async () => {
+    await subscribe("agency-a");
+    await extra(1_000 * CREDIT);
+    await spendPlan(30 * CREDIT);
+    const a1 = await client("a1");
+    const results = await Promise.all(
+      Array.from({ length: 6 }, () => recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW })),
+    );
+    // 6 × 15 = 90 credits, 30 of them inside the plan.
+    const billed = results.reduce((sum, r) => sum + r.overageCredits, 0);
+    expect(billed).toBe(60 * CREDIT);
+    const [month] = await db
+      .select({ total: sql<number>`sum(${usageMonth.overageCredits})`.mapWith(Number) })
+      .from(usageMonth);
+    expect(month?.total).toBe(60 * CREDIT);
+  });
+
+  it("bills nothing while it's off, even when a generation overshoots the plan", async () => {
+    await subscribe("agency-a");
+    await extra(100 * CREDIT, false);
+    await spendPlan(10 * CREDIT);
+    const r = await recordUsage(db, await client("a1"), { usage: SANDBOX_1000S, now: NOW });
+    expect(r.overageCredits).toBe(0);
+  });
+
+  it("is never needed by a comped agency", async () => {
+    await comp("agency-a");
+    await extra(100 * CREDIT);
+    await spendPlan();
+    expect((await check()).ok).toBe(true);
+    const r = await recordUsage(db, await client("a1"), { usage: SANDBOX_1000S, now: NOW });
+    expect(r.overageCredits).toBe(0);
+  });
+
+  it("fires the extra-usage 80% and 100% alerts once each", async () => {
+    await subscribe("agency-a");
+    // 15 of 18 is 83%; the next 15 fill the rest.
+    await extra(18 * CREDIT);
+    await spendPlan();
+    const a1 = await client("a1");
+    const extraAlerts = (r: { alerts: { scope: string }[] }) =>
+      r.alerts.filter((a) => a.scope === "overage");
+    const first = await recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW });
+    expect(extraAlerts(first)).toEqual([
+      expect.objectContaining({ scope: "overage", thresholdPercent: 80 }),
+    ]);
+    const second = await recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW });
+    expect(extraAlerts(second)).toEqual([
+      expect.objectContaining({ scope: "overage", thresholdPercent: 100 }),
+    ]);
+  });
+
+  it("shows owners and admins the month's extra usage", async () => {
+    await subscribe("agency-a");
+    await extra(20 * CREDIT);
+    await spendPlan();
+    await recordUsage(db, await client("a1"), { usage: SANDBOX_1000S, now: NOW });
+    expect((await usageSummary(db, owner, { now: NOW })).overage).toEqual({
+      enabled: true,
+      used: 15 * CREDIT,
+      limit: 20 * CREDIT,
+    });
+    const own = await usageSummary(db, staff, { client: await client("a1", staff), now: NOW });
+    expect(own.overage).toBeNull();
+  });
+
+  it("is set by owners and admins only, with a sane limit, and audited", async () => {
+    await expect(
+      setUsageOverage(db, staff, { enabled: true, monthlyCreditLimit: CREDIT }),
+    ).rejects.toBeInstanceOf(ClientAccessDenied);
+    await expect(extra(-1)).rejects.toThrow(RangeError);
+    await expect(extra(1.5)).rejects.toThrow(RangeError);
+    await extra(10 * CREDIT);
+    await extra(30 * CREDIT, false);
+    expect(await db.select().from(usageOverage)).toEqual([
+      expect.objectContaining({
+        organizationId: "agency-a",
+        enabled: false,
+        monthlyCreditLimit: 30 * CREDIT,
+      }),
+    ]);
+    const audited = await db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, "usage.overage.set"));
+    expect(audited).toHaveLength(2);
   });
 });
