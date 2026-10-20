@@ -15,9 +15,15 @@ import {
   type SessionContext,
   type UsageMeasurement,
 } from "@locus/auth";
-import { ConnectError, commitSiteVersion, type PublishDeps } from "@locus/connect";
+import {
+  ConnectError,
+  commitSiteVersion,
+  type PublishDeps,
+  type SiteDeps,
+  siteDomainStatus,
+} from "@locus/connect";
 import { type ControlDb, openTenantDb, type TenantDb, type TenantProvisioner } from "@locus/db";
-import { auditLog, member, session, site } from "@locus/db/control";
+import { auditLog, member, session, site, siteBackend } from "@locus/db/control";
 import {
   generationRun,
   siteBlob,
@@ -36,16 +42,21 @@ import {
   sandboxFromEnv,
 } from "@locus/sandbox";
 import {
+  type PageSeo,
+  pageSeo,
   readBrief,
+  type SeoIssue,
   SITE_KINDS,
   SiteWorkspace,
+  seoIssues,
   startSite,
   templateById,
   type VersionInfo,
   WorkspaceError,
   withLocusSettings,
 } from "@locus/studio";
-import { and, count, eq, gte, inArray, isNull, notInArray, sum } from "drizzle-orm";
+import { and, count, eq, gte, inArray, isNull, notExists, notInArray, sum } from "drizzle-orm";
+import { ZodError } from "zod";
 import {
   BuilderError,
   type BuilderSession,
@@ -249,6 +260,24 @@ const SITES_PAGE_PUBLISH_ERROR =
   "GitHub refused the publish. Check that the Locus app can still reach the site's " +
   "repository, then publish again.";
 
+/**
+ * The address a published site goes by, for its sitemap, links and structured data: its own
+ * domain once that is live (verified and pointing at Vercel), else its Vercel address. Null
+ * before either exists, when the site falls back to the host's production address at build.
+ */
+export async function siteAddress(
+  deps: SiteDeps,
+  client: AuthorizedClient,
+  row: { id: string; customDomain: string | null; deployUrl: string | null },
+): Promise<string | null> {
+  if (row.customDomain) {
+    // A domain still being set up (or a check that fails) doesn't hold up the publish.
+    const status = await siteDomainStatus(deps, client, row.id).catch(() => null);
+    if (status?.state === "live") return `https://${row.customDomain}`;
+  }
+  return row.deployUrl;
+}
+
 /** What runs after each saved version (`BuilderSession.onVersionSaved`). */
 export type VersionSavedHook = NonNullable<BuilderSession["onVersionSaved"]>;
 
@@ -281,13 +310,15 @@ export function publishHook(
     const row = await clientSite(db, client, siteId);
     if (!row.repoFullName) return undefined;
     try {
-      const { commitSha, url } = await commitSiteVersion(publish(), client, {
+      const deps = publish();
+      const siteUrl = await siteAddress(deps, client, row);
+      const { commitSha, url } = await commitSiteVersion(deps, client, {
         siteId,
         message: `Version ${version.number}: ${version.message}`,
-        // The version's files, with this site's form endpoint in `lib/locus.ts`.
+        // The version's files, with this site's form endpoint and address in `lib/locus.ts`.
         files: withLocusSettings(
           files.map(({ path, content }) => ({ path, content })),
-          { siteId, locusUrl },
+          { siteId, locusUrl, siteUrl },
         ),
       });
       return { commitSha, url };
@@ -365,9 +396,17 @@ interface PooledDb {
   until: number;
   users: number;
   retired: boolean;
+  /** Closes the connection once it has gone unused for `POOL_IDLE_MS`. */
+  idle?: ReturnType<typeof setTimeout>;
 }
 
+/**
+ * A pooled connection is replaced after this long. Its token lives an hour (`openClientDb`), so a
+ * call that leased it just before then still has a quarter of an hour.
+ */
 const POOL_LIFETIME_MS = 45 * 60_000;
+/** A connection nobody has used for this long is closed, so idle clients hold nothing open. */
+export const POOL_IDLE_MS = 5 * 60_000;
 const pool = new Map<string, PooledDb>();
 
 function closeIfIdle(entry: PooledDb) {
@@ -378,6 +417,7 @@ function closeIfIdle(entry: PooledDb) {
 function retire(locationId: string) {
   const entry = pool.get(locationId);
   if (!entry) return;
+  clearTimeout(entry.idle);
   pool.delete(locationId);
   entry.retired = true;
   closeIfIdle(entry);
@@ -410,6 +450,7 @@ export async function leaseClientDb(
     pool.set(id, entry);
   }
   const leased = entry;
+  clearTimeout(leased.idle);
   leased.users++;
   let db: TenantDb;
   try {
@@ -427,6 +468,14 @@ export async function leaseClientDb(
       released = true;
       leased.users--;
       closeIfIdle(leased);
+      if (leased.users === 0 && !leased.retired) {
+        clearTimeout(leased.idle);
+        leased.idle = setTimeout(() => {
+          if (pool.get(id) === leased && leased.users === 0) retire(id);
+        }, POOL_IDLE_MS);
+        // Never keeps the process alive.
+        leased.idle.unref?.();
+      }
     },
   };
 }
@@ -901,11 +950,12 @@ export async function createClientSite(
  * refused: its copy may be live (on `*.vercel.app` or a domain added on Vercel), and its forms
  * would stop reaching the CRM with no way to point them at a new site. Unlinking the project
  * first (`unlinkHostProject`) is the owner's deliberate step.
- * The site's `site.create` entry stays, so deleting doesn't give back plan allowance. The site's sandbox is not removed yet: no one can reach it once the row
- * is gone, and Vercel stops it when its timeout ends.
+ * The site's `site.create` entry stays, so deleting doesn't give back plan allowance. Its
+ * sandbox is deleted last, best effort (`RuntimeProvider.destroy`): no one can reach it once the
+ * row is gone, and one left behind only stops when its timeout ends.
  */
 export async function deleteClientSite(
-  deps: Pick<SiteBuilderDeps, "db" | "openClientDb">,
+  deps: Pick<SiteBuilderDeps, "db" | "openClientDb"> & Partial<Pick<SiteBuilderDeps, "runtimes">>,
   ctx: SessionContext,
   client: AuthorizedClient,
   siteId: string,
@@ -917,6 +967,15 @@ export async function deleteClientSite(
     throw new SiteInputError(
       "This site may be live on Vercel. Remove its domain and unlink its Vercel project first, then delete the site.",
     );
+  }
+  const [backend] = await deps.db
+    .select({ siteId: siteBackend.siteId })
+    .from(siteBackend)
+    .where(eq(siteBackend.siteId, row.id));
+  if (backend) {
+    // Its database holds the site's own records (sign-ups, bookings), which a draft delete
+    // must not take with it unasked.
+    throw new SiteInputError("This site has its own database, so it can't be deleted here.");
   }
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
@@ -965,6 +1024,13 @@ export async function deleteClientSite(
           eq(site.locationId, client.location.id),
           isNull(site.hostProjectId),
           isNull(site.customDomain),
+          // Nor if it got its own database meanwhile: that database must not be orphaned.
+          notExists(
+            deps.db
+              .select({ siteId: siteBackend.siteId })
+              .from(siteBackend)
+              .where(eq(siteBackend.siteId, site.id)),
+          ),
         ),
       )
       .returning({ id: site.id }),
@@ -980,6 +1046,11 @@ export async function deleteClientSite(
     action: "site.delete",
     detail: { siteId },
   });
+  try {
+    await deps.runtimes?.().destroy?.(siteRuntimeKey(client, siteId));
+  } catch (error) {
+    console.error("The deleted site's sandbox wasn't removed", { siteId, error });
+  }
 }
 
 const isBusy = (error: unknown) =>
@@ -1031,6 +1102,44 @@ export async function siteLeadTotals(
   return totals;
 }
 
+/** What search engines will see of a site's latest saved version, page by page. */
+export interface SiteSeo {
+  version: number;
+  pages: PageSeo[];
+  issues: SeoIssue[];
+}
+
+/**
+ * The search check of each site's latest saved version, for the Sites page: its pages' titles,
+ * descriptions and structured data, and what to fix. A site without a saved version is left
+ * out. The client is the caller's (after the staff check); the ids are its sites.
+ */
+export async function siteSeo(
+  deps: Pick<SiteBuilderDeps, "openClientDb">,
+  client: AuthorizedClient,
+  siteIds: string[],
+): Promise<Map<string, SiteSeo>> {
+  const checks = new Map<string, SiteSeo>();
+  if (siteIds.length === 0) return checks;
+  const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
+  try {
+    for (const id of siteIds) {
+      const workspace = new SiteWorkspace(tenant, id);
+      const version = await workspace.latestVersion();
+      if (!version) continue;
+      const files = await workspace.versionFiles(version.id);
+      checks.set(id, {
+        version: version.number,
+        pages: pageSeo(files),
+        issues: seoIssues(files),
+      });
+    }
+  } finally {
+    release();
+  }
+  return checks;
+}
+
 /** The sites' names from their briefs in the client's database, by site id. */
 export async function siteNames(
   deps: Pick<SiteBuilderDeps, "openClientDb">,
@@ -1042,7 +1151,12 @@ export async function siteNames(
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
-      const brief = await readBrief(tenant, id);
+      // One brief that no longer reads (an older format) mustn't hide every other site.
+      const brief = await readBrief(tenant, id).catch((error) => {
+        if (!(error instanceof ZodError)) throw error;
+        console.error("A site's brief couldn't be read", { siteId: id, error });
+        return null;
+      });
       if (brief) names.set(id, brief.name);
     }
   } finally {
