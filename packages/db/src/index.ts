@@ -14,8 +14,25 @@ export {
   type ProvisionDeps,
   provisionLocation,
 } from "./locations.ts";
-export { LocalProvisioner, type TenantProvisioner, tenantDbName } from "./provisioner.ts";
+export {
+  type CreatedDatabase,
+  type DatabaseFork,
+  LocalProvisioner,
+  siteDbName,
+  type TenantProvisioner,
+  tenantDbName,
+} from "./provisioner.ts";
 export { DbSecretStore } from "./secrets.ts";
+export {
+  listSiteTables,
+  listSiteUsers,
+  openSiteDb,
+  readSiteRows,
+  type SiteColumn,
+  type SiteRows,
+  type SiteTable,
+  type SiteUser,
+} from "./site-db.ts";
 export {
   loadTenantMigrations,
   type MigrateTenantsDeps,
