@@ -368,6 +368,12 @@ export default async function SiteDatabase({
                 {when.format(restore.undo.restoredAt)} UTC. Undoing it brings back the database from
                 before, and drops anything added since the restore.
               </p>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" name="confirm" value="yes" required />
+                <span>
+                  I understand sign-ups and changes since the restore leave the live site.
+                </span>
+              </label>
               <button
                 type="submit"
                 className="rounded-md border border-neutral-300 px-3 py-1 font-medium"

@@ -71,7 +71,9 @@ export async function offboardLocation(deps: ProvisionDeps, locationId: string) 
     .from(siteBackendRestore)
     .where(eq(siteBackendRestore.locationId, locationId));
   for (const restore of restores) {
-    if (restore.keptDbName) await deps.provisioner.destroy(restore.keptDbName);
+    for (const name of [restore.keptDbName, ...restore.retired.map((r) => r.dbName)]) {
+      if (name) await deps.provisioner.destroy(name);
+    }
     await deps.control
       .delete(siteBackendRestore)
       .where(eq(siteBackendRestore.siteId, restore.siteId));

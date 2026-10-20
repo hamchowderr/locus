@@ -7,6 +7,9 @@ CREATE TABLE IF NOT EXISTS `site_backend_restore` (
 	`kept_since` integer,
 	`restored_to` integer,
 	`restored_at` integer,
+	`busy_until` integer,
+	`env_stale` integer DEFAULT false NOT NULL,
+	`retired` text DEFAULT '[]' NOT NULL,
 	FOREIGN KEY (`site_id`) REFERENCES `site`(`id`) ON UPDATE no action ON DELETE restrict,
 	FOREIGN KEY (`location_id`) REFERENCES `location`(`id`) ON UPDATE no action ON DELETE restrict
 );

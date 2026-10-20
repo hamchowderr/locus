@@ -65,6 +65,9 @@ export async function restoreDatabase(form: FormData) {
 /** Puts back the database the site had before its last restore. */
 export async function undoDatabaseRestore(form: FormData) {
   await databaseAction(form, async ({ ctx, client, siteId }) => {
+    if (text(form, "confirm") !== "yes") {
+      throw new ConnectError("Tick the box to confirm undoing the restore.");
+    }
     const { redeployed } = await undoSiteBackendRestore(siteRestoreDeps(), ctx, client, {
       siteId,
     });
