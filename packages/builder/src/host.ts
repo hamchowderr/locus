@@ -71,6 +71,8 @@ import {
   type UsageMeter,
 } from "./index.ts";
 
+export * from "./site-history.ts";
+
 // Host wiring for the site-builder agent. Everything here starts from an `AuthorizedClient`
 // (the session's client, after the staff check) and never takes a client or agency id from a
 // request, a form or the model. Environment-specific pieces (the control database, the
