@@ -39,9 +39,11 @@ Then run `database apply`, or preview, which applies it too. Fix whatever it rep
 `check_site` as usual.
 
 Rules that keep the live site's data safe:
-- **Never edit or delete a migration that has run.** That includes one run in the preview,
-  and one whose publish failed. If it was wrong, fix it with a new migration. Publishing
-  refuses a migration that changed after it ran.
+- **Never edit or delete a migration that has run** (preview or publish said it applied). If
+  it was wrong, fix it with a new migration. Publishing refuses a migration that changed after
+  it ran.
+- A migration that **failed** didn't run: nothing in it was kept. Fix that same file, then
+  apply again. A misnamed file or two files with the same number only need renaming.
 - **Keep changes additive.** Add tables, add columns that are nullable or have a default, and
   add indexes. The published site runs its old code until the new version is live, so never
   drop or rename a table or column the current code uses. If something must go, stop using it

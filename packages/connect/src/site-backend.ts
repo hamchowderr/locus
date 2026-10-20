@@ -20,9 +20,10 @@ import {
   siteDbName,
   siteMigrationsIn,
   type TenantProvisioner,
+  TursoError,
 } from "@locus/db";
 import { auditLog, site, siteBackend } from "@locus/db/control";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import { audit } from "./sites.ts";
 import { hostGrant, refused, type VercelCallDeps, vercel } from "./vercel-api.ts";
@@ -100,13 +101,18 @@ async function provisionSiteBackend(
   const name = siteDbName(row.id);
   let made: { dbName: string; hostname: string };
   try {
-    made = await deps.provisioner.createDatabase(name);
+    try {
+      made = await deps.provisioner.createDatabase(name);
+    } catch (error) {
+      // The name comes from the site id, so the database may already exist: made by a request
+      // that died before registering it, or by one running right now. Register it either way.
+      const found = await deps.provisioner.findDatabase(name);
+      if (!found) throw error;
+      made = found;
+    }
   } catch (error) {
-    // The name comes from the site id, so the database may already exist: made by a request
-    // that died before registering it, or by one running right now. Register it either way.
-    const found = await deps.provisioner.findDatabase(name);
-    if (!found) throw error;
-    made = found;
+    if (error instanceof TursoError) throw new ConnectError(NOT_MADE);
+    throw error;
   }
   const { dbName, hostname } = made;
   let created: SiteBackendRow | undefined;
@@ -241,6 +247,10 @@ export interface SiteReleaseDeps extends VercelCallDeps {
 const MIGRATE_TTL = "10m";
 
 const NO_PROVISIONER = "This site's database isn't set up on this deployment yet.";
+const NOT_MADE = "Locus couldn't make the site's database. Try again.";
+const REMOVED =
+  "This site's database was removed, so Locus won't make a new one on its own. Take the " +
+  "db/migrations files out to publish it as a plain website.";
 
 /**
  * Applies the version's new database changes (its `db/migrations/` files) to the site's own
@@ -266,6 +276,8 @@ export async function migrateSiteBackend(
   if (!row && migrations.length === 0) return null;
   if (!deps.provisioner) throw new ConnectError(NO_PROVISIONER);
   if (!row) {
+    // Removing a site's database is an owner's choice; a later save doesn't quietly undo it.
+    if (await backendRemoved(deps.db, client, input.siteId)) throw new ConnectError(REMOVED);
     const provisioned = await provisionSiteBackend(
       { db: deps.db, provisioner: deps.provisioner },
       client,
@@ -276,11 +288,17 @@ export async function migrateSiteBackend(
       await deps.db.insert(auditLog).values({
         id: randomUUID(),
         organizationId: client.location.organizationId,
-        // Made by publishing, for whoever saved the version: no one chose it on its own.
+        // Made by publishing the version that first had migrations; the member who published
+        // it is in the detail.
         actorUserId: null,
         locationId: client.location.id,
         action: "site.backend.enable",
-        detail: { siteId: row.siteId, dbName: row.tursoDbName, by: "publish" },
+        detail: {
+          siteId: row.siteId,
+          dbName: row.tursoDbName,
+          by: "publish",
+          memberId: client.memberId,
+        },
       });
     }
   }
@@ -295,11 +313,38 @@ export async function migrateSiteBackend(
   }
 }
 
+/** Whether an owner or admin removed the site's database (and no one turned it on again). */
+async function backendRemoved(
+  db: ControlDb,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ id: auditLog.id })
+    .from(auditLog)
+    .where(
+      and(
+        eq(auditLog.locationId, client.location.id),
+        eq(auditLog.action, "site.backend.remove"),
+        sql`json_extract(${auditLog.detail}, '$.siteId') = ${siteId}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(row);
+}
+
 /** A migration's own fault, for the person and the agent; anything else as it was. */
 function migrationRefusal(error: unknown): unknown {
   if (!(error instanceof SiteMigrationError)) return error;
+  // A failed migration rolled back and never ran, so the fix is in that file itself; one that
+  // ran stays frozen, and a misnamed file only needs renaming.
+  const fix = / failed: /.test(error.message)
+    ? " That file didn't run, so fix it in place."
+    : / was changed after it ran\./.test(error.message)
+      ? ""
+      : " Rename the file to fix it.";
   return new ConnectError(
-    `The site's database change didn't apply: ${error.message.replace(/\.?$/, ".")} Changes that already ran stay as they are, even if their publish failed; fix this with a new migration file, and keep changes additive so the live site's current code still works.`,
+    `The site's database change didn't apply: ${error.message.replace(/\.?$/, ".")}${fix} Keep changes additive so the live site's current code still works.`,
   );
 }
 

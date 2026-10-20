@@ -34,18 +34,22 @@ export class SiteMigrationError extends Error {
   }
 }
 
-/** The site's migrations, in order, from its files. Other files are ignored. */
+/**
+ * The site's migrations, in order, from its files. Other files are ignored, and so are files in
+ * folders under `db/migrations/` (such as drizzle-kit's `meta/`).
+ */
 export function siteMigrationsIn(
   files: { path: string; content: string | Uint8Array }[],
 ): SiteMigration[] {
   const migrations: SiteMigration[] = [];
   for (const file of files) {
     if (!file.path.startsWith(`${SITE_MIGRATIONS_DIR}/`)) continue;
+    if (file.path.slice(SITE_MIGRATIONS_DIR.length + 1).includes("/")) continue;
     const match = FILE.exec(file.path);
     if (!match?.[1]) {
-      throw new SiteMigrationError(
-        `${file.path} isn't named like db/migrations/0001_short_name.sql.`,
-      );
+      // The path is the agent's: keep it short, since the message can reach the person.
+      const path = file.path.length > 200 ? `${file.path.slice(0, 200)}…` : file.path;
+      throw new SiteMigrationError(`${path} isn't named like db/migrations/0001_short_name.sql.`);
     }
     const sql =
       typeof file.content === "string" ? file.content : new TextDecoder().decode(file.content);
@@ -125,7 +129,8 @@ export async function applySiteMigrations(
       // a refused token is not, and stays an ordinary error.
       if (!isSqlError(error)) throw error;
       const reason = error instanceof Error ? error.message : String(error);
-      throw new SiteMigrationError(`${migration.name} failed: ${reason}`);
+      const short = reason.length > 600 ? `${reason.slice(0, 600)}…` : reason;
+      throw new SiteMigrationError(`${migration.name} failed: ${short}`);
     }
     applied.push(migration.name);
   }
