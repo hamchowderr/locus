@@ -3,7 +3,8 @@ import { redirect } from "next/navigation";
 import { appConnectionsFromEnv, clientApps } from "@/lib/apps";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { Notice, Page } from "../ui";
-import { connectApp, disconnectApp } from "./actions";
+import { disconnectApp } from "./actions";
+import { ConnectButton } from "./connect-button";
 
 /** What the chat can do with each app, in plain words. */
 const USES: Record<string, string> = {
@@ -59,17 +60,20 @@ export default async function Apps({
                     {USES[app.toolkit]} {app.connected ? "Connected." : "Not connected."}
                   </p>
                 </div>
-                {listing.manager && (
-                  <form action={app.connected ? disconnectApp : connectApp}>
-                    <input type="hidden" name="toolkit" value={app.toolkit} />
-                    <button
-                      type="submit"
-                      className="rounded-md border border-neutral-300 px-3 py-1 text-sm"
-                    >
-                      {app.connected ? "Disconnect" : "Connect"}
-                    </button>
-                  </form>
-                )}
+                {listing.manager &&
+                  (app.connected ? (
+                    <form action={disconnectApp}>
+                      <input type="hidden" name="toolkit" value={app.toolkit} />
+                      <button
+                        type="submit"
+                        className="rounded-md border border-neutral-300 px-3 py-1 text-sm"
+                      >
+                        Disconnect
+                      </button>
+                    </form>
+                  ) : (
+                    <ConnectButton toolkit={app.toolkit} />
+                  ))}
               </div>
             </li>
           ))}
