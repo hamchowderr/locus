@@ -73,6 +73,12 @@ export const site = sqliteTable(
     status: text("status", { enum: ["draft", "pushed", "deployed", "failed"] })
       .notNull()
       .default("draft"),
+    /**
+     * The client's calendars the published site books on, as a JSON array of GHL calendar ids,
+     * read from the site's code each time it is published. A booking on any other calendar is
+     * refused, so a visitor can't book a calendar the site doesn't offer.
+     */
+    bookingCalendars: text("booking_calendars", { mode: "json" }).$type<string[]>(),
     createdAt: createdAt(),
   },
   (t) => [
