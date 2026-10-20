@@ -85,7 +85,6 @@ export default async function SiteDatabase({
     throw e;
   });
   if (!names?.has(siteId)) notFound();
-  const name = names.get(siteId) ?? "Site";
 
   const backend = await siteBackendOf(locus().db, client, siteId);
   let problem: string | null = null;
@@ -153,16 +152,7 @@ export default async function SiteDatabase({
   };
 
   return (
-    <Page title={`Database · ${name}`}>
-      <p className="text-sm">
-        <Link href="/sites" className="underline">
-          Sites
-        </Link>
-        {" · "}
-        <Link href={`/sites/${siteId}/versions`} className="underline">
-          Versions
-        </Link>
-      </p>
+    <Page title="Database" width="wide">
       {!backend && (
         <p className="text-neutral-600">
           This site has no database. The site builder adds one when the site needs member logins or
