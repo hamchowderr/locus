@@ -63,6 +63,8 @@ import {
   type UsageMeter,
 } from "./index.ts";
 
+export * from "./site-history.ts";
+
 // Host wiring for the site-builder agent. Everything here starts from an `AuthorizedClient`
 // (the session's client, after the staff check) and never takes a client or agency id from a
 // request, a form or the model. Environment-specific pieces (the control database, the
@@ -144,7 +146,11 @@ export const siteRuntimeKey = (client: AuthorizedClient, siteId: string) =>
  * The control `site` row for `siteId`, only if it is this client's. Refuses (403, saying no
  * more) a missing site and another client's site alike.
  */
-async function siteOfClient(db: ControlDb, client: AuthorizedClient, siteId: string) {
+/**
+ * The control `site` row for `siteId`, only if it is this client's, whether or not the member may
+ * build it: for showing a site, never for changing it (use `clientSite`).
+ */
+export async function siteOfClient(db: ControlDb, client: AuthorizedClient, siteId: string) {
   assertAuthorizedClient(client);
   const [row] = siteId
     ? await db
