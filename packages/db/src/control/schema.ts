@@ -73,6 +73,10 @@ export const site = sqliteTable(
     status: text("status", { enum: ["draft", "pushed", "deployed", "failed"] })
       .notNull()
       .default("draft"),
+    /** How the row was made: started in Site Studio, or by linking an existing host project. */
+    origin: text("origin", { enum: ["studio", "linked"] })
+      .notNull()
+      .default("studio"),
     createdAt: createdAt(),
   },
   (t) => [
