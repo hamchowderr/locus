@@ -54,7 +54,8 @@ export default async function Billing({
   const paying = entitlement.status !== "none" && entitlement.status !== "comped";
   const usage = manager && paying ? await usageSummary(locus().db, sessionContext(current)) : null;
   // Whatever extra usage is waiting goes to Stripe after the page is sent, not before.
-  if (enabled && usage?.overage) after(() => sendExtraUsage(organizationId).then(() => undefined));
+  if (enabled && usage?.overage)
+    after(() => sendExtraUsage({ organizationId }).then(() => undefined));
 
   return (
     <Page title="Billing">

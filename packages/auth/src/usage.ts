@@ -18,6 +18,7 @@ import {
   requireAgencyManager,
   type SessionContext,
 } from "./client-access.ts";
+import { billableSubscription } from "./overage-billing.ts";
 import { CREDIT } from "./plans.ts";
 
 /**
@@ -207,6 +208,18 @@ export async function usageOverageOf(db: ControlDb, organizationId: string) {
   return row ?? null;
 }
 
+/**
+ * The agency's extra-usage setting when it applies right now: turned on, and the agency pays on
+ * an active subscription that isn't set to end. A trial has no paid invoice to carry extra usage,
+ * and usage after a cancellation could land after the final invoice and never be billed.
+ */
+async function overageInEffect(db: ControlDb, organizationId: string) {
+  const setting = await usageOverageOf(db, organizationId);
+  if (!setting?.enabled) return null;
+  const billed = await billableSubscription(db, organizationId);
+  return billed?.status === "active" && !billed.cancelling ? setting : null;
+}
+
 async function limitRow(db: ControlDb, locationId: string) {
   const [row] = await db.select().from(usageLimit).where(eq(usageLimit.locationId, locationId));
   return row;
@@ -282,8 +295,8 @@ export async function checkAllowance(
   let agencyMonth: number | null = null;
   if (plan?.creditsPerMonth != null) {
     agencyMonth = plan.creditsPerMonth - (await agencyMonthUsed(db, organizationId, now));
-    const overage = agencyMonth <= 0 ? await usageOverageOf(db, organizationId) : null;
-    if (overage?.enabled) {
+    const overage = agencyMonth <= 0 ? await overageInEffect(db, organizationId) : null;
+    if (overage) {
       // The plan's credits are spent; what is left is the agency's own extra-usage limit.
       agencyMonth = overage.monthlyCreditLimit - (await agencyOverageUsed(db, organizationId, now));
       if (agencyMonth <= 0) {
@@ -400,8 +413,8 @@ export async function recordUsage(
   const { kind, ...detail } = record.usage;
   const id = randomUUID();
   const { limits } = await agencyEntitlement(db, organizationId);
-  const overage = await usageOverageOf(db, organizationId);
-  const included = overage?.enabled ? (limits?.creditsPerMonth ?? null) : null;
+  const overage = await overageInEffect(db, organizationId);
+  const included = overage ? (limits?.creditsPerMonth ?? null) : null;
   const inMonth = and(eq(usageMonth.organizationId, organizationId), eq(usageMonth.month, period));
   const writes = [
     db.insert(usageEvent).values({
@@ -487,7 +500,7 @@ export async function recordUsage(
     }
   }
 
-  if (overage?.enabled && overage.monthlyCreditLimit > 0 && overageCredits > 0) {
+  if (overage && overage.monthlyCreditLimit > 0 && overageCredits > 0) {
     const used = await agencyOverageUsed(db, organizationId, now);
     for (const t of AGENCY_ALERTS) {
       if (used * 100 >= overage.monthlyCreditLimit * t) {

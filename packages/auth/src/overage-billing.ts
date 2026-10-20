@@ -1,6 +1,6 @@
 import type { ControlDb } from "@locus/db";
 import { subscription, usageEvent } from "@locus/db/control";
-import { and, asc, eq, gt, inArray, isNull } from "drizzle-orm";
+import { and, asc, count, eq, gt, inArray, isNull } from "drizzle-orm";
 import Stripe from "stripe";
 
 /**
@@ -103,24 +103,39 @@ function alreadySent(error: unknown): boolean {
   return /already exists with identifier/i.test(message);
 }
 
-/** Subscriptions that still invoice: extra usage is billed on them. */
-const BILLABLE = ["active", "trialing", "past_due", "unpaid"];
-
-/** The agency's Stripe customer and subscription that extra usage is billed to, if any. */
+/**
+ * The agency's Stripe customer and subscription that extra usage is billed to, if any, picked
+ * the way `agencyEntitlement` picks the current plan: active or trialing first, then one that is
+ * overdue but still invoices. Never more than one, so the metered item is only ever on the
+ * subscription the agency pays (the meter sums per customer, so two would bill usage twice).
+ * `cancelling` is true once the subscription is set to end.
+ */
 export async function billableSubscription(db: ControlDb, organizationId: string) {
   const rows = await db
     .select({
+      status: subscription.status,
       customer: subscription.stripeCustomerId,
       subscription: subscription.stripeSubscriptionId,
+      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+      cancelAt: subscription.cancelAt,
     })
     .from(subscription)
     .where(
-      and(eq(subscription.referenceId, organizationId), inArray(subscription.status, BILLABLE)),
+      and(
+        eq(subscription.referenceId, organizationId),
+        inArray(subscription.status, ["active", "trialing", "past_due", "unpaid"]),
+      ),
     );
-  const row = rows.find((r) => r.customer && r.subscription);
-  return row?.customer && row.subscription
-    ? { customer: row.customer, subscription: row.subscription }
-    : null;
+  const usable = rows.filter((r) => r.customer && r.subscription);
+  const row =
+    usable.find((r) => r.status === "active" || r.status === "trialing") ?? usable[0] ?? null;
+  if (!row?.customer || !row.subscription) return null;
+  return {
+    status: row.status,
+    customer: row.customer,
+    subscription: row.subscription,
+    cancelling: !!row.cancelAtPeriodEnd || row.cancelAt !== null,
+  };
 }
 
 export interface OverageReport {
@@ -130,37 +145,37 @@ export interface OverageReport {
   pending: number;
 }
 
+/** Events read per page, per agency. */
+const PAGE = 200;
+
 /**
- * Sends extra usage that is not yet on Stripe's meter, oldest first, and marks it sent. Each
- * meter event carries the usage event's id as its identifier, so Stripe drops one it already has
- * if two runs overlap. Usage is stamped with the time it is sent, not when it happened, so usage
- * sent late lands on the open invoice instead of a closed one.
+ * Sends extra usage that is not yet on Stripe's meter, agency by agency, oldest first, and marks
+ * it sent. Each meter event carries the usage event's id as its identifier, so Stripe drops one
+ * it already has if two runs overlap. Usage is stamped with the time it is sent, not when it
+ * happened, so usage sent late lands on the open invoice instead of a closed one.
  *
- * Errors from Stripe leave the agency's remaining events for the next run; other agencies go on.
+ * An agency that can't be billed now (no billable subscription, or Stripe failing for it) keeps
+ * its usage for the next run and never holds up the others. A run stops starting new pages once
+ * `deadline` passes, leaving the rest for the next run.
  */
 export async function reportOverage(
   db: ControlDb,
   stripe: Stripe,
-  opts: { organizationId?: string; now?: Date; max?: number } = {},
+  opts: { organizationId?: string; now?: Date; deadline?: Date } = {},
 ): Promise<OverageReport> {
   const now = opts.now ?? new Date();
-  const events = await db
-    .select({
-      id: usageEvent.id,
-      organizationId: usageEvent.organizationId,
-      overageCredits: usageEvent.overageCredits,
-    })
+  const waiting = and(
+    gt(usageEvent.overageCredits, 0),
+    isNull(usageEvent.overageReportedAt),
+    opts.organizationId ? eq(usageEvent.organizationId, opts.organizationId) : undefined,
+  );
+  const counts = await db
+    .select({ organizationId: usageEvent.organizationId, n: count() })
     .from(usageEvent)
-    .where(
-      and(
-        gt(usageEvent.overageCredits, 0),
-        isNull(usageEvent.overageReportedAt),
-        opts.organizationId ? eq(usageEvent.organizationId, opts.organizationId) : undefined,
-      ),
-    )
-    .orderBy(asc(usageEvent.createdAt))
-    .limit(opts.max ?? 500);
-  if (events.length === 0) return { reported: 0, pending: 0 };
+    .where(waiting)
+    .groupBy(usageEvent.organizationId);
+  const total = counts.reduce((sum, c) => sum + c.n, 0);
+  if (total === 0) return { reported: 0, pending: 0 };
 
   const price = await findOveragePrice(stripe);
   if (!price) {
@@ -168,36 +183,45 @@ export async function reportOverage(
       "[locus] extra usage is waiting: Stripe has no price %s",
       OVERAGE_PRICE_LOOKUP_KEY,
     );
-    return { reported: 0, pending: events.length };
+    return { reported: 0, pending: total };
   }
 
-  const byAgency = new Map<string, typeof events>();
-  for (const e of events)
-    byAgency.set(e.organizationId, [...(byAgency.get(e.organizationId) ?? []), e]);
   let reported = 0;
-  for (const [organizationId, agencyEvents] of byAgency) {
+  for (const { organizationId } of counts) {
     const billed = await billableSubscription(db, organizationId);
     if (!billed) continue;
     try {
       await ensureOverageItem(stripe, billed.subscription, price.id);
-      for (const e of agencyEvents) {
-        await stripe.billing.meterEvents
-          .create({
-            event_name: OVERAGE_METER_EVENT,
-            identifier: e.id,
-            timestamp: Math.floor(now.getTime() / 1000),
-            payload: { stripe_customer_id: billed.customer, value: String(e.overageCredits) },
-          })
-          .catch((error: unknown) => {
-            // An overlapping run already sent it: Stripe has it, so it only needs marking.
-            if (!alreadySent(error)) throw error;
-          });
-        await db.update(usageEvent).set({ overageReportedAt: now }).where(eq(usageEvent.id, e.id));
-        reported += 1;
+      while (!opts.deadline || Date.now() < opts.deadline.getTime()) {
+        const page = await db
+          .select({ id: usageEvent.id, overageCredits: usageEvent.overageCredits })
+          .from(usageEvent)
+          .where(and(waiting, eq(usageEvent.organizationId, organizationId)))
+          .orderBy(asc(usageEvent.createdAt))
+          .limit(PAGE);
+        for (const e of page) {
+          await stripe.billing.meterEvents
+            .create({
+              event_name: OVERAGE_METER_EVENT,
+              identifier: e.id,
+              timestamp: Math.floor(now.getTime() / 1000),
+              payload: { stripe_customer_id: billed.customer, value: String(e.overageCredits) },
+            })
+            .catch((error: unknown) => {
+              // An overlapping run already sent it: Stripe has it, so it only needs marking.
+              if (!alreadySent(error)) throw error;
+            });
+          await db
+            .update(usageEvent)
+            .set({ overageReportedAt: now })
+            .where(eq(usageEvent.id, e.id));
+          reported += 1;
+        }
+        if (page.length < PAGE) break;
       }
     } catch (error) {
       console.error("[locus] extra usage for agency %s not sent to Stripe:", organizationId, error);
     }
   }
-  return { reported, pending: events.length - reported };
+  return { reported, pending: total - reported };
 }

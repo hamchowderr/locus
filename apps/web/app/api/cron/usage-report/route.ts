@@ -22,7 +22,8 @@ export async function GET(request: Request) {
   const secret = process.env.CRON_SECRET;
   if (!secret || !configured()) return notFound();
   if (!authorized(request, secret)) return notFound();
-  const report = await sendExtraUsage();
+  // Stop starting new work well inside `maxDuration`; what is left goes on the next run.
+  const report = await sendExtraUsage({ deadline: new Date(Date.now() + 240_000) });
   return Response.json(report ?? { reported: 0, pending: 0 });
 }
 

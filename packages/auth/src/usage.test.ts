@@ -98,10 +98,21 @@ afterEach(async () => {
 const client = (locationId: string, ctx: SessionContext = owner) =>
   authorizeClient(db, ctx, locationId);
 
-async function subscribe(organizationId: string, plan = "starter", status = "active") {
-  await db
-    .insert(subscription)
-    .values({ id: `sub-${organizationId}`, plan, referenceId: organizationId, status });
+async function subscribe(
+  organizationId: string,
+  plan = "starter",
+  status = "active",
+  extra: Partial<typeof subscription.$inferInsert> = {},
+) {
+  await db.insert(subscription).values({
+    id: `sub-${organizationId}`,
+    plan,
+    referenceId: organizationId,
+    status,
+    stripeCustomerId: `cus_${organizationId}`,
+    stripeSubscriptionId: `sub_${organizationId}`,
+    ...extra,
+  });
 }
 
 async function comp(organizationId: string) {
@@ -600,6 +611,22 @@ describe("extra usage", () => {
       .select({ total: sql<number>`sum(${usageMonth.overageCredits})`.mapWith(Number) })
       .from(usageMonth);
     expect(month?.total).toBe(60 * CREDIT);
+  });
+
+  it("stops at the plan's credits during a trial, or once the plan is set to end", async () => {
+    await subscribe("agency-a", "starter", "trialing");
+    await extra(100 * CREDIT);
+    await spendPlan(10 * CREDIT);
+    const a1 = await client("a1");
+    expect((await recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW })).overageCredits).toBe(0);
+    expect(await check()).toMatchObject({ ok: false, reason: /turn on extra usage/ });
+
+    await db
+      .update(subscription)
+      .set({ status: "active", cancelAtPeriodEnd: true })
+      .where(eq(subscription.referenceId, "agency-a"));
+    expect((await recordUsage(db, a1, { usage: SANDBOX_1000S, now: NOW })).overageCredits).toBe(0);
+    expect((await check()).ok).toBe(false);
   });
 
   it("bills nothing while it's off, even when a generation overshoots the plan", async () => {
