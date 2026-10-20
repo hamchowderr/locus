@@ -434,16 +434,26 @@ export async function resetSiteDatabaseKey(
   const found = await siteBackendOf(deps.db, client, input.siteId);
   if (!found) throw new ConnectError("This site doesn't have a database.");
   const provisioner = needsProvisioner(deps);
-  const { backend, until } = await holdSite(deps.db, found, deps.now?.() ?? Date.now());
+  const { restore, backend, until } = await holdSite(deps.db, found, deps.now?.() ?? Date.now());
   try {
-    await provisioner.revokeTokens(backend.tursoDbName).catch((error) => {
-      if (error instanceof TursoError) {
-        throw new ConnectError(
-          "Locus couldn't reset the database's key. Nothing changed. Try again.",
-        );
+    try {
+      await provisioner.revokeTokens(backend.tursoDbName);
+      // The databases a restore replaced had the same key while they were live, and undo
+      // can bring one back, so theirs go too. One already deleted has nothing to revoke.
+      for (const name of [restore.keptDbName, ...restore.retired.map((r) => r.dbName)]) {
+        if (!name || name === backend.tursoDbName) continue;
+        await provisioner.revokeTokens(name).catch((error) => {
+          if (!(error instanceof TursoError && error.status === 404)) throw error;
+        });
       }
-      throw error;
-    });
+    } catch (error) {
+      if (!(error instanceof TursoError)) throw error;
+      // Turso may have reset it before failing: the next publish gives the site a fresh key.
+      await markStale(deps.db, backend.siteId);
+      throw new ConnectError(
+        "Turso didn't confirm the key reset. Try again; until then, publishing the site gives it a working key.",
+      );
+    }
     await audit(deps.db, ctx, client, "site.backend.key.reset", {
       siteId: backend.siteId,
       dbName: backend.tursoDbName,
