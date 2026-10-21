@@ -4,6 +4,7 @@ import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
 import { revalidatePath } from "next/cache";
 import { redirect, unstable_rethrow } from "next/navigation";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
+import { sitesReturn } from "@/lib/next-path";
 import {
   bookmarkSiteVersion,
   restoreSiteVersion,
@@ -44,7 +45,11 @@ async function versionAction(
   }) => Promise<string>,
 ) {
   const siteId = text(form, "siteId");
-  const path = versionsPath(siteId);
+  // The Versions page, or the site's preview when the change was made from its version picker.
+  const asked = sitesReturn(text(form, "returnTo"));
+  const home = `/sites/${siteId}`;
+  const path =
+    siteId && (asked === home || asked.startsWith(`${home}/`)) ? asked : versionsPath(siteId);
   let done: string;
   try {
     const { ctx, client } = await signedIn(path);
@@ -54,7 +59,8 @@ async function versionAction(
     if (message) redirect(`${path}?error=${encodeURIComponent(message)}`);
     throw error;
   }
-  revalidatePath(path);
+  revalidatePath(versionsPath(siteId));
+  if (path !== versionsPath(siteId)) revalidatePath(path);
   redirect(`${path}?${done}`);
 }
 
