@@ -415,3 +415,76 @@ export async function undoSiteBackendRestore(
     await letGo(deps.db, backend.siteId, until);
   }
 }
+
+/**
+ * Gives the site's database a new key, for owners and admins: every key made for it so far
+ * stops working (a leaked one included), and the live site gets the new one and is deployed
+ * again. Until that deployment is ready, the live site can't reach its database. A site that
+ * isn't published yet gets the new key with its first publish. Callers confirm first.
+ */
+export async function resetSiteDatabaseKey(
+  deps: SiteRestoreDeps,
+  ctx: SessionContext,
+  client: AuthorizedClient,
+  input: { siteId: string },
+): Promise<{ redeployed: boolean }> {
+  assertAuthorizedClient(client);
+  await requireAgencyManager(deps.db, ctx);
+  await clientSite(deps.db, client, input.siteId);
+  const found = await siteBackendOf(deps.db, client, input.siteId);
+  if (!found) throw new ConnectError("This site doesn't have a database.");
+  const provisioner = needsProvisioner(deps);
+  const { restore, backend, until } = await holdSite(deps.db, found, deps.now?.() ?? Date.now());
+  try {
+    try {
+      await provisioner.revokeTokens(backend.tursoDbName);
+      // The databases a restore replaced had the same key while they were live, and undo
+      // can bring one back, so theirs go too. One already deleted has nothing to revoke.
+      for (const name of [restore.keptDbName, ...restore.retired.map((r) => r.dbName)]) {
+        if (!name || name === backend.tursoDbName) continue;
+        await provisioner.revokeTokens(name).catch((error) => {
+          if (!(error instanceof TursoError && error.status === 404)) throw error;
+        });
+      }
+    } catch (error) {
+      if (!(error instanceof TursoError)) throw error;
+      // Turso may have reset it before failing: the next publish gives the site a fresh key.
+      await markStale(deps.db, backend.siteId);
+      throw new ConnectError(
+        "Turso didn't confirm the key reset. Try again; until then, publishing the site gives it a working key.",
+      );
+    }
+    await audit(deps.db, ctx, client, "site.backend.key.reset", {
+      siteId: backend.siteId,
+      dbName: backend.tursoDbName,
+    });
+    const projectId = await siteProjectId(deps.db, client, backend.siteId);
+    if (!projectId) return { redeployed: false };
+    // From here the live site's key is dead, so a step that fails leaves it to the next publish.
+    try {
+      const env = await projectEnv(deps, client, projectId);
+      await writeSiteDatabaseEnv(deps, env, projectId, provisioner, backend);
+    } catch {
+      await markStale(deps.db, backend.siteId);
+      throw new ConnectError(
+        "The old key is reset, but Vercel didn't take the new one. Publish the site to finish.",
+      );
+    }
+    try {
+      await deployProduction(
+        deps,
+        await projectEnv(deps, client, projectId),
+        client,
+        backend.siteId,
+        projectId,
+      );
+    } catch {
+      throw new ConnectError(
+        "The new key is saved on the site, but Vercel didn't deploy it again. Publish the site to finish.",
+      );
+    }
+    return { redeployed: true };
+  } finally {
+    await letGo(deps.db, backend.siteId, until);
+  }
+}

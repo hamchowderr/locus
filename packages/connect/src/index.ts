@@ -70,6 +70,7 @@ export {
   sitesWithBackend,
 } from "./site-backend.ts";
 export {
+  resetSiteDatabaseKey,
   restoreSiteBackend,
   SITE_RESTORE_WINDOW_MS,
   type SiteRestoreDeps,
