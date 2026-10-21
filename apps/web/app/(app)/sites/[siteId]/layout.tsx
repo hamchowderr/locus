@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { SITE_STATUS, siteForPage } from "./site";
 
 /**
- * Every page of one site: its name, where it's live, its tabs (Build, Versions, Database,
+ * Every page of one site: its name, where it's live, its tabs (Preview, Versions, Database,
  * Settings) and Publish. Each page below still checks the site itself.
  */
 export default async function SiteLayout({
