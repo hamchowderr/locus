@@ -152,9 +152,10 @@ async function renewGrant(
   const mine = eq(agencyGhlConnection.organizationId, organizationId);
   for (let waited = 0; ; waited += REFRESH_POLL_MS) {
     const now = clock();
+    const until = new Date(now + REFRESH_LEASE_MS);
     const taken = await deps.db
       .update(agencyGhlConnection)
-      .set({ refreshLeaseUntil: new Date(now + REFRESH_LEASE_MS) })
+      .set({ refreshLeaseUntil: until })
       .where(
         and(
           mine,
@@ -174,7 +175,11 @@ async function renewGrant(
         await deps.secrets.set(stored.secretRef, JSON.stringify(grant));
         return grant;
       } finally {
-        await deps.db.update(agencyGhlConnection).set({ refreshLeaseUntil: null }).where(mine);
+        // Only our own lease: if GHL was slow and the lease passed to another process, it is theirs.
+        await deps.db
+          .update(agencyGhlConnection)
+          .set({ refreshLeaseUntil: null })
+          .where(and(mine, eq(agencyGhlConnection.refreshLeaseUntil, until)));
       }
     }
     // Someone else is renewing: use their grant once it lands. A lease left by a process that
