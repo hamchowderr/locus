@@ -193,6 +193,7 @@ export async function linkHostProject(
       host: "vercel",
       hostProjectId: projectId,
       status: "deployed",
+      origin: "linked",
     })
     .returning()
     .catch((error: unknown) => {
@@ -520,7 +521,7 @@ export async function removeSiteDomain(
 /**
  * Takes a linked Vercel project off the client, e.g. after the project was deleted on Vercel.
  * Owners and admins only, and only once its domain is removed. Nothing changes on Vercel. A site
- * made only by linking is deleted; one with a repository keeps its row, without the project.
+ * made by linking is deleted; one started in Site Studio keeps its row, without the project.
  */
 export async function unlinkHostProject(
   deps: SiteDeps,
@@ -551,9 +552,8 @@ export async function unlinkHostProject(
     .select({ siteId: siteBackend.siteId })
     .from(siteBackend)
     .where(eq(siteBackend.siteId, row.id));
-  // TODO(site studio): a site made by Studio needs its own marker; "no repository" stands in.
   const changed =
-    row.repoFullName || backend
+    row.origin === "studio" || backend
       ? await deps.db
           .update(site)
           .set({

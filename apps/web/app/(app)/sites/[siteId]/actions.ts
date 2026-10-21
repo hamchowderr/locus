@@ -90,7 +90,7 @@ export async function previewSite(
   version: number | null,
 ): Promise<SitePreview | { problem: string }> {
   try {
-    const { ctx, client } = await signedIn(`/sites/${encodeURIComponent(siteId)}/preview`);
+    const { ctx, client } = await signedIn(`/sites/${encodeURIComponent(siteId)}`);
     return await startSitePreview(siteBuilderDeps(), ctx, client, siteId, { version });
   } catch (error) {
     unstable_rethrow(error);

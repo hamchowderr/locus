@@ -9,7 +9,7 @@
 import type { Session } from '@mastra/core/agent-controller';
 import { registerApiRoute } from '@mastra/core/server';
 import { messageText, searchSnippet, threadTitle, toUIMessage } from '../lib/thread-utils';
-import { type WorkThreadStatus, workThreadOf } from '../lib/work-thread-info';
+import { siteOf, type WorkThreadStatus, workThreadOf } from '../lib/work-thread-info';
 import { resourceIdOf } from './resource';
 import type { ChatServerDeps } from './types';
 
@@ -37,6 +37,8 @@ export const createThreadRoutes = (deps: ChatServerDeps) => [
         /** Work threads only (lib/work-threads.ts): the main chat it reports to, and how it is doing. */
         parentThreadId?: string;
         status?: WorkThreadStatus;
+        /** A site's own conversation (the host tags it): the site it is about. */
+        siteId?: string;
       }> = [];
       for (const t of threads) {
         const explicitTitle = typeof t.title === 'string' ? t.title.trim() : '';
@@ -61,6 +63,7 @@ export const createThreadRoutes = (deps: ChatServerDeps) => [
           continue;
         }
         const work = workThreadOf(t);
+        const site = siteOf(t);
         items.push({
           id: t.id,
           title: threadTitle(t, first),
@@ -68,6 +71,7 @@ export const createThreadRoutes = (deps: ChatServerDeps) => [
           createdAt: new Date(t.createdAt).toISOString(),
           updatedAt: new Date(t.updatedAt).toISOString(),
           ...(work ? { parentThreadId: work.parentThreadId, status: work.status } : {}),
+          ...(site ? { siteId: site } : {}),
         });
       }
       items.sort((a, b) => +new Date(b.updatedAt) - +new Date(a.updatedAt));

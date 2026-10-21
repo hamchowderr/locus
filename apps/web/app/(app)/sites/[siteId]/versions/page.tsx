@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { Notice, Page } from "@/app/ui";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { type SiteHistory, siteHistory, siteNames, VERSIONS_SHOWN } from "@/lib/site-builder";
+import { type SiteHistory, siteHistory, VERSIONS_SHOWN } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { bookmarkVersion, restoreVersion } from "../actions";
 
@@ -49,26 +49,16 @@ export default async function Versions({
     throw e;
   });
   if (!history) notFound();
-  const name = (await siteNames(siteBuilderDeps(), client, [siteId])).get(siteId) ?? "Site";
   const number = (value: string | undefined) => (value && /^\d{1,6}$/.test(value) ? value : null);
   const latest = history.versions[0]?.number;
 
   return (
-    <Page title={`Versions · ${name}`}>
-      <p className="text-sm">
-        <Link href="/sites" className="underline">
-          Sites
-        </Link>
-        {" · "}
-        <Link href={`/sites/${siteId}/preview`} className="underline">
-          Preview
-        </Link>
-      </p>
+    <Page title="Versions">
       {error && <Notice tone="error">{error}</Notice>}
       {number(restored) && (
         <Notice tone="info">
-          Version {number(restored)} is back, saved as version {number(now)}. Publish it from the
-          Sites page when you're happy with it.
+          Version {number(restored)} is back, saved as version {number(now)}. Publish it when you're
+          happy with it.
         </Notice>
       )}
       {number(bookmarked) && <Notice tone="info">Version {number(bookmarked)} bookmarked.</Notice>}
@@ -100,7 +90,7 @@ export default async function Versions({
               {v.commitSha && ` · Published as ${v.commitSha.slice(0, 7)}`}
             </p>
             <div className="flex flex-wrap items-center gap-4 text-sm">
-              <Link href={`/sites/${siteId}/preview?version=${v.number}`} className="underline">
+              <Link href={`/sites/${siteId}?version=${v.number}`} className="underline">
                 Preview
               </Link>
               {!history.refusal && (
