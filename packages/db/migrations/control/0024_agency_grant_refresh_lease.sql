@@ -1,0 +1,1 @@
+ALTER TABLE `agency_ghl_connection` ADD `refresh_lease_until` integer;
