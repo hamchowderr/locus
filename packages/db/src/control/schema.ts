@@ -73,6 +73,10 @@ export const site = sqliteTable(
     status: text("status", { enum: ["draft", "pushed", "deployed", "failed"] })
       .notNull()
       .default("draft"),
+    /** How the row was made: started in Site Studio, or by linking an existing host project. */
+    origin: text("origin", { enum: ["studio", "linked"] })
+      .notNull()
+      .default("studio"),
     /**
      * The client's calendars the published site books on, as a JSON array of GHL calendar ids,
      * read from the site's code each time it is published. A booking on any other calendar is
