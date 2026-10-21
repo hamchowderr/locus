@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chooseSiteForChat } from "@/app/(app)/sites/[siteId]/visual-edits-actions";
+import type { ToolViews } from "@/components/chat/tool-steps";
 import { ChatView, Composer } from "@/components/chat-project/project-chat";
 import { useAgentControllerChat } from "@/lib/agent-controller/use-agent-controller-chat";
 import type { ThreadItem } from "@/lib/agent-controller/use-threads";
+import { builderStep, savedVersion } from "@/lib/builder-steps";
 import { cn } from "@/lib/utils";
+import { VersionCard } from "./version-card";
 
 /** The builder tools whose success means the site's files changed. */
 const CHANGES_FILES = new Set(["files", "versions", "add_dependency"]);
@@ -120,17 +123,67 @@ export function useSiteChat({
 
 export type SiteChatState = ReturnType<typeof useSiteChat>;
 
-/** The site's chat panel: its conversation and the message box. */
+/** What the site's chat needs to know about its versions. */
+export type ChatVersions = {
+  /** The newest saved version when the page loaded; 0 when there are none. */
+  latest: number;
+  /** The version in the preview, or null for the latest files. */
+  shown: number | null;
+  /** Whether this member may restore versions here. */
+  canRestore: boolean;
+};
+
+/**
+ * The site's chat panel: its conversation and the message box. The builder's tool calls
+ * show as short step rows, and a turn that saved a version ends in that version's card.
+ */
 export function SiteChat({
+  siteId,
   chat,
   refusal,
+  versions,
   className,
 }: {
+  siteId: string;
   chat: SiteChatState;
   /** Why this member can't build the site; the chat is read-only then. */
   refusal: string | null;
+  versions: ChatVersions;
   className?: string;
 }) {
+  // A version saved in this chat after the page loaded is newer than the page knows.
+  let latest = versions.latest;
+  for (const m of chat.controller.transcript.messages) {
+    for (const p of m.content) {
+      if (p.type !== "tool_result") continue;
+      const out = (p as { result?: { saved?: unknown; version?: unknown } }).result;
+      if (out?.saved === true && typeof out.version === "number" && out.version > latest) {
+        latest = out.version;
+      }
+    }
+  }
+  const { shown, canRestore } = versions;
+  const toolViews = useMemo<ToolViews>(
+    () => ({
+      step: builderStep,
+      card: (call, result, turn) => {
+        const saved = savedVersion(call, result, turn);
+        return (
+          saved && (
+            <VersionCard
+              siteId={siteId}
+              saved={saved}
+              latest={latest}
+              shown={shown}
+              canRestore={canRestore}
+            />
+          )
+        );
+      },
+    }),
+    [siteId, latest, shown, canRestore],
+  );
+
   return (
     <aside className={cn("flex min-h-0 flex-col", className)}>
       <ChatView
@@ -140,6 +193,7 @@ export function SiteChat({
         onOpenThread={() => undefined}
         onLinkClick={() => undefined}
         work={noThreads}
+        toolViews={toolViews}
       />
       {chat.problem && <p className="px-3 text-destructive text-sm">{chat.problem}</p>}
       {refusal ? (
