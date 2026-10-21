@@ -447,6 +447,34 @@ describe("the chat kit's routes", () => {
     expect((await tag("site-1")).status).toBe(401);
   });
 
+  test("a chat can be renamed by its member, and keeps the name", async () => {
+    mock().llm.on({ userMessage: /plan the spring sale/i }, { content: "Sure." });
+    const { api, signIn } = apiFor(createFakeGhl({}));
+    const stream = kitEvents(await kit(api, "stream", { text: "Plan the spring sale" }));
+    await stream.until((e) => e.type === "__done__");
+    const thread = stream.events.find((e) => e.type === "__thread__")?.threadId as string;
+    const rename = (title: unknown, id = thread) =>
+      api.fetch(
+        new Request(`http://locus.test${PREFIX}/kit/agent-controller/threads/${id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title }),
+        }),
+      );
+
+    expect((await rename("  ")).status).toBe(400);
+    expect((await rename("x".repeat(121))).status).toBe(400);
+    expect((await rename("Mine now", "someone-elses")).status).toBe(404);
+    expect((await rename("  Spring sale  ")).status).toBe(200);
+    const listed = (await (await kit(api, "threads")).json()) as {
+      threads: { id: string; title: string }[];
+    };
+    expect(listed.threads.find((t) => t.id === thread)?.title).toBe("Spring sale");
+
+    signIn(null);
+    expect((await rename("Spring sale")).status).toBe(401);
+  });
+
   test("refuses the unsigned, always-allow, other routes and others' threads", async () => {
     const { api, signIn } = apiFor(createFakeGhl({}));
     expect((await kit(api, "approve", { decision: "always_allow_category" })).status).toBe(403);
@@ -527,6 +555,36 @@ describe("work threads, through the chat kit's routes", () => {
     expect(mock().llm.getRequests().length).toBe(modelCalls);
   });
 
+  test("deleting a chat deletes the threads it started", async () => {
+    mock().llm.on(
+      { userMessage: /summer tag tidy-up/i, hasToolResult: false },
+      startThread("w-del-start", "Summer tags", "List the tags to retire this summer."),
+    );
+    mock().llm.on({ toolCallId: "w-del-start" }, { content: "Started a thread for it." });
+    mock().llm.on({ userMessage: /tags to retire this summer/i }, { content: "None to retire." });
+    const { api, signIn } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+    const main = kitEvents(await kit(api, "stream", { text: "Do the summer tag tidy-up" }));
+    await main.until((e) => e.type === "__done__");
+    const mainThread = main.events.find((e) => e.type === "__thread__")?.threadId as string;
+    const work = await workThreadReaching(api, "done");
+    const remove = (id: string) =>
+      api.fetch(
+        new Request(
+          `http://locus.test${PREFIX}/kit/agent-controller/threads/${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        ),
+      );
+
+    expect((await remove("someone-elses")).status).toBe(404);
+    signIn(null);
+    expect((await remove(mainThread)).status).toBe(401);
+    signIn({ memberId: "m1", locationId: "loc-A", clientId: "client-A" });
+    expect((await remove(mainThread)).status).toBe(200);
+    const left = (await threads(api)).map((t) => t.id);
+    expect(left).not.toContain(mainThread);
+    expect(left).not.toContain(work.id);
+  });
+
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {
     mock().llm.on(
       { userMessage: /clean out contact c7/i, hasToolResult: false },
@@ -545,6 +603,16 @@ describe("work threads, through the chat kit's routes", () => {
     await main.until((e) => e.type === "__done__");
     const work = await workThreadReaching(api, "needs_you");
     expect(ghl.requests).toEqual([]);
+    // Neither the waiting thread nor the chat that started it can be deleted meanwhile.
+    const remove = (id: string) =>
+      api.fetch(
+        new Request(
+          `http://locus.test${PREFIX}/kit/agent-controller/threads/${encodeURIComponent(id)}`,
+          { method: "DELETE" },
+        ),
+      );
+    expect((await remove(work.id)).status).toBe(409);
+    expect((await remove(work.parentThreadId as string)).status).toBe(409);
 
     const pending = (await (
       await kit(api, `threads/${encodeURIComponent(work.id)}/pending`)
