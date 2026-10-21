@@ -32,6 +32,8 @@ export function SitePreview({
   start,
   version,
   className,
+  leading,
+  notice,
   actions,
   onFrameLoad,
   onPageChange,
@@ -40,7 +42,11 @@ export function SitePreview({
   start: () => Promise<Started | { problem: string }>;
   version: number | null;
   className?: string;
-  /** More controls for the toolbar, after the built-in ones (e.g. an editing toggle). */
+  /** Controls at the start of the toolbar (e.g. the version picker). */
+  leading?: ReactNode;
+  /** A line under the toolbar (e.g. which version is shown, and restoring it). */
+  notice?: ReactNode;
+  /** More controls at the end of the toolbar (e.g. an editing toggle). */
   actions?: ReactNode;
   /** Called with the frame each time a page finishes loading in it. */
   onFrameLoad?: (frame: HTMLIFrameElement) => void;
@@ -102,65 +108,64 @@ export function SitePreview({
   const size = DEVICES.find((d) => d.id === device) ?? DEVICES[0];
 
   return (
-    <div className={cn("flex flex-col gap-3", className)}>
-      <div className="flex flex-wrap items-center gap-3">
+    <div className={cn("flex flex-col gap-2", className)}>
+      <div className="flex flex-wrap items-center gap-1 rounded-md border bg-background px-1.5 py-1">
+        {leading}
+        <select
+          aria-label="Page"
+          value={route}
+          onChange={(e) => setRoute(e.target.value)}
+          disabled={!preview || preview.pages.length === 0}
+          className="h-8 min-w-0 max-w-48 rounded-md bg-muted/60 px-2 text-sm"
+        >
+          {(preview?.pages.length ? preview.pages : [{ route: "/", path: "" }]).map((p) => (
+            <option key={p.route} value={p.route}>
+              {p.route === "/" ? "Home  /" : p.route}
+            </option>
+          ))}
+        </select>
         <ButtonGroup aria-label="Screen size">
           {DEVICES.map((d) => (
             <Button
               key={d.id}
               type="button"
-              size="sm"
-              variant={device === d.id ? "default" : "outline"}
+              size="icon-sm"
+              variant={device === d.id ? "secondary" : "ghost"}
               aria-pressed={device === d.id}
+              aria-label={d.label}
+              title={d.label}
               onClick={() => setDevice(d.id)}
             >
-              <d.icon data-icon="inline-start" />
-              {d.label}
+              <d.icon />
             </Button>
           ))}
         </ButtonGroup>
-        {actions}
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-neutral-600">Page</span>
-          <select
-            value={route}
-            onChange={(e) => setRoute(e.target.value)}
-            disabled={!preview || preview.pages.length === 0}
-            className="rounded-md border border-neutral-300 px-2 py-1 text-sm"
-          >
-            {(preview?.pages.length ? preview.pages : [{ route: "/", path: "" }]).map((p) => (
-              <option key={p.route} value={p.route}>
-                {p.route === "/" ? "Home" : p.route}
-              </option>
-            ))}
-          </select>
-        </label>
-        <Button type="button" size="sm" variant="outline" onClick={run} disabled={starting}>
-          <RotateCw data-icon="inline-start" className={cn(starting && "animate-spin")} />
-          {starting ? "Starting" : "Refresh"}
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          onClick={run}
+          disabled={starting}
+          aria-label={starting ? "Starting the preview" : "Refresh the preview"}
+          title={starting ? "Starting" : "Refresh"}
+        >
+          <RotateCw className={cn(starting && "animate-spin")} />
         </Button>
         {src && (
-          <a
-            href={src}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex items-center gap-1 text-sm underline"
-          >
-            Open in a new tab <ExternalLink className="size-3.5" />
-          </a>
+          <Button asChild size="icon-sm" variant="ghost" title="Open in a new tab">
+            <a href={src} target="_blank" rel="noreferrer" aria-label="Open in a new tab">
+              <ExternalLink />
+            </a>
+          </Button>
         )}
+        {actions && <div className="ml-auto flex items-center gap-1">{actions}</div>}
       </div>
       {problem && (
         <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
           {problem}
         </p>
       )}
-      {version !== null && preview && (
-        <p className="text-sm text-neutral-600">
-          This shows version {version}, apart from the site builder's own preview. Restore it on the
-          Versions page to make it current.
-        </p>
-      )}
+      {notice}
       <div className="flex min-h-0 flex-1 justify-center overflow-auto rounded-md border border-neutral-200 bg-neutral-100 p-3">
         {src ? (
           <iframe
