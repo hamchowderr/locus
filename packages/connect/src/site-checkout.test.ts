@@ -20,6 +20,7 @@ import type { GhlAppConfig } from "./ghl-oauth.ts";
 import {
   CHECKOUT_LIMITS,
   isGhlPayUrl,
+  payUrlShape,
   type SiteCheckoutDeps,
   startSiteCheckout,
 } from "./site-checkout.ts";
@@ -758,6 +759,30 @@ describe("checkout on a published site", () => {
     );
     expect(result.status).toBe(502);
     expect(errors.mock.calls.flat().join(" ")).toContain("products.get-product-by-id 401");
+  });
+});
+
+describe("a refused payment link in the log", () => {
+  it("shows its host and path shape, never ids, queries or tokens", () => {
+    const id = INVOICE_ID;
+    expect(payUrlShape(`https://link.agency.test/invoice/${id}?t=secret#x`, id)).toBe(
+      "https://link.agency.test/invoice/:invoice",
+    );
+    expect(payUrlShape("https://link.agency.test/l/aB3dE5fG9h", id)).toBe(
+      "https://link.agency.test/l/:id",
+    );
+    expect(payUrlShape("https://link.agency.test/l/aB3dE5f", id)).toBe(
+      "https://link.agency.test/l/:id",
+    );
+    expect(payUrlShape("https://link.agency.test/pay/abcdefghijklmnopqrstuvwxyzABCDEFGH", id)).toBe(
+      "https://link.agency.test/pay/:id",
+    );
+    expect(payUrlShape("https://link.agency.test/invoice;token=secret/x", id)).toBe(
+      "https://link.agency.test/:id/x",
+    );
+    expect(payUrlShape("data:text/plain,a secret token", id)).toBe("a data: link");
+    expect(payUrlShape("not a url", id)).toBe("not a URL");
+    expect(payUrlShape(undefined, id)).toBe("not a string (undefined)");
   });
 });
 

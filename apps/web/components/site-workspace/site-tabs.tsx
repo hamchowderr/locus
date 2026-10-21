@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 
-/** A site's pages, as tabs. Build is the site's own address; the rest sit under it. */
+/** A site's pages, as tabs. Preview is the site's own address; the rest sit under it. */
 export function siteTabs(siteId: string) {
   const base = `/sites/${encodeURIComponent(siteId)}`;
   return [
-    { href: base, name: "Build" },
+    { href: base, name: "Preview" },
     { href: `${base}/versions`, name: "Versions" },
     { href: `${base}/database`, name: "Database" },
     { href: `${base}/settings`, name: "Settings" },

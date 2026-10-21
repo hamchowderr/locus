@@ -101,6 +101,10 @@ export class TursoProvisioner implements TenantProvisioner {
     return body.jwt;
   }
 
+  async revokeTokens(dbName: string) {
+    await this.call("POST", `/databases/${checkName(dbName)}/auth/rotate`);
+  }
+
   async findDatabase(dbName: string) {
     try {
       const body = await this.call<{ database?: { Name?: string; Hostname?: string } }>(

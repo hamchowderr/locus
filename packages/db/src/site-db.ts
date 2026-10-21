@@ -1,4 +1,4 @@
-import { type Client, createClient, type InValue } from "@libsql/client";
+import { type Client, createClient, type InValue, LibsqlError } from "@libsql/client";
 
 // Reads an app-style site's own database for the Locus dashboard. The site's app owns its
 // schema (the agent writes it through chat), so nothing here assumes a table exists: every
@@ -14,7 +14,8 @@ export interface SiteColumn {
 export interface SiteTable {
   name: string;
   columns: SiteColumn[];
-  rows: number;
+  /** Null when the table can't be read, such as a search table whose source table is gone. */
+  rows: number | null;
 }
 
 export interface SiteRows {
@@ -51,11 +52,30 @@ const MAX_PAGE = 200;
 
 const quote = (identifier: string) => `"${identifier.replaceAll('"', '""')}"`;
 
+/** The tables a full-text (FTS5) table or a vector index keeps its own index in. */
+const FTS5_SHADOWS = ["data", "idx", "content", "docsize", "config"];
+const FTS5 = /\busing\s+fts5\b/i;
+const VECTOR_INDEX = /\blibsql_vector_idx\s*\(/i;
+
 async function tableNames(db: Client): Promise<string[]> {
   const result = await db.execute(
-    "select name from sqlite_master where type = 'table' order by name",
+    "select name, type, sql from sqlite_master where type in ('table', 'index') order by name",
   );
-  return result.rows.map((row) => String(row.name)).filter((name) => !INTERNAL.test(name));
+  const rows = result.rows.map((row) => ({
+    name: String(row.name),
+    type: String(row.type),
+    sql: String(row.sql ?? ""),
+  }));
+  const shadows = new Set<string>();
+  for (const row of rows) {
+    if (row.type === "table" && FTS5.test(row.sql)) {
+      for (const suffix of FTS5_SHADOWS) shadows.add(`${row.name}_${suffix}`);
+    }
+    if (row.type === "index" && VECTOR_INDEX.test(row.sql)) shadows.add(`${row.name}_shadow`);
+  }
+  return rows
+    .filter((row) => row.type === "table" && !INTERNAL.test(row.name) && !shadows.has(row.name))
+    .map((row) => row.name);
 }
 
 /** The site's tables with their columns and row counts. */
@@ -63,7 +83,13 @@ export async function listSiteTables(db: Client): Promise<SiteTable[]> {
   const tables: SiteTable[] = [];
   for (const name of await tableNames(db)) {
     const info = await db.execute(`pragma table_info(${quote(name)})`);
-    const count = await db.execute(`select count(*) as n from ${quote(name)}`);
+    // One broken table (a search table whose source table was dropped) mustn't hide the rest.
+    const count = await db
+      .execute(`select count(*) as n from ${quote(name)}`)
+      .catch((error: unknown) => {
+        if (error instanceof LibsqlError) return null;
+        throw error;
+      });
     tables.push({
       name,
       columns: info.rows.map((row) => ({
@@ -72,7 +98,7 @@ export async function listSiteTables(db: Client): Promise<SiteTable[]> {
         notNull: Number(row.notnull) === 1,
         primaryKey: Number(row.pk) > 0,
       })),
-      rows: Number(count.rows[0]?.n ?? 0),
+      rows: count ? Number(count.rows[0]?.n ?? 0) : null,
     });
   }
   return tables;

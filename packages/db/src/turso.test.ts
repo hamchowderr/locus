@@ -80,6 +80,17 @@ describe("TursoProvisioner", () => {
     expect(calls).toHaveLength(3);
   });
 
+  it("revokes one database's tokens", async () => {
+    const { calls, provisioner } = fakeTurso(() => ({ json: {} }));
+    await provisioner.revokeTokens("site-abc");
+    expect(calls[0]?.method).toBe("POST");
+    expect(calls[0]?.url.pathname).toBe(
+      "/v1/organizations/hamchowderr/databases/site-abc/auth/rotate",
+    );
+    await expect(provisioner.revokeTokens("../other")).rejects.toThrow(/name/);
+    expect(calls).toHaveLength(1);
+  });
+
   it("deletes, and treats a database that is already gone as deleted", async () => {
     let status = 200;
     const { calls, provisioner } = fakeTurso(() => ({
