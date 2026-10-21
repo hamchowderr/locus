@@ -62,6 +62,25 @@ test("a run stops after the same tool fails three steps in a row", async () => {
   expect(result.steps).toHaveLength(3);
 });
 
+test("a stopped run says why in the server log, without the call's input", async () => {
+  const prompt = loopOn(() => '{"cmd":"secret-ish"}');
+  const logged: string[] = [];
+  const agent = new Agent({
+    id: "a",
+    name: "a",
+    instructions: "Build things.",
+    model: model(),
+    tools: { run_command: runCommand },
+    defaultOptions: { stopWhen: stopOnRepeatedFailures(3, (m) => logged.push(m)) },
+  });
+
+  await agent.generate(prompt, { maxSteps: 1000 });
+
+  expect(logged).toEqual([
+    "Agent run stopped: run_command threw an error 3 steps in a row (input 20 characters)",
+  ]);
+});
+
 test("arguments the model can't send right count as failures too", async () => {
   const prompt = loopOn(() => "{not json");
   const agent = new Agent({
