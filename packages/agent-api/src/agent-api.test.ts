@@ -417,6 +417,36 @@ describe("the chat kit's routes", () => {
     );
   });
 
+  test("a site's chat tags its conversation, which then lists with the site", async () => {
+    mock().llm.on({ userMessage: /about the bakery site/i }, { content: "Happy to help." });
+    const { api, signIn } = apiFor(createFakeGhl({}));
+    const stream = kitEvents(await kit(api, "stream", { text: "About the bakery site" }));
+    await stream.until((e) => e.type === "__done__");
+    const thread = stream.events.find((e) => e.type === "__thread__")?.threadId as string;
+    const tag = (site: unknown, id = thread) =>
+      api.fetch(
+        new Request(`http://locus.test${PREFIX}/kit/agent-controller/threads/${id}`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ site }),
+        }),
+      );
+
+    expect((await tag("../x")).status).toBe(400);
+    expect((await tag("site-1", "someone-elses")).status).toBe(404);
+    expect((await tag("site-1")).status).toBe(200);
+    expect((await tag("site-1")).status).toBe(200);
+    // Once a site's, never another's.
+    expect((await tag("site-2")).status).toBe(409);
+    const listed = (await (await kit(api, "threads")).json()) as {
+      threads: { id: string; siteId?: string }[];
+    };
+    expect(listed.threads.find((t) => t.id === thread)?.siteId).toBe("site-1");
+
+    signIn(null);
+    expect((await tag("site-1")).status).toBe(401);
+  });
+
   test("refuses the unsigned, always-allow, other routes and others' threads", async () => {
     const { api, signIn } = apiFor(createFakeGhl({}));
     expect((await kit(api, "approve", { decision: "always_allow_category" })).status).toBe(403);

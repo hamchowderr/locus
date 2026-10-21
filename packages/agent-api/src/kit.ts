@@ -13,16 +13,22 @@
  * waits on, and the session's goal and observational memory. A request about a work thread
  * (`work-threads.ts`) drives that thread's own session, with the same caller's context.
  *
+ * One route is Locus's own: tagging a conversation with the site it is about (`PATCH
+ * /threads/:id` with `{ site }`), so a site's chat keeps its conversation apart from the main
+ * chat. The tag is a label for listing, never a target anything acts on.
+ *
  * Not served: deleting or renaming threads, schedules, and the kit's workspace, browser and
  * image routes, which belong to the whole server rather than one client.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
-import { CONTROLLER_ID, openClientSession, TAINT_KEY } from "@locus/harness";
+import { CONTROLLER_ID, controllerStorage, openClientSession, TAINT_KEY } from "@locus/harness";
 import type { AgentController, Session } from "@mastra/core/agent-controller";
 import { RequestContext } from "@mastra/core/request-context";
+import { registerApiRoute } from "@mastra/core/server";
+import { SITE_TAG, SITE_THREAD_KEY, workThreadOf } from "./mastra/lib/work-thread-info.ts";
 import { createControllerRoutes } from "./mastra/routes/controller.ts";
-import { createThreadRoutes } from "./mastra/routes/threads.ts";
+import { createThreadRoutes, ownsThread } from "./mastra/routes/threads.ts";
 import type { ChatServerDeps } from "./mastra/routes/types.ts";
 import { workThreadsOf } from "./work-threads.ts";
 
@@ -48,6 +54,7 @@ const KIT_ROUTES: Record<string, (tail: string[]) => boolean> = {
       tail[0] === "threads" &&
       ["messages", "pending"].includes(tail[2] as string)),
   POST: (tail) => tail.length === 1 && ["stream", "approve", "answer"].includes(tail[0] as string),
+  PATCH: (tail) => tail.length === 2 && tail[0] === "threads" && tail[1] !== "search",
 };
 
 /** Whether a decoded kit path (the segments after `/agent-controller/`) is one this API serves. */
@@ -115,9 +122,48 @@ export function kitRoutes(controller: AgentController) {
     "GET /agent-controller/goal",
     "GET /agent-controller/om",
   ]);
-  return [...createThreadRoutes(deps), ...createControllerRoutes(deps)].filter((route) =>
+  const kit = [...createThreadRoutes(deps), ...createControllerRoutes(deps)].filter((route) =>
     served.has(`${route.method} ${route.path}`),
   );
+  return [...kit, siteTagRoute(controller, getSession)];
+}
+
+/**
+ * Tags one of the member's own conversations with the site it is about. Only an ordinary
+ * conversation: a work thread already belongs to the main chat. Once tagged it stays that
+ * site's, so a second tag for another site is refused.
+ */
+function siteTagRoute(controller: AgentController, getSession: () => Promise<Session>) {
+  return registerApiRoute("/agent-controller/threads/:id", {
+    method: "PATCH",
+    handler: async (c) => {
+      const body = (await c.req.json().catch(() => null)) as { site?: unknown } | null;
+      const site = body?.site;
+      if (typeof site !== "string" || !SITE_TAG.test(site)) {
+        return c.json({ error: "send { site }" }, 400);
+      }
+      const id = c.req.param("id");
+      if (!(await ownsThread(await getSession(), id))) return c.json({ error: "not found" }, 404);
+      const store = await controllerStorage(controller).getStore("memory");
+      if (!store) throw new Error("the controller's store keeps no threads");
+      const thread = await store.getThreadById({ threadId: id });
+      if (!thread || workThreadOf(thread)) return c.json({ error: "not found" }, 404);
+      // Checked inside the store's update, so two tags sent at once can't both win.
+      let other = false;
+      await store.updateThreadMetadata({
+        id,
+        update: (current) => {
+          const tagged = (current.metadata as Record<string, unknown> | undefined)?.[
+            SITE_THREAD_KEY
+          ];
+          other = tagged !== undefined && tagged !== site;
+          return tagged === undefined ? { [SITE_THREAD_KEY]: site } : undefined;
+        },
+      });
+      if (other) return c.json({ error: "this conversation is another site's" }, 409);
+      return c.json({ ok: true });
+    },
+  });
 }
 
 /**
