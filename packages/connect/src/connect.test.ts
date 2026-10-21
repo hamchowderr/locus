@@ -280,6 +280,29 @@ describe("connecting GoHighLevel", () => {
     expect(row?.refreshLeaseUntil).toBeNull();
   });
 
+  it("leaves another process's lease alone when its own renewal outlasted the lease", async () => {
+    await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
+    clock += 24 * 3_600_000;
+    const theirs = new Date(clock + 60_000);
+    const ghlFetch = deps.http?.fetch as typeof fetch;
+    deps.http = {
+      ...deps.http,
+      fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(init?.body ?? "").includes("refresh_token")) {
+          // While GHL is slow, our lease runs out and another process takes it.
+          await db
+            .update(agencyGhlConnection)
+            .set({ refreshLeaseUntil: theirs })
+            .where(eq(agencyGhlConnection.organizationId, "agency-a"));
+        }
+        return ghlFetch(input, init);
+      }) as typeof fetch,
+    };
+    await agencyToken(deps, "agency-a");
+    const [row] = await db.select().from(agencyGhlConnection);
+    expect(row?.refreshLeaseUntil?.getTime()).toBe(theirs.getTime());
+  });
+
   it("takes over a renewal left behind by a process that stopped", async () => {
     await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
     const first = await agencyToken(deps, "agency-a");
