@@ -13,12 +13,15 @@
  * waits on, and the session's goal and observational memory. A request about a work thread
  * (`work-threads.ts`) drives that thread's own session, with the same caller's context.
  *
- * One route is Locus's own: tagging a conversation with the site it is about (`PATCH
- * /threads/:id` with `{ site }`), so a site's chat keeps its conversation apart from the main
- * chat. The tag is a label for listing, never a target anything acts on.
+ * Two routes are Locus's own, over the member's own conversations only:
+ * - `PATCH /threads/:id` renames one (`{ title }`), or tags it with the site it is about
+ *   (`{ site }`), so a site's chat keeps its conversation apart from the main chat. The tag is a
+ *   label for listing, never a target anything acts on.
+ * - `DELETE /threads/:id` deletes a chat and the work threads it started, but never while one
+ *   of them is working or waiting for the member, and never a work thread on its own.
  *
- * Not served: deleting or renaming threads, schedules, and the kit's workspace, browser and
- * image routes, which belong to the whole server rather than one client.
+ * Not served: archiving, schedules, and the kit's workspace, browser and image routes, which
+ * belong to the whole server rather than one client.
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -26,6 +29,7 @@ import { CONTROLLER_ID, controllerStorage, openClientSession, TAINT_KEY } from "
 import type { AgentController, Session } from "@mastra/core/agent-controller";
 import { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
+import type { Context } from "hono";
 import { SITE_TAG, SITE_THREAD_KEY, workThreadOf } from "./mastra/lib/work-thread-info.ts";
 import { createControllerRoutes } from "./mastra/routes/controller.ts";
 import { createThreadRoutes, ownsThread } from "./mastra/routes/threads.ts";
@@ -55,6 +59,7 @@ const KIT_ROUTES: Record<string, (tail: string[]) => boolean> = {
       ["messages", "pending"].includes(tail[2] as string)),
   POST: (tail) => tail.length === 1 && ["stream", "approve", "answer"].includes(tail[0] as string),
   PATCH: (tail) => tail.length === 2 && tail[0] === "threads" && tail[1] !== "search",
+  DELETE: (tail) => tail.length === 2 && tail[0] === "threads" && tail[1] !== "search",
 };
 
 /** Whether a decoded kit path (the segments after `/agent-controller/`) is one this API serves. */
@@ -125,7 +130,89 @@ export function kitRoutes(controller: AgentController) {
   const kit = [...createThreadRoutes(deps), ...createControllerRoutes(deps)].filter((route) =>
     served.has(`${route.method} ${route.path}`),
   );
-  return [...kit, siteTagRoute(controller, getSession)];
+  return [
+    ...kit,
+    patchThreadRoute(controller, getSession),
+    deleteThreadRoute(controller, getSession),
+  ];
+}
+
+/** The longest name a conversation may be given. */
+const TITLE_MAX = 120;
+
+/** The client's conversation store, holding its threads. */
+async function memoryOf(controller: AgentController) {
+  const store = await controllerStorage(controller).getStore("memory");
+  if (!store) throw new Error("the controller's store keeps no threads");
+  return store;
+}
+
+/** Renames one of the member's own conversations (`{ title }`), or tags it (`{ site }`). */
+function patchThreadRoute(controller: AgentController, getSession: () => Promise<Session>) {
+  const tag = siteTag(controller, getSession);
+  return registerApiRoute("/agent-controller/threads/:id", {
+    method: "PATCH",
+    handler: async (c) => {
+      const body = (await c.req.json().catch(() => null)) as {
+        site?: unknown;
+        title?: unknown;
+      } | null;
+      if (body?.site !== undefined) return tag(c, c.req.param("id"), body.site);
+      const title = typeof body?.title === "string" ? body.title.trim() : "";
+      if (!title || title.length > TITLE_MAX) {
+        return c.json({ error: `send { title } of 1 to ${TITLE_MAX} characters` }, 400);
+      }
+      const id = c.req.param("id");
+      if (!(await ownsThread(await getSession(), id))) return c.json({ error: "not found" }, 404);
+      const store = await memoryOf(controller);
+      await store.patchThread({ id, title });
+      // A name the person chose stays: memory's title writer leaves a pinned title alone.
+      await store.updateThreadMetadata({ id, update: () => ({ titlePinned: true }) });
+      return c.json({ ok: true });
+    },
+  });
+}
+
+/**
+ * Deletes one of the member's own chats with the work threads it started. Refused while any of
+ * them is working or waiting for the member, so no run is left writing into, or parked on, a
+ * thread that is gone.
+ */
+function deleteThreadRoute(controller: AgentController, getSession: () => Promise<Session>) {
+  return registerApiRoute("/agent-controller/threads/:id", {
+    method: "DELETE",
+    handler: async (c) => {
+      const id = c.req.param("id");
+      const session = await getSession();
+      if (!(await ownsThread(session, id))) return c.json({ error: "not found" }, 404);
+      const store = await memoryOf(controller);
+      const { threads } = await store.listThreads({ perPage: false });
+      const own = threads.find((t) => t.id === id);
+      // A work thread is deleted with the chat that started it, never on its own.
+      if (!own || workThreadOf(own)) {
+        return c.json({ error: "delete the chat that started this thread" }, 409);
+      }
+      const started = threads.filter((t) => workThreadOf(t)?.parentThreadId === id);
+      const work = workThreadsOf(controller);
+      for (const t of started) {
+        // A run saves `working` only once it has begun, so the live Session is asked too.
+        const status = workThreadOf(t)?.status;
+        if (status === "working" || status === "needs_you" || (await work?.busy(t.id))) {
+          return c.json(
+            { error: "a thread in this chat is still working or waiting for you" },
+            409,
+          );
+        }
+      }
+      for (const t of started) {
+        await work?.forget(t.id, t.resourceId);
+        await store.deleteThread({ threadId: t.id });
+      }
+      // Through the session, which also stops a run of the member's own on this thread.
+      await session.thread.delete({ threadId: id });
+      return c.json({ ok: true });
+    },
+  });
 }
 
 /**
@@ -133,37 +220,28 @@ export function kitRoutes(controller: AgentController) {
  * conversation: a work thread already belongs to the main chat. Once tagged it stays that
  * site's, so a second tag for another site is refused.
  */
-function siteTagRoute(controller: AgentController, getSession: () => Promise<Session>) {
-  return registerApiRoute("/agent-controller/threads/:id", {
-    method: "PATCH",
-    handler: async (c) => {
-      const body = (await c.req.json().catch(() => null)) as { site?: unknown } | null;
-      const site = body?.site;
-      if (typeof site !== "string" || !SITE_TAG.test(site)) {
-        return c.json({ error: "send { site }" }, 400);
-      }
-      const id = c.req.param("id");
-      if (!(await ownsThread(await getSession(), id))) return c.json({ error: "not found" }, 404);
-      const store = await controllerStorage(controller).getStore("memory");
-      if (!store) throw new Error("the controller's store keeps no threads");
-      const thread = await store.getThreadById({ threadId: id });
-      if (!thread || workThreadOf(thread)) return c.json({ error: "not found" }, 404);
-      // Checked inside the store's update, so two tags sent at once can't both win.
-      let other = false;
-      await store.updateThreadMetadata({
-        id,
-        update: (current) => {
-          const tagged = (current.metadata as Record<string, unknown> | undefined)?.[
-            SITE_THREAD_KEY
-          ];
-          other = tagged !== undefined && tagged !== site;
-          return tagged === undefined ? { [SITE_THREAD_KEY]: site } : undefined;
-        },
-      });
-      if (other) return c.json({ error: "this conversation is another site's" }, 409);
-      return c.json({ ok: true });
-    },
-  });
+function siteTag(controller: AgentController, getSession: () => Promise<Session>) {
+  return async (c: Context, id: string, site: unknown) => {
+    if (typeof site !== "string" || !SITE_TAG.test(site)) {
+      return c.json({ error: "send { site }" }, 400);
+    }
+    if (!(await ownsThread(await getSession(), id))) return c.json({ error: "not found" }, 404);
+    const store = await memoryOf(controller);
+    const thread = await store.getThreadById({ threadId: id });
+    if (!thread || workThreadOf(thread)) return c.json({ error: "not found" }, 404);
+    // Checked inside the store's update, so two tags sent at once can't both win.
+    let other = false;
+    await store.updateThreadMetadata({
+      id,
+      update: (current) => {
+        const tagged = (current.metadata as Record<string, unknown> | undefined)?.[SITE_THREAD_KEY];
+        other = tagged !== undefined && tagged !== site;
+        return tagged === undefined ? { [SITE_THREAD_KEY]: site } : undefined;
+      },
+    });
+    if (other) return c.json({ error: "this conversation is another site's" }, 409);
+    return c.json({ ok: true });
+  };
 }
 
 /**
