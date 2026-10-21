@@ -153,6 +153,28 @@ export function isGhlPayUrl(value: unknown, invoiceId?: string): value is string
   return url.pathname.split("/").includes(invoiceId);
 }
 
+/**
+ * What a refused payment link looked like, for the log: its scheme and host, and its path with
+ * every id-like part replaced (`:invoice` where it is this invoice's id, `:id` otherwise). Never
+ * the query or fragment, which can carry tokens.
+ */
+export function payUrlShape(value: unknown, invoiceId: string): string {
+  if (typeof value !== "string") return `not a string (${typeof value})`;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "not a URL";
+  }
+  const path = url.pathname
+    .split("/")
+    .map((part) =>
+      part === invoiceId ? ":invoice" : /[0-9]/.test(part) && part.length >= 8 ? ":id" : part,
+    )
+    .join("/");
+  return `${url.protocol}//${url.host}${path}`;
+}
+
 /** One line of the client's own text: no line breaks or column bars, capped. */
 export const oneLine = (value: string, max = 120) =>
   value
@@ -581,7 +603,9 @@ export async function startSiteCheckout(
     if (isGhlPayUrl(made.url, made.id))
       return { status: 200, body: { ok: true, payUrl: made.url } };
     // GHL made and emailed the invoice; only its payment page can't be opened from here.
-    console.error(`Checkout for site ${row.site.id}: the invoice's address isn't GHL's`);
+    console.error(
+      `Checkout for site ${row.site.id}: the invoice's address isn't one the site may open (${payUrlShape(made.url, made.id)})`,
+    );
     return { status: 200, body: { ok: true, emailed: true } };
   }
   logGhlFailure(`Checkout for site ${row.site.id}`, done.invoiceFailure ?? done.failure);
