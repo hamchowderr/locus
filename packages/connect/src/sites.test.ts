@@ -315,16 +315,44 @@ describe("linking a Vercel project to a client", () => {
     await linkHostProject(deps(), ctx("owner"), client, { projectId: STUB_VERCEL_PROJECT.id });
   });
 
-  it("keeps a site with a repository when its project is unlinked", async () => {
+  it("marks a linked project's site as linked", async () => {
     const client = await authorizeClient(db, ctx("owner"), "client-1");
     const row = await linkHostProject(deps(), ctx("owner"), client, {
       projectId: STUB_VERCEL_PROJECT.id,
     });
-    await db.update(site).set({ repoFullName: "acme/site" }).where(eq(site.id, row.id));
-    await unlinkHostProject(deps(), ctx("owner"), client, row.id);
-    expect(await listSites(db, client)).toEqual([
-      expect.objectContaining({ id: row.id, repoFullName: "acme/site", hostProjectId: null }),
+    expect(row.origin).toBe("linked");
+  });
+
+  it("keeps a site started in Site Studio when its project is unlinked", async () => {
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await db.insert(site).values([
+      {
+        id: "published",
+        locationId: "client-1",
+        repoFullName: "acme/site",
+        host: "vercel",
+        hostProjectId: "prj_published",
+        status: "deployed",
+      },
+      // No repository: unlink used to read this as "made only by linking" and delete it.
+      { id: "no-repo", locationId: "client-1", host: "vercel", hostProjectId: "prj_no_repo" },
     ]);
+    await unlinkHostProject(deps(), ctx("owner"), client, "published");
+    await unlinkHostProject(deps(), ctx("owner"), client, "no-repo");
+    const rows = await listSites(db, client);
+    expect(rows).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "published",
+          origin: "studio",
+          repoFullName: "acme/site",
+          hostProjectId: null,
+          status: "pushed",
+        }),
+        expect.objectContaining({ id: "no-repo", hostProjectId: null, status: "draft" }),
+      ]),
+    );
+    expect(rows).toHaveLength(2);
   });
 
   it("keeps a site with its own database when its project is unlinked", async () => {
