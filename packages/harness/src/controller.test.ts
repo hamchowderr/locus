@@ -334,3 +334,45 @@ describe("tools added by a feature", () => {
     expect(last).toContain(TAINT_MARK);
   });
 });
+
+describe("a run that keeps failing", () => {
+  const broken = createTool({
+    id: "run_command",
+    description: "Run a command.",
+    requireApproval: () => false,
+    inputSchema: z.object({ cmd: z.string() }),
+    execute: async () => {
+      throw new Error("command failed");
+    },
+  });
+
+  test("stops after three failed steps instead of running on", async () => {
+    mock().llm.on(
+      { userMessage: /keep retrying/i, hasToolResult: false },
+      { toolCalls: [{ id: "retry-1", name: "run_command", arguments: '{"cmd":"x"}' }] },
+    );
+    for (let n = 1; n < 10; n++) {
+      mock().llm.on(
+        { toolCallId: `retry-${n}` },
+        { toolCalls: [{ id: `retry-${n + 1}`, name: "run_command", arguments: '{"cmd":"x"}' }] },
+      );
+    }
+    const storage = new LibSQLStore({ id: "client", url: ":memory:" });
+    const controller = await createLocusController({
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      locationId: "loc-A",
+      session: async () => clientA,
+      storage,
+      fetch: createFakeGhl({}).fetch,
+      modes: [{ id: "build", name: "Build", availableTools: ["run_command"] }],
+      tools: { run_command: broken },
+    });
+    const session = await openClientSession(controller, { memberId: "m1" });
+    await session.mode.switch({ modeId: "build" });
+
+    await send(session, "Keep retrying");
+
+    // The controller allows 1000 steps; the model was asked only three times.
+    expect(mock().llm.getRequests()).toHaveLength(3);
+  });
+});
