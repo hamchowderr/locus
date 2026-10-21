@@ -771,6 +771,16 @@ describe("a refused payment link in the log", () => {
     expect(payUrlShape("https://link.agency.test/l/aB3dE5fG9h", id)).toBe(
       "https://link.agency.test/l/:id",
     );
+    expect(payUrlShape("https://link.agency.test/l/aB3dE5f", id)).toBe(
+      "https://link.agency.test/l/:id",
+    );
+    expect(payUrlShape("https://link.agency.test/pay/abcdefghijklmnopqrstuvwxyzABCDEFGH", id)).toBe(
+      "https://link.agency.test/pay/:id",
+    );
+    expect(payUrlShape("https://link.agency.test/invoice;token=secret/x", id)).toBe(
+      "https://link.agency.test/:id/x",
+    );
+    expect(payUrlShape("data:text/plain,a secret token", id)).toBe("a data: link");
     expect(payUrlShape("not a url", id)).toBe("not a URL");
     expect(payUrlShape(undefined, id)).toBe("not a string (undefined)");
   });

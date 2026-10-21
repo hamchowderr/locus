@@ -155,8 +155,9 @@ export function isGhlPayUrl(value: unknown, invoiceId?: string): value is string
 
 /**
  * What a refused payment link looked like, for the log: its scheme and host, and its path with
- * every id-like part replaced (`:invoice` where it is this invoice's id, `:id` otherwise). Never
- * the query or fragment, which can carry tokens.
+ * every part that isn't a short lowercase word replaced (`:invoice` where it is this invoice's
+ * id, `:id` otherwise). Never the query or fragment, which can carry tokens, and only the scheme
+ * of a link that isn't http(s), whose whole body is its "path".
  */
 export function payUrlShape(value: unknown, invoiceId: string): string {
   if (typeof value !== "string") return `not a string (${typeof value})`;
@@ -166,10 +167,11 @@ export function payUrlShape(value: unknown, invoiceId: string): string {
   } catch {
     return "not a URL";
   }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return `a ${url.protocol} link`;
   const path = url.pathname
     .split("/")
     .map((part) =>
-      part === invoiceId ? ":invoice" : /[0-9]/.test(part) && part.length >= 8 ? ":id" : part,
+      part === invoiceId ? ":invoice" : part === "" || /^[a-z-]{1,20}$/.test(part) ? part : ":id",
     )
     .join("/");
   return `${url.protocol}//${url.host}${path}`;
