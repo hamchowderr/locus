@@ -105,6 +105,10 @@ export default async function BuildSite({
         className="min-h-0 flex-1"
         version={version}
         start={previewSite.bind(null, siteId, version)}
+        versions={{
+          latest: history?.versions[0]?.number ?? 0,
+          canRestore: !refusal && Boolean(history) && !history?.refusal,
+        }}
         leading={
           history && (
             <VersionPicker
