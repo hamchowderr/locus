@@ -156,10 +156,12 @@ export function SiteChat({
   for (const m of chat.controller.transcript.messages) {
     for (const p of m.content) {
       if (p.type !== "tool_result") continue;
-      const out = (p as { result?: { saved?: unknown; version?: unknown } }).result;
-      if (out?.saved === true && typeof out.version === "number" && out.version > latest) {
-        latest = out.version;
-      }
+      // A save names its version; a restore makes a new one too.
+      const out = (p as { result?: { saved?: unknown; version?: unknown; nowVersion?: unknown } })
+        .result;
+      const made =
+        out?.saved === true && typeof out.version === "number" ? out.version : out?.nowVersion;
+      if (typeof made === "number" && made > latest) latest = made;
     }
   }
   const { shown, canRestore } = versions;

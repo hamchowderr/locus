@@ -1,7 +1,15 @@
 'use client';
 
 import { ArrowLeftIcon, SendIcon, SquareIcon } from 'lucide-react';
-import { type FormEvent, Fragment, type MouseEvent, useCallback, useEffect, useRef, useState } from 'react';
+import {
+  type FormEvent,
+  Fragment,
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { Conversation, ConversationContent } from '@/components/ai-elements/conversation';
 import { Message, MessageContent } from '@/components/ai-elements/message';
 import { Shimmer } from '@/components/ai-elements/shimmer';
@@ -254,6 +262,7 @@ export function ChatView({
 }) {
   const { transcript, status, answerQuestion, pendingSuspension } = controller;
   const busy = status === 'streaming';
+  const lastAssistant = transcript.messages.findLastIndex((m) => m.role !== 'user');
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions lint/a11y/useKeyWithClickEvents: delegates clicks on the report links inside, which are focusable anchors already.
     <div className="min-h-0 flex-1" onClick={onLinkClick}>
@@ -272,7 +281,8 @@ export function ChatView({
                   p as { result?: unknown; isError?: boolean },
                 ]),
             );
-            const live = busy && at === transcript.messages.length - 1;
+            // The turn streaming now is the last assistant message (a follow-up may sit below it).
+            const live = busy && at === lastAssistant;
             return (
               <Message key={m.id} from={m.role === 'user' ? 'user' : 'assistant'}>
                 <MessageContent>
