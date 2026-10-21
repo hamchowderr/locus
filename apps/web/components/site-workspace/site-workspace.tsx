@@ -1,6 +1,7 @@
 "use client";
 
 import { MousePointerClick } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { type ComponentProps, useState } from "react";
 import { SitePreview } from "@/components/site-preview/site-preview";
 import { Button } from "@/components/ui/button";
@@ -38,10 +39,15 @@ export function SiteWorkspace({
   const [reloads, setReloads] = useState(0);
   const mode = "mode" in setting ? setting.mode : null;
   const refusal = "mode" in setting ? setting.refusal : setting.off;
+  const router = useRouter();
   const chat = useSiteChat({
     siteId,
     mode,
-    onFilesChanged: () => setReloads((n) => n + 1),
+    // Reload the preview, and the page's versions (the picker, and what's newest).
+    onFilesChanged: () => {
+      setReloads((n) => n + 1);
+      router.refresh();
+    },
   });
   // Changing the site needs the right to build it, and the current version in the preview.
   const canChange = mode !== null && refusal === null;

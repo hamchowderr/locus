@@ -46,6 +46,13 @@ export function VersionCard({
           </p>
           <p className="mt-0.5 text-pretty">{saved.message}</p>
           {files.length > 0 && <ChangedFiles files={files} />}
+          {saved.more && (
+            <p className="mt-0.5 text-muted-foreground text-xs">
+              {files.length > 0
+                ? "Plus other changes (components, images or forms)."
+                : "Changes to components, images or forms."}
+            </p>
+          )}
           {saved.publishError && (
             <p className="mt-1.5 text-destructive text-xs">{saved.publishError}</p>
           )}

@@ -1,6 +1,6 @@
 'use client';
 
-import { CheckIcon, CircleAlertIcon, LoaderCircleIcon } from 'lucide-react';
+import { CheckIcon, CircleAlertIcon, CircleDashedIcon, LoaderCircleIcon } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
 import {
   ChainOfThought,
@@ -16,8 +16,11 @@ export type ToolResult = { result?: unknown; isError?: boolean };
 /** Every tool call in the message being drawn, with its result, in order. */
 export type ToolTurn = ReadonlyArray<{ call: ToolCall; result: ToolResult | undefined }>;
 
-/** A tool call told in a few words, e.g. "Edited app/page.tsx". */
-export type ToolStep = { label: string; detail?: string };
+/**
+ * A tool call told in a few words, e.g. "Edited app/page.tsx". `failed` marks a call whose
+ * result says it went wrong (many tools return their error rather than throw it).
+ */
+export type ToolStep = { label: string; detail?: string; failed?: boolean };
 
 /**
  * How a host shows its own tools in the chat, instead of the raw input and output.
@@ -33,8 +36,14 @@ export type ToolViews = {
   card?: (call: ToolCall, result: ToolResult | undefined, turn: ToolTurn) => ReactNode;
 };
 
-/** A step row as drawn: its words, and whether its call has finished. */
-export type DrawnStep = ToolStep & { key: string; state: 'running' | 'done' | 'error' };
+/**
+ * A step row as drawn: its words, and how its call went. `stopped` is a call that never got a
+ * result because the turn ended first (stopped, or the stream broke).
+ */
+export type DrawnStep = ToolStep & {
+  key: string;
+  state: 'running' | 'done' | 'error' | 'stopped';
+};
 
 /**
  * A run of tool steps as one fold-out list. While a step is running the header names it;
@@ -67,13 +76,17 @@ export function ToolStepList({ steps }: { steps: DrawnStep[] }) {
                 ? LoaderCircleIcon
                 : s.state === 'error'
                   ? CircleAlertIcon
-                  : CheckIcon
+                  : s.state === 'stopped'
+                    ? CircleDashedIcon
+                    : CheckIcon
             }
             // The step's own icon is its first child's svg; a running one turns.
             className={s.state === 'running' ? '[&>div:first-child>svg]:animate-spin' : undefined}
             description={
               s.state === 'error' ? (
                 <span className="text-destructive">{s.detail ?? 'This step failed.'}</span>
+              ) : s.state === 'stopped' ? (
+                "This step didn't finish."
               ) : (
                 s.detail
               )
@@ -85,7 +98,6 @@ export function ToolStepList({ steps }: { steps: DrawnStep[] }) {
   );
 }
 
-
 /** One thing to draw in a message: a run of step rows, a host's card, or a plain part. */
 export type MessagePiece<P> =
   | { kind: 'steps'; key: string; steps: DrawnStep[] }
@@ -95,7 +107,8 @@ export type MessagePiece<P> =
 /**
  * A message's parts, with the host's tools turned into step rows and cards. Steps next to
  * each other (results between them don't count) become one run; anything else ends it.
- * `live` says the message is still streaming, so a call without a result is running.
+ * `live` says the message is still streaming, so a call without a result is running; once
+ * it isn't, such a call never finished.
  */
 export function messagePieces<P extends { type: string }>(
   messageId: string,
@@ -130,7 +143,8 @@ export function messagePieces<P extends { type: string }>(
       }
       const step = views.step?.(call, result);
       if (step) {
-        const state = result?.isError ? 'error' : result || !live ? 'done' : 'running';
+        const state =
+          result?.isError || step.failed ? 'error' : result ? 'done' : live ? 'running' : 'stopped';
         const drawn: DrawnStep = { ...step, key, state };
         if (run) run.push(drawn);
         else {
