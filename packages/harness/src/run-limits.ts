@@ -65,19 +65,53 @@ function failedCalls(step: Step): Set<string> {
   return new Set(results.map((part) => `${part.toolName}:${stable(part.input)}`));
 }
 
+/** How a failed result failed, in words that hold none of its data. */
+function failureKind(output: unknown): string {
+  const { type, value } = (output ?? {}) as { type?: string; value?: unknown };
+  if (type?.startsWith("error")) return "threw an error";
+  if (typeof value === "object" && value !== null && "validationErrors" in value) {
+    return "got input it couldn't read";
+  }
+  return "returned an error";
+}
+
+/**
+ * Writes why a run stopped to the server log. Only tool names and sizes: inputs and errors can
+ * hold GHL data, and logs keep none.
+ */
+export type StopLog = (message: string) => void;
+const warn: StopLog = (message) => console.warn(message);
+
 /** Stops a run once the same call has failed in `limit` steps in a row with nothing working. */
-export function stopOnRepeatedFailures(limit = REPEATED_FAILURE_LIMIT): StopCondition {
+export function stopOnRepeatedFailures(
+  limit = REPEATED_FAILURE_LIMIT,
+  log: StopLog = warn,
+): StopCondition {
   return ({ steps }) => {
     if (steps.length < limit) return false;
     const [first, ...rest] = steps.slice(-limit).map(failedCalls);
     if (!first) return false;
-    return [...first].some((call) => rest.every((calls) => calls.has(call)));
+    const call = [...first].find((key) => rest.every((calls) => calls.has(key)));
+    if (!call) return false;
+    const toolName = call.slice(0, call.indexOf(":"));
+    const part = steps
+      .at(-1)
+      ?.content?.find((p) => p.type === "tool-result" && p.toolName === toolName);
+    log(
+      `Agent run stopped: ${toolName} ${failureKind(part?.output)} ${limit} steps in a row ` +
+        `(input ${stable(part?.input).length} characters)`,
+    );
+    return true;
   };
 }
 
 /** Stops a run at `limit` steps, not counting steps Mastra retried. */
-export function stopAtStepLimit(limit = RUN_STEP_LIMIT): StopCondition {
-  return ({ steps }) => steps.filter((step) => step.finishReason !== "retry").length >= limit;
+export function stopAtStepLimit(limit = RUN_STEP_LIMIT, log: StopLog = warn): StopCondition {
+  return ({ steps }) => {
+    if (steps.filter((step) => step.finishReason !== "retry").length < limit) return false;
+    log(`Agent run stopped: it reached the ${limit}-step limit`);
+    return true;
+  };
 }
 
 export const RUN_STOP_CONDITIONS: StopCondition[] = [stopAtStepLimit(), stopOnRepeatedFailures()];
