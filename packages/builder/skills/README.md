@@ -29,3 +29,8 @@ path), components through `add_dependency` instead of the shadcn CLI.
 | `site-media` | The client's own images come from their CRM's Media Library through the `crm` tool, copied into the site (favicon and link-preview image in Next's file conventions), never hot-linked. |
 | `site-booking` | Booking on a Locus site uses the client's own CRM calendars through the `crm` tool and Locus's ready-made components, never an invented link or a third-party service. |
 | `site-checkout` | Selling on a Locus site uses the client's own CRM products and prices through the `crm` tool and Locus's buy button, paid through a CRM invoice at the CRM's price, never an invented price or a third-party shop. |
+
+`site-database/search.md` covers keyword search with SQLite's FTS5. Turso's own agent skills
+(`tursodatabase/agent-skills`) aren't vendored: their SQL is for Turso's newer engine and fails
+on the libSQL databases sites use, and their setup steps hand out database keys, which Locus
+does for every site.
