@@ -15,7 +15,7 @@ import {
 import { agencyGhlConnection, location } from "@locus/db/control";
 import type { GhlSession } from "@locus/ghl";
 import type { SecretStore } from "@locus/secrets";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull, lte, or } from "drizzle-orm";
 import { ConnectError } from "./errors.ts";
 import {
   type AgencyGrant,
@@ -38,6 +38,8 @@ export interface ConnectDeps {
   http?: GhlHttp;
   migrations?: TenantMigration[];
   now?: () => number;
+  /** Waits between checks while another process renews the GHL grant. Tests make it instant. */
+  sleep?: (ms: number) => Promise<void>;
   /**
    * When the deployment bills: why the agency may not add one more client (given how many
    * are active), or `null` if it may. Absent means no limit.
@@ -50,6 +52,10 @@ export const ghlSecretRef = (organizationId: string) => `/locus/ghl/${organizati
 
 /** Renew the agency token this long before it expires. */
 const REFRESH_EARLY_MS = 5 * 60_000;
+/** How long one process may hold the right to renew a grant before another may take over. */
+const REFRESH_LEASE_MS = 30_000;
+/** How often a process waiting on another's renewal looks for the new grant. */
+const REFRESH_POLL_MS = 250;
 
 /**
  * Connects the session's agency to its GHL company with the code from GHL's redirect, then
@@ -121,17 +127,65 @@ const grantScopes = (grant: AgencyGrant): readonly string[] =>
  * with the scopes GHL granted it (as its last token response said).
  */
 export async function agencyToken(
-  deps: Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now">,
+  deps: Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now" | "sleep">,
   organizationId: string,
 ): Promise<{ token: string; companyId: string; scopes: readonly string[] }> {
-  const stored = await storedGrant(deps, organizationId);
-  let grant = stored.grant;
+  let { grant } = await storedGrant(deps, organizationId);
   const now = deps.now?.() ?? Date.now();
-  if (grant.expiresAt - REFRESH_EARLY_MS <= now) {
-    grant = await refreshGrant(deps.ghl, grant, deps.http, now);
-    await deps.secrets.set(stored.secretRef, JSON.stringify(grant));
-  }
+  if (grant.expiresAt - REFRESH_EARLY_MS <= now) grant = await renewGrant(deps, organizationId);
   return { token: grant.accessToken, companyId: grant.companyId, scopes: grantScopes(grant) };
+}
+
+const isFresh = (grant: AgencyGrant, now: number) => grant.expiresAt - REFRESH_EARLY_MS > now;
+
+/**
+ * Renews the organisation's grant, one process at a time. GHL's refresh token is single-use, so
+ * when the web app and the agent server both find the grant near expiry, the one that takes the
+ * lease renews it and the other waits for the new grant instead of spending the token again.
+ */
+async function renewGrant(
+  deps: Pick<ConnectDeps, "db" | "secrets" | "ghl" | "http" | "now" | "sleep">,
+  organizationId: string,
+): Promise<AgencyGrant> {
+  const clock = () => deps.now?.() ?? Date.now();
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const mine = eq(agencyGhlConnection.organizationId, organizationId);
+  for (let waited = 0; ; waited += REFRESH_POLL_MS) {
+    const now = clock();
+    const taken = await deps.db
+      .update(agencyGhlConnection)
+      .set({ refreshLeaseUntil: new Date(now + REFRESH_LEASE_MS) })
+      .where(
+        and(
+          mine,
+          or(
+            isNull(agencyGhlConnection.refreshLeaseUntil),
+            lte(agencyGhlConnection.refreshLeaseUntil, new Date(now)),
+          ),
+        ),
+      )
+      .returning({ organizationId: agencyGhlConnection.organizationId });
+    if (taken.length > 0) {
+      try {
+        // Another process may have renewed it between our first read and taking the lease.
+        const stored = await storedGrant(deps, organizationId);
+        if (isFresh(stored.grant, now)) return stored.grant;
+        const grant = await refreshGrant(deps.ghl, stored.grant, deps.http, now);
+        await deps.secrets.set(stored.secretRef, JSON.stringify(grant));
+        return grant;
+      } finally {
+        await deps.db.update(agencyGhlConnection).set({ refreshLeaseUntil: null }).where(mine);
+      }
+    }
+    // Someone else is renewing: use their grant once it lands. A lease left by a process that
+    // died expires, and the next pass takes it over.
+    const { grant } = await storedGrant(deps, organizationId);
+    if (isFresh(grant, now)) return grant;
+    if (waited > 2 * REFRESH_LEASE_MS) {
+      throw new ConnectError("GoHighLevel's sign-in is being renewed. Try again in a moment.");
+    }
+    await sleep(REFRESH_POLL_MS);
+  }
 }
 
 /**

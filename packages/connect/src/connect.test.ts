@@ -252,6 +252,44 @@ describe("connecting GoHighLevel", () => {
     expect(renewed.token).not.toBe(first.token);
     expect(await secrets.get(ghlSecretRef("agency-a"))).toContain(renewed.token);
   });
+
+  it("renews once when two processes find the token expiring at the same moment", async () => {
+    await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
+    clock += 24 * 3_600_000;
+    // GHL answers the refresh slowly, so the second caller arrives while the first is renewing.
+    const ghlFetch = deps.http?.fetch as typeof fetch;
+    let refreshes = 0;
+    deps.http = {
+      ...deps.http,
+      fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(init?.body ?? "").includes("refresh_token")) {
+          refreshes++;
+          await new Promise((r) => setTimeout(r, 20));
+        }
+        return ghlFetch(input, init);
+      }) as typeof fetch,
+    };
+    deps.sleep = (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 5)));
+    const [a, b] = await Promise.all([
+      agencyToken(deps, "agency-a"),
+      agencyToken(deps, "agency-a"),
+    ]);
+    expect(refreshes).toBe(1);
+    expect(a.token).toBe(b.token);
+    const [row] = await db.select().from(agencyGhlConnection);
+    expect(row?.refreshLeaseUntil).toBeNull();
+  });
+
+  it("takes over a renewal left behind by a process that stopped", async () => {
+    await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
+    const first = await agencyToken(deps, "agency-a");
+    await db
+      .update(agencyGhlConnection)
+      .set({ refreshLeaseUntil: new Date(clock - 1) })
+      .where(eq(agencyGhlConnection.organizationId, "agency-a"));
+    clock += 24 * 3_600_000;
+    expect((await agencyToken(deps, "agency-a")).token).not.toBe(first.token);
+  });
 });
 
 describe("sub-account sessions", () => {
