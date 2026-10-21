@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "d40a624e-d9a9-42f1-b374-82680b364856",
+  "id": "57f9072c-8e3b-4148-8782-aa7ce0b6744c",
   "prevId": "b0e1b769-0658-41dc-bcb6-5e725079914e",
   "tables": {
     "account": {
@@ -1463,14 +1463,6 @@
           "autoincrement": false,
           "default": "'draft'"
         },
-        "origin": {
-          "name": "origin",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'studio'"
-        },
         "booking_calendars": {
           "name": "booking_calendars",
           "type": "text",
@@ -1602,6 +1594,137 @@
         "site_backend_location_id_location_id_fk": {
           "name": "site_backend_location_id_location_id_fk",
           "tableFrom": "site_backend",
+          "tableTo": "location",
+          "columnsFrom": [
+            "location_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "site_backend_restore": {
+      "name": "site_backend_restore",
+      "columns": {
+        "site_id": {
+          "name": "site_id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "current_since": {
+          "name": "current_since",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "kept_db_name": {
+          "name": "kept_db_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "kept_db_hostname": {
+          "name": "kept_db_hostname",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "kept_since": {
+          "name": "kept_since",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "restored_to": {
+          "name": "restored_to",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "restored_at": {
+          "name": "restored_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "busy_until": {
+          "name": "busy_until",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "env_stale": {
+          "name": "env_stale",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
+        "retired": {
+          "name": "retired",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        }
+      },
+      "indexes": {
+        "site_backend_restore_kept_db_name_unique": {
+          "name": "site_backend_restore_kept_db_name_unique",
+          "columns": [
+            "kept_db_name"
+          ],
+          "isUnique": true
+        },
+        "site_backend_restore_location_idx": {
+          "name": "site_backend_restore_location_idx",
+          "columns": [
+            "location_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "site_backend_restore_site_id_site_id_fk": {
+          "name": "site_backend_restore_site_id_site_id_fk",
+          "tableFrom": "site_backend_restore",
+          "tableTo": "site",
+          "columnsFrom": [
+            "site_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "site_backend_restore_location_id_location_id_fk": {
+          "name": "site_backend_restore_location_id_location_id_fk",
+          "tableFrom": "site_backend_restore",
           "tableTo": "location",
           "columnsFrom": [
             "location_id"
