@@ -1,10 +1,10 @@
 import { useAimock } from "@locus/testing";
-import { Agent } from "@mastra/core/agent";
+import { Agent, type ToolsInput } from "@mastra/core/agent";
 import { createTool } from "@mastra/core/tools";
 import { expect, test } from "vitest";
 import { z } from "zod";
 import { createLocusAgent } from "./agent.ts";
-import { stopAtStepLimit, stopOnRepeatedFailures } from "./run-limits.ts";
+import { RUN_STOP_CONDITIONS, stopAtStepLimit, stopOnRepeatedFailures } from "./run-limits.ts";
 
 const mock = useAimock();
 
@@ -26,22 +26,23 @@ const runCommand = createTool({
 
 let runs = 0;
 
-/** The model calls run_command with `args(n)` on its nth step, for up to `steps` steps. */
-function loopOn(args: (n: number) => string, steps = 12) {
+/** The model calls `tool` with `args(n)` on its nth step for `steps` steps, then says it's done. */
+function loopOn(args: (n: number) => string, steps = 12, tool = "run_command") {
   // Ids unique to this test, so one test's turns never answer another's.
   const id = (n: number) => `run${runs}_call_${n}`;
   runs++;
   const prompt = `Build it ${runs}`;
   mock().llm.on(
     { userMessage: prompt, hasToolResult: false },
-    { toolCalls: [{ id: id(1), name: "run_command", arguments: args(1) }] },
+    { toolCalls: [{ id: id(1), name: tool, arguments: args(1) }] },
   );
   for (let n = 1; n < steps; n++) {
     mock().llm.on(
       { toolCallId: id(n) },
-      { toolCalls: [{ id: id(n + 1), name: "run_command", arguments: args(n + 1) }] },
+      { toolCalls: [{ id: id(n + 1), name: tool, arguments: args(n + 1) }] },
     );
   }
+  mock().llm.on({ toolCallId: id(steps) }, { content: "Done." });
   return prompt;
 }
 
@@ -94,7 +95,42 @@ test("a step that works starts the count again", async () => {
   expect(result.steps).toHaveLength(6);
 });
 
-test("an { error } result is a failure", () => {
+const softFail = createTool({
+  id: "fetch_reference",
+  description: "Fetches a page.",
+  inputSchema: z.object({ url: z.string() }),
+  execute: async () => ({ error: "That site blocks visitors like us." }),
+});
+
+const agentWith = (tools: ToolsInput) =>
+  new Agent({
+    id: "a",
+    name: "a",
+    instructions: "Build things.",
+    model: model(),
+    tools,
+    defaultOptions: { stopWhen: stopOnRepeatedFailures() },
+  });
+
+test("a tool that returns { error } for the same input three times stops the run", async () => {
+  const prompt = loopOn(() => '{"url":"https://a.test"}', 12, "fetch_reference");
+  const result = await agentWith({ fetch_reference: softFail }).generate(prompt, {
+    maxSteps: 1000,
+  });
+  expect(result.steps).toHaveLength(3);
+});
+
+test("the same tool failing on different inputs is not a loop", async () => {
+  // Five different references that all refuse: each is a new try, so the run goes on.
+  const prompt = loopOn((n) => JSON.stringify({ url: `https://${n}.test` }), 5, "fetch_reference");
+  const result = await agentWith({ fetch_reference: softFail }).generate(prompt, {
+    maxSteps: 1000,
+  });
+  expect(result.text).toBe("Done.");
+  expect(result.steps).toHaveLength(6);
+});
+
+test("an { error } result is a failure, wrapped by the GHL screen or not", () => {
   const step = (value: unknown) =>
     ({
       content: [
@@ -111,6 +147,8 @@ test("an { error } result is a failure", () => {
   const stop = stopOnRepeatedFailures(2);
   expect(stop({ steps: [step({ error: "no" }), step({ error: "no" })] })).toBe(true);
   expect(stop({ steps: [step({ error: "no" }), step({ ok: true })] })).toBe(false);
+  const screened = { warning: "untrusted", result: { error: "no" } };
+  expect(stop({ steps: [step(screened), step(screened)] })).toBe(true);
 });
 
 test("a run stops at the step limit even when every step works", async () => {
@@ -135,5 +173,5 @@ test("the Locus agent carries both stops by default", async () => {
     session: { token: "tok", tokenKind: "location", locationId: "loc-A" },
   });
   const { stopWhen } = await agent.getDefaultOptions();
-  expect(Array.isArray(stopWhen) ? stopWhen : [stopWhen]).toHaveLength(2);
+  expect(stopWhen).toBe(RUN_STOP_CONDITIONS);
 });
