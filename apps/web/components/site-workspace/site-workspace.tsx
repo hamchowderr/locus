@@ -6,7 +6,7 @@ import { SitePreview } from "@/components/site-preview/site-preview";
 import { Button } from "@/components/ui/button";
 import { VisualEditor } from "@/components/visual-edits/visual-editor";
 import { cn } from "@/lib/utils";
-import { SiteChat, useSiteChat } from "./site-chat";
+import { type ChatVersions, SiteChat, useSiteChat } from "./site-chat";
 
 type ChatSetting =
   /** The site's chat, in the site builder's mode; `refusal` says why this member can't build. */
@@ -22,11 +22,14 @@ type ChatSetting =
 export function SiteWorkspace({
   siteId,
   chat: setting,
+  versions,
   className,
   ...preview
 }: Omit<ComponentProps<typeof SitePreview>, "className"> & {
   siteId: string;
   chat: ChatSetting;
+  /** The site's saved versions, as its chat's version cards need them. */
+  versions: Omit<ChatVersions, "shown">;
   className?: string;
 }) {
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
@@ -81,8 +84,10 @@ export function SiteWorkspace({
         />
       )}
       <SiteChat
+        siteId={siteId}
         chat={chat}
         refusal={refusal}
+        versions={{ ...versions, shown: preview.version }}
         className="h-[70vh] border-t lg:h-auto lg:w-[400px] lg:shrink-0 lg:border-t-0 lg:border-l"
       />
     </div>
