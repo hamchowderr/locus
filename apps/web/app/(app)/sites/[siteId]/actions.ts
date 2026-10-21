@@ -47,7 +47,9 @@ async function versionAction(
   const siteId = text(form, "siteId");
   // The Versions page, or the site's preview when the change was made from its version picker.
   const asked = sitesReturn(text(form, "returnTo"));
-  const path = asked.startsWith(`/sites/${siteId}`) && siteId ? asked : versionsPath(siteId);
+  const home = `/sites/${siteId}`;
+  const path =
+    siteId && (asked === home || asked.startsWith(`${home}/`)) ? asked : versionsPath(siteId);
   let done: string;
   try {
     const { ctx, client } = await signedIn(path);

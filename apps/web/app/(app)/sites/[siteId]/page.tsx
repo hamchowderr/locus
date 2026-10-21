@@ -129,6 +129,12 @@ export default async function BuildSite({
                 Showing version {version}
                 {shown ? `: ${shown.message}` : ""}
               </span>
+              {history?.unsaved && (
+                <span className="basis-full text-muted-foreground text-xs sm:order-last">
+                  The site builder has changes it hasn't saved yet. Restoring keeps them as a
+                  version first.
+                </span>
+              )}
               <Button asChild size="sm" variant="ghost">
                 <Link href={home}>Back to latest</Link>
               </Button>
