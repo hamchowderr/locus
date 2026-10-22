@@ -550,6 +550,24 @@ describe("previewFiles", () => {
     );
     // The draft itself is untouched.
     expect(draft.find((f) => f.path === "next.config.ts")?.content).toBe(own);
+    // An edit to the site's settings changes the file next dev watches, so it restarts.
+    const wrapperOf = (files: SiteFile[]) =>
+      withPreviewDevHosts(files, ["*.p.test"]).find((f) => f.path === "next.config.ts")?.content;
+    const edited = draft.map((f) =>
+      f.path === "next.config.ts" ? { ...f, content: `${f.content}// images\n` } : f,
+    );
+    expect(wrapperOf(edited)).not.toBe(wrapperOf(draft));
+    expect(wrapperOf(draft)).toBe(wrapperOf(draft));
+    // Next takes next.config.mjs before .ts, and loads .js itself: the one Next takes is wrapped.
+    const both = [
+      { path: "next.config.ts", content: "export default {};\n" },
+      { path: "next.config.mjs", content: "export default {};\n" },
+    ];
+    expect(
+      withPreviewDevHosts(both, ["*.p.test"]).find((f) => f.path === "next.config.mjs")?.content,
+    ).toContain("allowedDevOrigins");
+    const js = [{ path: "next.config.js", content: "module.exports = {};\n" }, ...both];
+    expect(withPreviewDevHosts(js, ["*.p.test"])).toBe(js);
 
     // Both forms of a site's config get the hosts added to their own.
     const dir = await mkdtemp(join(tmpdir(), "locus-next-config-"));

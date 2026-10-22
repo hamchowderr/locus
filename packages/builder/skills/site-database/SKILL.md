@@ -22,8 +22,10 @@ area, saved items, or the site's own bookings or orders the person asked for.
     `signIn.email`, `signOut`, `useSession`)
   - `instrumentation.ts`, `lib/local-migrations.ts` and `app/api/locus/preview-migrations`:
     these keep the preview's database up to date.
-- Then preview. In the preview the database is a throwaway local file, so test sign-ups
-  there reach no one.
+- Then preview. In the preview the database is a local test file, so test sign-ups there
+  reach no one. It keeps its rows and uploads while the preview runs, and starts again by
+  itself when its migrations no longer match the site's (after an earlier version is
+  restored, say).
 - The published site gets its own database on Otaku's account the first time it's published.
   Locus applies the migrations, then gives the site its address, key and login secret. Never
   write a database URL, token or secret in code or in `.env` files: the site needs none.
@@ -138,4 +140,9 @@ Media Library.
   `user: { create: { after: memberSignedUp } }` to its `databaseHooks` (or add
   `databaseHooks: { user: { create: { after: memberSignedUp } } },` when it has none).
   The preview sends nothing to HighLevel.
+- In the preview, a member's sign-in is kept inside Locus's editor only when `lib/auth.ts`
+  sets the preview's cookie (`partitioned: true` in it). A site made earlier gets that from
+  `database add`. If `lib/auth.ts` was changed and still lacks it, add this inside its
+  `betterAuth({...})`:
+  `...(isPreviewDatabase ? { advanced: { defaultCookieAttributes: { sameSite: "none", secure: true, partitioned: true } } } : {}),`
 - Never import `lib/db.ts` or `lib/auth.ts` from a "use client" file.

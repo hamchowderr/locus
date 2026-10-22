@@ -309,6 +309,50 @@ describe("the generated preview database", () => {
     }
   });
 
+  it("starts the preview's database again when its migrations no longer match the site's", async () => {
+    const { applyLocalMigrations } = await import(join(root, "lib/local-migrations.ts"));
+    const { client } = await import(join(root, "lib/db.ts"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await writeFile(
+        "db/migrations/0001_bookings.sql",
+        "CREATE TABLE `booking` (`id` text PRIMARY KEY NOT NULL);",
+      );
+      await writeFile(
+        "db/migrations/0002_search.sql",
+        "CREATE VIRTUAL TABLE `booking_search` USING fts5(`note`);",
+      );
+      expect((await applyLocalMigrations()).applied).toEqual([
+        "0000_logins",
+        "0001_bookings",
+        "0002_search",
+      ]);
+      await client.execute(`insert into "user" (id, name, email) values ('u1', 'Ann', 'a@x.test')`);
+      // Unchanged migrations keep the rows.
+      expect(await applyLocalMigrations()).toEqual({ applied: [] });
+      expect(warn).not.toHaveBeenCalled();
+
+      // An earlier version is restored (both gone), then bookings come back written differently.
+      await rm("db/migrations/0002_search.sql");
+      await writeFile(
+        "db/migrations/0001_bookings.sql",
+        "CREATE TABLE `booking` (`id` text PRIMARY KEY NOT NULL, `day` text);",
+      );
+      expect((await applyLocalMigrations()).applied).toEqual(["0000_logins", "0001_bookings"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("started again"));
+      const users = await client.execute(`select count(*) as n from "user"`);
+      expect(Number(users.rows[0]?.n)).toBe(0);
+      const left = await client.execute(
+        "select name from sqlite_master where type = 'table' and name like 'booking%'",
+      );
+      expect(left.rows.map((row: { name: unknown }) => row.name)).toEqual(["booking"]);
+      await client.execute(`insert into booking (id, day) values ('b1', 'mon')`);
+    } finally {
+      warn.mockRestore();
+      client.close();
+    }
+  });
+
   it("applies migrations once when two runs start together, and skips folders", async () => {
     await mkdir("db/migrations/meta", { recursive: true });
     await writeFile("db/migrations/meta/_journal.json", "{}");

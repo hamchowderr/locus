@@ -245,14 +245,24 @@ export async function applyLocalMigrations() {
     }
     numbers.add(file.slice(0, 4));
   }
+  const migrations = await Promise.all(
+    files.map(async (file) => {
+      const sql = await readFile(join(DIR, file), "utf8");
+      return { name: file.slice(0, -4), sql, hash: createHash("sha256").update(sql).digest("hex") };
+    }),
+  );
+  // A migration that ran here but is gone or different now (an earlier version of the site was
+  // restored, say) means this database no longer matches the site. It only holds test data, so
+  // it starts again. Publishing still refuses a migration changed after it ran on the live site.
+  const current = new Map(migrations.map((m) => [m.name, m.hash]));
+  if ([...done].some(([name, hash]) => current.get(name) !== hash)) {
+    console.warn("The preview's database no longer matched db/migrations, so it started again.");
+    await resetLocalDatabase();
+    done.clear();
+  }
   const applied: string[] = [];
-  for (const file of files) {
-    const name = file.slice(0, -4);
-    const sql = await readFile(join(DIR, file), "utf8");
-    const hash = createHash("sha256").update(sql).digest("hex");
-    const was = done.get(name);
-    if (was === hash) continue;
-    if (was) throw new Error(\`\${name} was changed after it ran. Add a new migration instead.\`);
+  for (const { name, sql, hash } of migrations) {
+    if (done.get(name) === hash) continue;
     const statements: InStatement[] = sql
       .split(BREAKPOINT)
       .map((s) => s.trim())
@@ -274,6 +284,22 @@ export async function applyLocalMigrations() {
     applied.push(name);
   }
   return { applied };
+}
+
+/** Drops every table in the preview's database, then makes the ledger again. */
+async function resetLocalDatabase() {
+  const tables = await client.execute(
+    "select name, sql from sqlite_master where type = 'table' and name not like 'sqlite_%'",
+  );
+  // Virtual tables (full-text search) first: dropping one drops the tables it keeps itself.
+  const names = tables.rows
+    .map((row) => ({ name: String(row.name), virtual: /^create virtual/i.test(String(row.sql ?? "")) }))
+    .sort((a, b) => Number(b.virtual) - Number(a.virtual))
+    .map((t) => t.name);
+  await client.migrate(names.map((name) => \`drop table if exists "\${name.replaceAll('"', '""')}"\`));
+  await client.execute(
+    \`create table if not exists \${LEDGER} (name text primary key, hash text not null, applied_at integer not null)\`,
+  );
 }
 `,
 });
@@ -749,6 +775,7 @@ export async function uploadFile(file: File): Promise<UploadedFile> {
 
 /** Files Locus keeps up to date on every `database add`: the site's skill says never edit them. */
 const LOCUS_FILES = new Set([
+  "lib/local-migrations.ts",
   "lib/members.ts",
   "lib/files.ts",
   "lib/files-client.ts",
