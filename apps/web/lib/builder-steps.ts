@@ -135,7 +135,8 @@ export function buildError(output: unknown, step?: unknown): string {
   const lines = (typeof output === "string" ? output : "")
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line && line !== "…");
+    // The screen around tool output (`<<<untrusted …>>>`, `<<<end untrusted>>>`) isn't the build's.
+    .filter((line) => line && line !== "…" && !line.startsWith("<<<"));
   const line =
     lines.find((l) => /error/i.test(l)) ??
     lines.find((l) => /cannot|can't|not found|failed/i.test(l)) ??
@@ -200,14 +201,18 @@ function wroteFiles(name: string, action: unknown): boolean {
 }
 
 /**
- * Whether a call changed the site's files, so the preview needs loading again: a file written,
- * edited or deleted, a version restored, or a tool from OTHER_CHANGES that wrote files.
+ * Whether a call changed the site, so the preview and its version picker need loading again: a
+ * file written, edited or deleted, a version saved or restored, or a tool from OTHER_CHANGES
+ * that wrote files.
  */
 export function changedFiles(call: Call, result: Result): boolean {
   if (!result || callFailed(result)) return false;
   const action = ((call.args ?? {}) as { action?: unknown }).action;
   if (call.name === "files") return action === "write" || action === "edit" || action === "delete";
-  if (call.name === "versions") return action === "restore";
+  if (call.name === "versions") {
+    if (action === "restore") return true;
+    return action === "save" && (result.result as { saved?: unknown })?.saved === true;
+  }
   return OTHER_CHANGES.has(call.name) && wroteFiles(call.name, action);
 }
 

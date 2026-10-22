@@ -56,9 +56,10 @@ export function SiteWorkspace({
   });
   // Changing the site needs the right to build it, and the current version in the preview.
   const canChange = mode !== null && refusal === null;
-  // A build that failed stays in view over the preview until a later check passes, so the
-  // preview is never taken for a site that builds.
-  const brokenBuild = lastCheckFailure(chat.controller.transcript.messages);
+  // A build that failed stays in view over the draft's preview until a later check passes, so
+  // the preview is never taken for a site that builds. A saved version is not what was checked.
+  const brokenBuild =
+    preview.version === null ? lastCheckFailure(chat.controller.transcript.messages) : null;
 
   return (
     <div className={cn("flex min-h-0 flex-col lg:flex-row", className)}>
