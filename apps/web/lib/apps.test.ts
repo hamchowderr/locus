@@ -72,6 +72,9 @@ function fakeConnections(connected = false) {
       calls.push(`connect ${clientId} ${toolkit} ${callbackUrl}`);
       return "https://accounts.google.test/o";
     },
+    disconnectAll: async (clientId) => {
+      calls.push(`disconnectAll ${clientId}`);
+    },
     disconnect: async (clientId, toolkit) => {
       calls.push(`disconnect ${clientId} ${toolkit}`);
     },

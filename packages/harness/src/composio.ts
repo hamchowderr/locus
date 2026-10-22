@@ -423,6 +423,13 @@ export function createComposioConnections({
         await composio.connectedAccounts.delete(account.id);
       }
     },
+
+    /** Removes every account the client has, for any app, when the client itself goes. */
+    async disconnectAll(clientId: string): Promise<void> {
+      for (const account of await accounts(clientId)) {
+        await composio.connectedAccounts.delete(account.id);
+      }
+    },
   };
 }
 

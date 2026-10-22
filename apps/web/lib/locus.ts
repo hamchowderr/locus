@@ -1,5 +1,5 @@
 import { createAuth, emailFromEnv, type SessionContext } from "@locus/auth";
-import { type ControlDb, DEV_CONTROL_DB_URL, openControlDb } from "@locus/db";
+import { type ControlDb, DEV_CONTROL_DB_URL, openControlDb, provisionerFromEnv } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { headers } from "next/headers";
 import { cache } from "react";
@@ -54,8 +54,12 @@ function build() {
     billing: billingFromEnv(),
     // An agency's sealed tokens have no foreign key to it, so they go first, and once more after
     // for one a renewal saved meanwhile. The agency is gone by then, so a failure there is logged
-    // rather than reported as a failed deletion.
-    beforeAgencyDeleted: (organizationId) => removeAgencySecrets(db, organizationId),
+    // rather than reported as a failed deletion. Its clients' databases and connected apps live
+    // outside the control database, so they go before it too.
+    beforeAgencyDeleted: async (organizationId) => {
+      await removeAgencySecrets(db, organizationId);
+      await offboardClients(db, organizationId);
+    },
     afterAgencyDeleted: (organizationId) =>
       removeAgencySecrets(db, organizationId).catch((error: unknown) => {
         console.error("Removing a deleted agency's credentials failed", error);
@@ -71,6 +75,23 @@ async function removeAgencySecrets(db: ControlDb, organizationId: string): Promi
     import("./connect"),
   ]);
   await deleteAgencySecrets({ db, secrets: secretStore(db) }, organizationId);
+}
+
+async function offboardClients(db: ControlDb, organizationId: string): Promise<void> {
+  const [{ offboardAgencyClients }, { configured }, { appConnectionsFromEnv }] = await Promise.all([
+    import("@locus/connect"),
+    import("./connect"),
+    import("./apps"),
+  ]);
+  const apps = appConnectionsFromEnv();
+  await offboardAgencyClients(
+    {
+      db,
+      provisioner: configured(() => provisionerFromEnv(".data/tenants")),
+      ...(apps ? { disconnectApps: (clientId: string) => apps.disconnectAll(clientId) } : {}),
+    },
+    organizationId,
+  );
 }
 
 let instance: { db: ControlDb; auth: ReturnType<typeof createAuth> } | undefined;
