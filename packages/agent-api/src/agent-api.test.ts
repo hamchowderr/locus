@@ -791,6 +791,56 @@ describe("work threads, through the chat kit's routes", () => {
     expect(asked.toolCallId).toBe("w5-msg");
   });
 
+  test("a report from a thread that read public text taints the supervisor's next turn", async () => {
+    mock().llm.on(
+      { userMessage: /look over the form leads/i, hasToolResult: false },
+      startThread("w6-start", "Form leads", "Summarise the form submissions."),
+    );
+    mock().llm.on({ toolCallId: "w6-start" }, { content: "Started it." });
+    mock().llm.on(
+      { userMessage: /^Summarise the form submissions\.$/, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w6-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [{ as: "t", operation: "forms.get-forms-submissions" }],
+              sql: "SELECT name FROM t",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w6-read" }, { content: "One lead, Ann." });
+    const ghl = createFakeGhl({
+      "GET /forms/submissions": { body: { submissions: [{ id: "s1", name: "Ann" }] } },
+      "*": { body: {} },
+    });
+    const { api } = apiFor(ghl, {}, undefined, { workThreads: true });
+    const started = kitEvents(
+      await kit(api, "stream", { text: "Look over the form leads", mode: "supervisor" }),
+    );
+    await started.until((e) => e.type === "__done__");
+    const work = await workThreadReaching(api, "done");
+
+    // The report is the only thing the main chat read since, and it carries the thread's taint.
+    mock().llm.on(
+      { userMessage: /now follow up with them/i, hasToolResult: false },
+      startThread("w6-next", "Lead follow-up", "Follow up with the form leads."),
+    );
+    mock().llm.on({ toolCallId: "w6-next" }, { content: "Started it." });
+    const main = kitEvents(
+      await kit(api, "stream", {
+        text: "Now follow up with them",
+        threadId: work.parentThreadId,
+        mode: "supervisor",
+      }),
+    );
+    const asked = await main.until((e) => e.type === "tool_approval_required");
+    expect(asked.toolCallId).toBe("w6-next");
+  });
+
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {
     mock().llm.on(
       { userMessage: /clean out contact c7/i, hasToolResult: false },

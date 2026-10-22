@@ -24,7 +24,7 @@ export const READ_MESSAGES = 12;
 
 export type SteeringDeps = {
   storage: MastraStorage;
-  /** Sends a work thread a message, running it now or after the step it is on. */
+  /** Sends a work thread a message, running it now or once the run in progress ends. */
   message: (input: {
     threadId: string;
     resourceId: string;
@@ -142,7 +142,7 @@ export function createSteeringTools(deps: SteeringDeps) {
   const messageThread = createTool({
     id: MESSAGE_THREAD_TOOL,
     description:
-      "Send one of this chat's threads a message: a change of plan, an answer it needs, or something to use. An idle thread starts working on it; a working one takes it after the step it is on. It reports back here when it finishes. Not for a thread that is queued (it has not started) or waiting for the person (they answer in the thread).",
+      "Send one of this chat's threads a message: a change of plan, an answer it needs, or something to use. An idle thread starts working on it; a working one takes it up as soon as it finishes what it is doing. It reports back here when it finishes. Not for a thread that is queued (it has not started) or waiting for the person (they answer in the thread).",
     inputSchema: z.object({
       threadId: z.string().min(1).max(64),
       message: z
@@ -174,7 +174,7 @@ export function createSteeringTools(deps: SteeringDeps) {
         text: `From the main chat: ${message}`,
         ...(requestContext ? { requestContext } : {}),
       });
-      return { threadId, title: info.title, delivered: running ? 'after_current_step' : 'now' };
+      return { threadId, title: info.title, delivered: running ? 'after_current_work' : 'now' };
     },
   });
 
