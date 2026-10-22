@@ -6,7 +6,7 @@ import {
   listHostProjects,
   listSites,
 } from "@locus/connect";
-import { Globe, Plus } from "lucide-react";
+import { Funnel, Globe, MessageSquare, Plus } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { linkSiteProject } from "@/app/actions";
@@ -15,25 +15,38 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { siteDeps } from "@/lib/hosts";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
-import { siteNames } from "@/lib/site-builder";
+import { type SiteSummary, siteSummaries } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { SITE_STATUS } from "./[siteId]/site";
+import { MadeIn } from "./made-in";
 
 const when = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeZone: "UTC" });
 
+/** The Library's tabs: what a thread can make, by the site kinds each holds. */
+const TABS = [
+  { id: "sites", name: "Sites", empty: "No sites yet", icon: Globe },
+  { id: "funnels", name: "Funnels", empty: "No funnels yet", icon: Funnel },
+] as const;
+type Tab = (typeof TABS)[number]["id"];
+
+const tabOf = (kind: SiteSummary["kind"] | undefined): Tab =>
+  kind === "funnel" ? "funnels" : "sites";
+
 /**
- * The sub-account's sites, as cards grouped by folder. Opening one goes to its workspace (the
+ * The Library: everything the sub-account's threads made, as cards on a tab per kind, grouped
+ * by folder. Each card says which thread made it; opening one goes to its workspace (the
  * preview with its chat beside it); everything else about a site is on its Settings tab.
  */
 export default async function Sites({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; deleted?: string; copied?: string }>;
+  searchParams: Promise<{ error?: string; deleted?: string; copied?: string; tab?: string }>;
 }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fsites");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, deleted, copied } = await searchParams;
+  const { error, deleted, copied, tab: askedTab } = await searchParams;
+  const tab: Tab = TABS.some((t) => t.id === askedTab) ? (askedTab as Tab) : "sites";
   const ctx = sessionContext(current);
   const db = locus().db;
   const client = await resolveActiveClient(db, ctx).catch((e) => {
@@ -48,24 +61,32 @@ export default async function Sites({
       throw e;
     },
   );
-  const sites = await listSites(db, client);
+  const allSites = await listSites(db, client);
   const builderOn = client.location.siteBuilder;
-  // Names live in the brief, in the sub-account's own database.
-  const names = await siteNames(
+  // Names and kinds live in the brief, in the sub-account's own database.
+  const names = await siteSummaries(
     siteBuilderDeps(),
     client,
-    sites.map((s) => s.id),
+    allSites.map((s) => s.id),
   ).catch((e) => {
-    if (e instanceof NotConfigured) return new Map<string, string>();
-    console.error("Sites page: reading site names failed", e);
+    if (e instanceof NotConfigured) return new Map<string, SiteSummary>();
+    console.error("Library: reading site names failed", e);
     return null;
   });
+  // A site with no brief (linked from Vercel, or unreadable) is listed with the sites.
+  const sites = allSites.filter((s) => tabOf(names?.get(s.id)?.kind) === tab);
+  const counts = new Map<Tab, number>();
+  for (const s of allSites) {
+    const t = tabOf(names?.get(s.id)?.kind);
+    counts.set(t, (counts.get(t) ?? 0) + 1);
+  }
+  const shown = TABS.find((t) => t.id === tab) ?? TABS[0];
   // Projects on the agency's Vercel team that aren't a site yet, for owners and admins.
   let linkable: HostProject[] = [];
   let projectProblem: string | null = null;
   if (manager) {
     try {
-      const linked = new Set(sites.map((s) => s.hostProjectId));
+      const linked = new Set(allSites.map((s) => s.hostProjectId));
       linkable = (await listHostProjects(siteDeps(), ctx)).projects.filter(
         (p) => !linked.has(p.id),
       );
@@ -76,7 +97,7 @@ export default async function Sites({
   }
   const projectNames = new Map(linkable.map((p) => [p.id, p.name]));
   const nameOf = (s: ListedSite) =>
-    names?.get(s.id) ??
+    names?.get(s.id)?.name ??
     projectNames.get(s.hostProjectId ?? "") ??
     s.hostProjectId ??
     "Untitled site";
@@ -96,20 +117,48 @@ export default async function Sites({
 
   return (
     <Page
-      title="Sites"
+      title="Library"
       width="wide"
-      description="Open a site to build it: the preview with its own chat beside it."
+      description="Everything this sub-account's threads have made. Ask in Chat for a new site or funnel, and a thread builds it."
       actions={
         builderOn && (
-          <Button asChild>
-            <Link href="/sites/new">
-              <Plus data-icon="inline-start" />
-              New site
-            </Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild variant="outline">
+              <Link href="/sites/new">
+                <Plus data-icon="inline-start" />
+                New site
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link href="/chat">
+                <MessageSquare data-icon="inline-start" />
+                Ask in Chat
+              </Link>
+            </Button>
+          </div>
         )
       }
     >
+      <nav aria-label="Library" className="flex gap-1 border-b">
+        {TABS.map((t) => (
+          <Link
+            key={t.id}
+            href={t.id === "sites" ? "/sites" : `/sites?tab=${t.id}`}
+            aria-current={t.id === tab ? "page" : undefined}
+            className={`-mb-px flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm transition-colors ${
+              t.id === tab
+                ? "border-foreground font-medium"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <t.icon className="size-4" aria-hidden />
+            {t.name}
+            {(counts.get(t.id) ?? 0) > 0 && (
+              <span className="text-xs text-muted-foreground">{counts.get(t.id)}</span>
+            )}
+          </Link>
+        ))}
+      </nav>
       {error && <Notice tone="error">{error}</Notice>}
       {deleted && <Notice tone="info">Site deleted.</Notice>}
       {copied === "elsewhere" && (
@@ -135,11 +184,11 @@ export default async function Sites({
 
       {sites.length === 0 && (
         <div className="rounded-lg border border-dashed p-10 text-center">
-          <Globe className="mx-auto size-8 text-muted-foreground" />
-          <p className="mt-3 font-medium">No sites yet</p>
+          <shown.icon className="mx-auto size-8 text-muted-foreground" />
+          <p className="mt-3 font-medium">{shown.empty}</p>
           <p className="mt-1 text-sm text-muted-foreground">
             {builderOn
-              ? "Create one and shape it in its chat, with the preview beside you."
+              ? "Ask for one in Chat: a thread builds it, and it shows here."
               : "Turn the site builder on to create one."}
           </p>
         </div>
@@ -154,8 +203,9 @@ export default async function Sites({
           )}
           <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {group.sites.map((s) => (
-              <li key={s.id}>
+              <li key={s.id} className="flex flex-col gap-1.5">
                 <SiteCard site={s} name={nameOf(s)} />
+                <MadeIn siteId={s.id} />
               </li>
             ))}
           </ul>
@@ -216,7 +266,7 @@ function SiteCard({ site, name }: { site: ListedSite; name: string }) {
   return (
     <Link
       href={`/sites/${encodeURIComponent(site.id)}`}
-      className="group flex h-full flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-foreground/30"
+      className="group flex flex-1 flex-col overflow-hidden rounded-lg border bg-card transition-colors hover:border-foreground/30"
     >
       <div className="flex aspect-[16/9] items-center justify-center bg-muted text-3xl font-semibold text-muted-foreground transition-colors group-hover:bg-muted/70">
         {name.trim().charAt(0).toUpperCase() || "S"}
