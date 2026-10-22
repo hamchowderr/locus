@@ -12,6 +12,7 @@ export {
   suspendLocation,
   syncLocations,
 } from "./agency.ts";
+export { deleteAgencySecrets } from "./agency-deleted.ts";
 export {
   type AgencyGrant,
   authorizeUrl,

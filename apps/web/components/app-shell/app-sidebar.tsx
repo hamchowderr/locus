@@ -4,7 +4,7 @@ import {
   Building2,
   ChevronsUpDown,
   CreditCard,
-  Globe,
+  Library,
   LogOut,
   MessagesSquare,
   Plug,
@@ -38,7 +38,7 @@ import { type AppPage, afterSwitch, isCurrent, menuSections } from "@/lib/app-pa
 
 const ICONS: Record<AppPage["icon"], typeof MessagesSquare> = {
   chat: MessagesSquare,
-  sites: Globe,
+  sites: Library,
   connectors: Plug,
   "sub-accounts": Building2,
   team: Users,

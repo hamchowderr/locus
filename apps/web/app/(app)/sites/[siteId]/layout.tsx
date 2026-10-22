@@ -32,7 +32,7 @@ export default async function SiteLayout({
           className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          Sites
+          Library
         </Link>
         <div className="flex min-w-0 items-center gap-2">
           <h1 className="truncate font-semibold">

@@ -280,6 +280,27 @@ describe("connecting GoHighLevel", () => {
     expect(row?.refreshLeaseUntil).toBeNull();
   });
 
+  it("drops a renewed grant when the agency was deleted while GHL answered", async () => {
+    await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
+    clock += 24 * 3_600_000;
+    const ghlFetch = deps.http?.fetch as typeof fetch;
+    deps.http = {
+      ...deps.http,
+      fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+        if (String(init?.body ?? "").includes("refresh_token")) {
+          // The agency's deletion removes its credentials, then the agency and its rows.
+          await secrets.delete(ghlSecretRef("agency-a"));
+          await db
+            .delete(agencyGhlConnection)
+            .where(eq(agencyGhlConnection.organizationId, "agency-a"));
+        }
+        return ghlFetch(input, init);
+      }) as typeof fetch,
+    };
+    await expect(agencyToken(deps, "agency-a")).rejects.toThrow(/isn't connected/);
+    expect(await secrets.get(ghlSecretRef("agency-a"))).toBeUndefined();
+  });
+
   it("leaves another process's lease alone when its own renewal outlasted the lease", async () => {
     await connectAgency(deps, ctx("owner", "agency-a"), STUB_CODE);
     clock += 24 * 3_600_000;

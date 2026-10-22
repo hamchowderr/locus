@@ -52,8 +52,25 @@ function build() {
     secret: setting("BETTER_AUTH_SECRET", "local-development-only-secret-not-for-production"),
     sendEmail: emailFromEnv(),
     billing: billingFromEnv(),
+    // An agency's sealed tokens have no foreign key to it, so they go first, and once more after
+    // for one a renewal saved meanwhile. The agency is gone by then, so a failure there is logged
+    // rather than reported as a failed deletion.
+    beforeAgencyDeleted: (organizationId) => removeAgencySecrets(db, organizationId),
+    afterAgencyDeleted: (organizationId) =>
+      removeAgencySecrets(db, organizationId).catch((error: unknown) => {
+        console.error("Removing a deleted agency's credentials failed", error);
+      }),
   });
   return { db, auth };
+}
+
+// Loaded on use: `./connect` imports this module.
+async function removeAgencySecrets(db: ControlDb, organizationId: string): Promise<void> {
+  const [{ deleteAgencySecrets }, { secretStore }] = await Promise.all([
+    import("@locus/connect"),
+    import("./connect"),
+  ]);
+  await deleteAgencySecrets({ db, secrets: secretStore(db) }, organizationId);
 }
 
 let instance: { db: ControlDb; auth: ReturnType<typeof createAuth> } | undefined;

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
 import { consumeAttempt, LONGEST_WINDOW_MS } from "./rate-limit.ts";
@@ -265,6 +266,85 @@ describe("signing in", () => {
     await verifiedOwner();
     const current = await auth.api.getSession({ headers: await signIn() });
     expect(current?.session.activeOrganizationId ?? null).toBeNull();
+  });
+
+  describe("deleting an agency", () => {
+    function withHook(
+      hook: (organizationId: string) => Promise<void>,
+      after?: (organizationId: string) => Promise<void>,
+    ) {
+      auth = createAuth({
+        db,
+        schema,
+        baseURL: "http://localhost:3000",
+        secret: "test-secret-test-secret-test-secret-0000",
+        sendEmail: async (message) => {
+          sent.push(message);
+        },
+        beforeAgencyDeleted: hook,
+        afterAgencyDeleted: after,
+      });
+    }
+
+    async function ownedAgency() {
+      await verifiedOwner();
+      const headers = await signIn();
+      const agency = await auth.api.createOrganization({
+        body: { name: "Acme Agency", slug: "acme-agency" },
+        headers,
+      });
+      return { headers, id: agency?.id ?? "" };
+    }
+
+    it("runs Locus's clean-up for that agency before it is deleted", async () => {
+      const seen: string[] = [];
+      withHook(async (organizationId) => {
+        // Still there when the hook runs, so its credentials can be found by its id.
+        const rows = await db
+          .select()
+          .from(schema.organization)
+          .where(eq(schema.organization.id, organizationId));
+        seen.push(`${organizationId}:${rows.length}`);
+      });
+      const { headers, id } = await ownedAgency();
+
+      await auth.api.deleteOrganization({ body: { organizationId: id }, headers });
+
+      expect(seen).toEqual([`${id}:1`]);
+      expect(await db.select().from(schema.organization)).toEqual([]);
+    });
+
+    it("runs the clean-up again once the agency is gone", async () => {
+      const seen: string[] = [];
+      withHook(
+        async () => {},
+        async (organizationId) => {
+          const rows = await db
+            .select()
+            .from(schema.organization)
+            .where(eq(schema.organization.id, organizationId));
+          seen.push(`${organizationId}:${rows.length}`);
+        },
+      );
+      const { headers, id } = await ownedAgency();
+
+      await auth.api.deleteOrganization({ body: { organizationId: id }, headers });
+
+      expect(seen).toEqual([`${id}:0`]);
+    });
+
+    it("keeps the agency when the clean-up fails", async () => {
+      withHook(async () => {
+        throw new Error("the secret store is unreachable");
+      });
+      const { headers, id } = await ownedAgency();
+
+      await expect(
+        auth.api.deleteOrganization({ body: { organizationId: id }, headers }),
+      ).rejects.toThrow();
+
+      expect(await db.select().from(schema.organization)).toHaveLength(1);
+    });
   });
 });
 

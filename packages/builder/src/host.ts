@@ -87,7 +87,14 @@ import {
   UntrustedOutputProcessor,
   type UsageMeter,
 } from "./index.ts";
+import type { BuilderRun } from "./session.ts";
 import { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
+import {
+  createSiteThreadTools,
+  NO_THREAD_SITE,
+  type SiteThreads,
+  type SiteThreadTools,
+} from "./site-threads.ts";
 
 export * from "./site-history.ts";
 export { DesignInputError, designFromForm, type NewSiteDesign } from "./site-start.ts";
@@ -149,8 +156,8 @@ export interface SiteBuilderDeps {
 export interface SiteBuilderWiring {
   /** For `createLocusController({ modes })`. */
   modes: [typeof SITE_BUILDER_MODE];
-  /** For `createLocusController({ tools })`. */
-  tools: SiteBuilderTools;
+  /** For `createLocusController({ tools })`; the site tools only with `threads`. */
+  tools: SiteBuilderTools & Partial<SiteThreadTools>;
   /**
    * For `createLocusController({ processors: { output } })`: screens reference pages, command
    * and build output on `processToolResult` (an `AgentControllerMode` can't carry processors).
@@ -204,6 +211,8 @@ export const SITE_BUILDER_OFF =
   "The site builder is turned off for this client. An owner or admin can turn it on on the Clients page.";
 export const SITE_VIEW_ONLY =
   "You can view this site but not change it. An owner or admin can change that on the Sites page.";
+export const SITE_LINKED =
+  "This site was linked from an existing Vercel project, so it can't be built in Locus.";
 
 /**
  * Why the member behind `client` may not build `siteId` (a site of the client), or null: the
@@ -226,6 +235,7 @@ export async function buildRefusal(
  */
 export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
   const row = await siteOfClient(db, client, siteId);
+  if (row.origin === "linked") throw new ClientAccessDenied(SITE_LINKED);
   const refusal = await buildRefusal(db, client, row.id);
   if (refusal) throw new ClientAccessDenied(refusal);
   return row;
@@ -747,19 +757,18 @@ export function createSiteBuilder(
      * session. It must be for `client`'s client; it is checked again either way.
      */
     requester?: (requestContext: unknown) => Promise<AuthorizedClient>;
+    /**
+     * The client's chat store, for work threads: each builds only the site it is tagged with,
+     * and gets the tools to make or pick one. Without it, every chat builds the host-set site.
+     */
+    threads?: SiteThreads;
   },
 ): SiteBuilderWiring {
   const bound = input.client;
   assertAuthorizedClient(bound);
 
-  const resolve: ResolveBuilderSession = async (requestContext) => {
-    const siteId = contextValue(requestContext, SITE_ID_KEY);
-    if (typeof siteId !== "string" || !siteId) {
-      // Not a refusal: nobody has chosen a site for this chat yet. Say what to do.
-      throw new BuilderError(
-        "No site is available for this chat. Choose one on the Sites page, then try again.",
-      );
-    }
+  /** The run's member, staff-checked again now, and their user id. */
+  const member = async (requestContext: unknown) => {
     const given = input.requester
       ? await input.requester(requestContext)
       : (contextValue(requestContext, CLIENT_KEY) as AuthorizedClient | undefined);
@@ -771,12 +780,32 @@ export function createSiteBuilder(
     if (requester.location.id !== bound.location.id) {
       throw new ClientAccessDenied("request is for another client");
     }
-    const { client, userId } = await reauthorize(deps.db, requester);
-    const refusal = await buildRefusal(
-      deps.db,
-      client,
-      (await siteOfClient(deps.db, client, siteId)).id,
-    );
+    return reauthorize(deps.db, requester);
+  };
+
+  /** The site a run builds: a work thread's own, else the one the host set. */
+  const siteFor = async (requestContext: unknown, run?: BuilderRun): Promise<string> => {
+    const thread = run?.threadId && input.threads ? await input.threads.of(run.threadId) : null;
+    if (thread?.work) {
+      if (!thread.siteId) throw new BuilderError(NO_THREAD_SITE);
+      return thread.siteId;
+    }
+    const siteId = contextValue(requestContext, SITE_ID_KEY);
+    if (typeof siteId !== "string" || !siteId) {
+      // Not a refusal: nobody has chosen a site for this chat yet. Say what to do.
+      throw new BuilderError(
+        "No site is available for this chat. Choose one on the Sites page, then try again.",
+      );
+    }
+    return siteId;
+  };
+
+  const resolve: ResolveBuilderSession = async (requestContext, run) => {
+    const siteId = await siteFor(requestContext, run);
+    const { client, userId } = await member(requestContext);
+    const row = await siteOfClient(deps.db, client, siteId);
+    if (row.origin === "linked") throw new BuilderError(SITE_LINKED);
+    const refusal = await buildRefusal(deps.db, client, row.id);
     if (refusal) throw new BuilderError(refusal);
     const lease = await leaseClientDb(deps.openClientDb, client);
     const onVersionSaved = deps.publish
@@ -802,12 +831,58 @@ export function createSiteBuilder(
 
   return {
     modes: [SITE_BUILDER_MODE],
-    tools: createSiteBuilderTools({ resolve }),
+    tools: {
+      ...createSiteBuilderTools({ resolve }),
+      ...(input.threads ? siteThreadTools(deps, input.threads, member) : {}),
+    },
     processors: { output: [new UntrustedOutputProcessor()] },
     ownTextTools: SITE_BUILDER_OWN_TEXT_TOOLS,
     resolve,
     close: () => closeClientDbs(bound.location.id),
   };
+}
+
+/** The site tools of a site-builder thread, for the run's member on the builder's client. */
+function siteThreadTools(
+  deps: SiteBuilderDeps,
+  threads: SiteThreads,
+  member: (requestContext: unknown) => Promise<{ client: AuthorizedClient; userId: string }>,
+): SiteThreadTools {
+  /** A refusal the model can act on, instead of a bare 403. */
+  const buildable = async (client: AuthorizedClient, siteId: string) => {
+    const row = await siteOfClient(deps.db, client, siteId).catch((error) => {
+      if (error instanceof ClientAccessDenied) throw new BuilderError("There's no such site.");
+      throw error;
+    });
+    if (row.origin === "linked") throw new BuilderError(SITE_LINKED);
+    const refusal = await buildRefusal(deps.db, client, row.id);
+    if (refusal) throw new BuilderError(refusal);
+    return row.id;
+  };
+  return createSiteThreadTools({
+    threads,
+    list: async (requestContext) => {
+      const { client } = await member(requestContext);
+      const rows = await deps.db
+        .select({ id: site.id, origin: site.origin })
+        .from(site)
+        .where(eq(site.locationId, client.location.id));
+      const ids = rows.filter((r) => r.origin !== "linked").map((r) => r.id);
+      const names = await siteNames(deps, client, ids);
+      return ids.map((id) => ({ id, name: names.get(id) ?? "Untitled site" }));
+    },
+    create: async (requestContext, site) => {
+      const { client, userId } = await member(requestContext);
+      try {
+        return (await createClientSite(deps, { userId }, client, site)).siteId;
+      } catch (error) {
+        if (error instanceof SiteInputError) throw new BuilderError(error.message);
+        throw error;
+      }
+    },
+    choose: async (requestContext, siteId) =>
+      buildable((await member(requestContext)).client, siteId),
+  });
 }
 
 /** The httpOnly cookie the Sites page sets to the site a member chose to build. */
@@ -861,6 +936,7 @@ export async function chooseActiveSite(
   siteId: string,
 ): Promise<string> {
   const row = await siteOfClient(db, client, siteId);
+  if (row.origin === "linked") throw new SiteInputError(SITE_LINKED);
   const refusal = await buildRefusal(db, client, row.id);
   if (refusal) throw new SiteInputError(refusal);
   await db.update(session).set({ activeSiteId: row.id }).where(eq(session.id, ctx.id));
@@ -972,7 +1048,7 @@ async function forgetSiteFiles(tenant: TenantDb, siteId: string) {
  */
 export async function createClientSite(
   deps: Pick<SiteBuilderDeps, "db" | "openClientDb" | "billing">,
-  ctx: SessionContext,
+  ctx: Pick<SessionContext, "userId">,
   client: AuthorizedClient,
   input: NewSite,
 ): Promise<{ siteId: string; version: VersionInfo }> {
@@ -1064,6 +1140,7 @@ export async function copyClientSite(
     throw new SiteInputError("Give the copy a name of up to 120 characters.");
   }
   const source = await siteOfClient(deps.db, from, siteId);
+  if (source.origin === "linked") throw new SiteInputError(SITE_LINKED);
   const refusal = await buildRefusal(deps.db, from, source.id);
   if (refusal) throw new SiteInputError(refusal);
   if (!to.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
@@ -1348,14 +1425,17 @@ export async function siteSeo(
   return checks;
 }
 
-/** The sites' names from their briefs in the client's database, by site id. */
-export async function siteNames(
+/** What a site is, from its brief: its name and kind (website, funnel, ...). */
+export type SiteSummary = { name: string; kind: SiteKind };
+
+/** The sites' names and kinds from their briefs in the client's database, by site id. */
+export async function siteSummaries(
   deps: Pick<SiteBuilderDeps, "openClientDb">,
   client: AuthorizedClient,
   siteIds: string[],
-): Promise<Map<string, string>> {
-  const names = new Map<string, string>();
-  if (siteIds.length === 0) return names;
+): Promise<Map<string, SiteSummary>> {
+  const summaries = new Map<string, SiteSummary>();
+  if (siteIds.length === 0) return summaries;
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
@@ -1365,12 +1445,22 @@ export async function siteNames(
         console.error("A site's brief couldn't be read", { siteId: id, error });
         return null;
       });
-      if (brief) names.set(id, brief.name);
+      if (brief) summaries.set(id, { name: brief.name, kind: brief.kind });
     }
   } finally {
     release();
   }
-  return names;
+  return summaries;
+}
+
+/** The sites' names from their briefs in the client's database, by site id. */
+export async function siteNames(
+  deps: Pick<SiteBuilderDeps, "openClientDb">,
+  client: AuthorizedClient,
+  siteIds: string[],
+): Promise<Map<string, string>> {
+  const summaries = await siteSummaries(deps, client, siteIds);
+  return new Map([...summaries].map(([id, s]) => [id, s.name]));
 }
 
 export { saveVisualEdits, type VisualEditsSaved } from "./visual-edits.ts";
