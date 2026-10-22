@@ -26,7 +26,12 @@
 import { ASK_TOOLS, isTainted, OWN_STATE_TOOLS, withholdInstructions } from "@locus/harness";
 import type { AgentController, AgentControllerMode } from "@mastra/core/agent-controller";
 import type { MastraStorage } from "@mastra/core/storage";
-import { START_THREAD_TOOL } from "./mastra/lib/work-thread-info.ts";
+import {
+  SITE_THREAD_KEY,
+  START_THREAD_TOOL,
+  siteOf,
+  workThreadOf,
+} from "./mastra/lib/work-thread-info.ts";
 import {
   createWorkThreads,
   type ThreadAgent,
@@ -91,6 +96,40 @@ export function clientWorkThreads(
       attach(made);
       // Threads left working or waiting by an earlier process show as stopped.
       void threads.recover().catch(() => undefined);
+    },
+  };
+}
+
+/**
+ * The sites the client's threads are about, in its chat store: whether a thread is a work
+ * thread and the site it is tagged with, and tagging a work thread once (for the site builder's
+ * `threads`). Ordinary chats are tagged by the site page instead (`kit.ts`).
+ */
+export function clientSiteThreads(storage: MastraStorage) {
+  const memory = async () => {
+    const store = await storage.getStore("memory");
+    if (!store) throw new Error("site threads need a memory store");
+    return store;
+  };
+  return {
+    async of(threadId: string) {
+      const thread = await (await memory()).getThreadById({ threadId });
+      if (!thread) return null;
+      return { work: workThreadOf(thread) !== undefined, siteId: siteOf(thread) };
+    },
+    async tag(threadId: string, siteId: string) {
+      let tagged = false;
+      // Checked inside the store's update, so two tags at once can't both win.
+      await (await memory()).updateThreadMetadata({
+        id: threadId,
+        update: (thread) => {
+          if (!workThreadOf(thread)) return undefined;
+          const current = siteOf(thread);
+          tagged = current === undefined || current === siteId;
+          return current === undefined ? { [SITE_THREAD_KEY]: siteId } : undefined;
+        },
+      });
+      return tagged;
     },
   };
 }
