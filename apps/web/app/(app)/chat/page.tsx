@@ -6,10 +6,11 @@ import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 
 /**
- * The main chat always runs in Locus's "act" mode, with no picker. Each turn names it, since
- * a site's chat (on its page under Sites) runs the same session in the site builder's mode.
+ * The main chat always runs as the supervisor, with no picker: it answers questions and hands
+ * every change to an agent in a thread. Each turn names the mode, since a site's chat (on its
+ * page under Sites) runs the same session in the site builder's mode.
  */
-const CHAT_MODES = [{ id: "act", name: "Chat" }] as const;
+const CHAT_MODES = [{ id: "supervisor", name: "Chat" }] as const;
 
 export default async function ChatPage() {
   const current = await currentSession();
