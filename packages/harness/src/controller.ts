@@ -54,6 +54,15 @@ export function controllerStorage(controller: AgentController): ConversationStor
 
 export const ASK_TOOLS = ["load_skill", "query_data", "ask_user"];
 
+/** Built-in tools that only touch the conversation's own state: a question, the checklist. */
+export const OWN_STATE_TOOLS = [
+  "ask_user",
+  "task_write",
+  "task_update",
+  "task_complete",
+  "task_check",
+] as const;
+
 export const LOCUS_MODES: AgentControllerMode[] = [
   {
     id: "act",
@@ -152,9 +161,14 @@ export async function createLocusController({
     resourceId,
     modes: [...LOCUS_MODES, ...modes],
     defaultModeId: "act",
-    // The agent's own question changes nothing, so it reaches the person without a yes first.
-    // GHL tools keep their own approval rule (`requireApproval` on each tool).
-    initialState: { permissionRules: { categories: {}, tools: { ask_user: "allow" } } },
+    // The agent's own question and its progress checklist change nothing, so they need no yes
+    // first. GHL tools keep their own approval rule (`requireApproval` on each tool).
+    initialState: {
+      permissionRules: {
+        categories: {},
+        tools: Object.fromEntries(OWN_STATE_TOOLS.map((name) => [name, "allow" as const])),
+      },
+    },
     disableBuiltinTools,
     ...(tools ? { tools } : {}),
   });
