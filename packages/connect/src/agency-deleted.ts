@@ -53,7 +53,8 @@ export async function deleteAgencySecrets(
 export async function offboardAgencyClients(
   deps: {
     db: ControlDb;
-    provisioner: TenantProvisioner;
+    /** Built only when the agency has a client, so one with none needs no database service. */
+    provisioner: () => TenantProvisioner;
     /** Removes every app the client connected; left out where connected apps aren't set up. */
     disconnectApps?: (clientId: string) => Promise<void>;
   },
@@ -63,8 +64,10 @@ export async function offboardAgencyClients(
     .select({ id: location.id })
     .from(location)
     .where(eq(location.organizationId, organizationId));
+  if (clients.length === 0) return;
+  const provisioner = deps.provisioner();
   for (const client of clients) {
     await deps.disconnectApps?.(client.id);
-    await offboardLocation({ control: deps.db, provisioner: deps.provisioner }, client.id);
+    await offboardLocation({ control: deps.db, provisioner }, client.id);
   }
 }
