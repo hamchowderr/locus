@@ -630,7 +630,7 @@ describe("Composio connections", () => {
     expect(changes()).toEqual(["revoke ca_gmail", "delete ca_gmail"]);
   });
 
-  test("an app that can't be revoked from outside, or a half-finished sign-in, is still deleted", async () => {
+  test("an app that can't be revoked from outside, or a half-finished sign-in, is only deleted", async () => {
     routes[`GET ${ACCOUNTS}`] = () =>
       accountsBody([
         ["ca_gmail", "ACTIVE"],
@@ -640,14 +640,11 @@ describe("Composio connections", () => {
       status: 400,
       error: { message: "not supported" },
     });
-    routes[`POST ${ACCOUNTS}/ca_tried/revoke`] = () => ({
-      status: 409,
-      error: { message: "not revokable" },
-    });
     routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
     routes[`DELETE ${ACCOUNTS}/ca_tried`] = () => ({ success: true });
     await connections().disconnect("client-1", "gmail");
-    expect(deleted()).toEqual(["ca_gmail", "ca_tried"]);
+    // Only a working account is revoked: Composio refuses the others.
+    expect(changes()).toEqual(["revoke ca_gmail", "delete ca_gmail", "delete ca_tried"]);
   });
 
   test("a revoke Composio couldn't do keeps the account, so a retry revokes it", async () => {
@@ -658,6 +655,17 @@ describe("Composio connections", () => {
     });
     await expect(connections().disconnect("client-1", "gmail")).rejects.toThrow();
     expect(deleted()).toEqual([]);
+  });
+
+  test("a client that goes is removed even while an app can't be revoked", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_gmail", "ACTIVE"]]);
+    routes[`POST ${ACCOUNTS}/ca_gmail/revoke`] = () => ({
+      status: 500,
+      error: { message: "provider down" },
+    });
+    routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
+    await connections().disconnectAll("client-1");
+    expect(deleted()).toEqual(["ca_gmail"]);
   });
 
   test("disconnecting an app that isn't connected does nothing", async () => {

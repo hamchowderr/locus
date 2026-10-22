@@ -365,22 +365,27 @@ export function createComposioConnections({
     return found;
   };
   /**
-   * Revokes the account's access at the app (Google, Slack...), then deletes it. Deleting alone
-   * leaves the app's grant live. An app that can't be revoked from outside, or an account that
-   * never finished signing in, is only deleted.
+   * Revokes the account's access at the app (Google, Slack...), then deletes it: deleting alone
+   * leaves the app's grant live. Only a working account can be revoked, so any other is only
+   * deleted, and so is one Composio says it can't revoke (any 400). A revoke that fails otherwise
+   * keeps the account, so a retry revokes it, unless `bestEffort`: a client that is going away
+   * mustn't be held up by an app's outage.
    */
-  const remove = async (id: string) => {
-    try {
-      await composio.connectedAccounts.revoke(id);
-    } catch (error) {
-      if (
-        !(error instanceof ComposioConnectedAccountRevocationNotSupportedError) &&
-        !(error instanceof ComposioConnectedAccountNotRevokableError)
-      ) {
-        throw error;
+  const remove = async (
+    account: { id: string; status: string },
+    { bestEffort = false }: { bestEffort?: boolean } = {},
+  ) => {
+    if (account.status === "ACTIVE") {
+      try {
+        await composio.connectedAccounts.revoke(account.id);
+      } catch (error) {
+        const unrevokable =
+          error instanceof ComposioConnectedAccountRevocationNotSupportedError ||
+          error instanceof ComposioConnectedAccountNotRevokableError;
+        if (!unrevokable && !bestEffort) throw error;
       }
     }
-    await composio.connectedAccounts.delete(id);
+    await composio.connectedAccounts.delete(account.id);
   };
   const offered = async (toolkit: string) => {
     const slug = toolkit.toLowerCase();
@@ -428,7 +433,7 @@ export function createComposioConnections({
     async connect(clientId: string, toolkit: string, callbackUrl: string): Promise<string> {
       const slug = await offered(toolkit);
       for (const account of await accounts(clientId, slug)) {
-        if (account.status !== "ACTIVE") await remove(account.id);
+        if (account.status !== "ACTIVE") await remove(account);
       }
       const session = await composio.create(appUserId(clientId), {
         toolkits: [slug],
@@ -450,14 +455,14 @@ export function createComposioConnections({
       const slug = toolkit.toLowerCase();
       if (!/^[a-z0-9_-]+$/.test(slug)) throw new AppServiceError(`No app named ${toolkit}`);
       for (const account of await accounts(clientId, slug)) {
-        await remove(account.id);
+        await remove(account);
       }
     },
 
     /** Removes every account the client has, for any app, when the client itself goes. */
     async disconnectAll(clientId: string): Promise<void> {
       for (const account of await accounts(clientId)) {
-        await remove(account.id);
+        await remove(account, { bestEffort: true });
       }
     },
   };
