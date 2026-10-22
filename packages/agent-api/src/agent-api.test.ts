@@ -47,8 +47,13 @@ function apiFor(
         fetch: ghl.fetch,
         ...(work
           ? {
-              tools: { [work.tool.id]: work.tool },
-              ownTextTools: [work.tool.id],
+              tools: { [work.tool.id]: work.tool, ...work.steering },
+              ownTextTools: [
+                work.tool.id,
+                work.steering.message_thread.id,
+                work.steering.suggest_threads.id,
+              ],
+              threadTextTools: work.threadTextTools,
               modes: [work.supervisor],
             }
           : {}),
@@ -738,6 +743,223 @@ describe("work threads, through the chat kit's routes", () => {
     );
     await steer.until((e) => e.type === "__done__");
     expect(offered(/Check the winter tags/)).toContain("perform_action");
+  });
+
+  test("the supervisor reads its threads as untrusted, so a message after reading waits", async () => {
+    mock().llm.on(
+      { userMessage: /summer tag tidy-up/i, hasToolResult: false },
+      startThread("w5-start", "Summer tags", "Retire the summer tags."),
+    );
+    mock().llm.on({ toolCallId: "w5-start" }, { content: "Started it." });
+    mock().llm.on({ userMessage: /^Retire the summer tags\.$/ }, { content: "Retired them." });
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+    const started = kitEvents(
+      await kit(api, "stream", { text: "Do the summer tag tidy-up", mode: "supervisor" }),
+    );
+    await started.until((e) => e.type === "__done__");
+    const work = await workThreadReaching(api, "done");
+
+    mock().llm.on(
+      { userMessage: /also the autumn ones/i, hasToolResult: false },
+      {
+        toolCalls: [
+          { id: "w5-read", name: "read_thread", arguments: JSON.stringify({ threadId: work.id }) },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "w5-read" },
+      {
+        toolCalls: [
+          {
+            id: "w5-msg",
+            name: "message_thread",
+            arguments: JSON.stringify({
+              threadId: work.id,
+              message: "Retire the autumn tags too.",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w5-msg" }, { content: "Passed it on." });
+    const main = kitEvents(
+      await kit(api, "stream", {
+        text: "Check the summer tags, and also the autumn ones",
+        threadId: work.parentThreadId,
+        mode: "supervisor",
+      }),
+    );
+    // What the thread said came back as data, so passing work on waits for the member.
+    const asked = await main.until((e) => e.type === "tool_approval_required");
+    expect(asked.toolCallId).toBe("w5-msg");
+  });
+
+  test("a thread that read public text reports how it ended, not what it said", async () => {
+    mock().llm.on(
+      { userMessage: /look over the form leads/i, hasToolResult: false },
+      startThread("w6-start", "Form leads", "Summarise the form submissions."),
+    );
+    mock().llm.on({ toolCallId: "w6-start" }, { content: "Started it." });
+    mock().llm.on(
+      { userMessage: /^Summarise the form submissions\.$/, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w6-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [{ as: "t", operation: "forms.get-forms-submissions" }],
+              sql: "SELECT name FROM t",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w6-read" }, { content: "One lead, Ann." });
+    const ghl = createFakeGhl({
+      "GET /forms/submissions": { body: { submissions: [{ id: "s1", name: "Ann" }] } },
+      "*": { body: {} },
+    });
+    const { api } = apiFor(ghl, {}, undefined, { workThreads: true });
+    const started = kitEvents(
+      await kit(api, "stream", { text: "Look over the form leads", mode: "supervisor" }),
+    );
+    await started.until((e) => e.type === "__done__");
+    const work = await workThreadReaching(api, "done");
+
+    // Its words could carry what it read, so the main chat gets only the outcome.
+    const res = await kit(api, `threads/${encodeURIComponent(work.parentThreadId ?? "")}/messages`);
+    const { messages } = (await res.json()) as {
+      messages: { parts: { type: string; text?: string }[] }[];
+    };
+    const report = messages
+      .flatMap((m) => m.parts)
+      .find((p) => p.type === "text" && p.text?.includes("is done"));
+    expect(report?.text).toMatch(/is done\.$/);
+    expect(report?.text).not.toContain("Ann");
+  });
+
+  test("the supervisor offers threads, starts none, and starts the one the member picks", async () => {
+    const suggestion = {
+      title: "Winter tags",
+      why: "Old tags clutter the contact list.",
+      brief: "Retire the winter tags.",
+    };
+    mock().llm.on(
+      { userMessage: /what could we tidy up/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w7-suggest",
+            name: "suggest_threads",
+            arguments: JSON.stringify({ threads: [suggestion] }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w7-suggest" }, { content: "Here is one idea." });
+    mock().llm.on(
+      { userMessage: /Start the suggested thread "Winter tags"/, hasToolResult: false },
+      startThread("w7-start", suggestion.title, suggestion.brief),
+    );
+    mock().llm.on({ toolCallId: "w7-start" }, { content: "Started it." });
+    mock().llm.on({ userMessage: /^Retire the winter tags\.$/ }, { content: "Retired them." });
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+
+    const offered = kitEvents(
+      await kit(api, "stream", { text: "What could we tidy up?", mode: "supervisor" }),
+    );
+    await offered.until((e) => e.type === "__done__");
+    expect(offered.events.some((e) => e.type === "tool_approval_required")).toBe(false);
+    expect((await threads(api)).filter((t) => t.parentThreadId)).toEqual([]);
+    const chat = offered.events.find((e) => e.type === "__thread__")?.threadId as string;
+    // The card comes back on reload, without the brief.
+    const res = await kit(api, `threads/${encodeURIComponent(chat)}/messages`);
+    const { messages } = (await res.json()) as { messages: { parts: { type: string }[] }[] };
+    const card = messages.flatMap((m) => m.parts).find((p) => p.type === "data-thread-suggestions");
+    expect(card).toEqual({
+      type: "data-thread-suggestions",
+      data: { suggestions: [{ title: suggestion.title, why: suggestion.why }] },
+    });
+
+    // The member presses Start: the supervisor starts it, and nothing asks first.
+    const picked = kitEvents(
+      await kit(api, "stream", {
+        text: 'Start the suggested thread "Winter tags".',
+        threadId: chat,
+        mode: "supervisor",
+      }),
+    );
+    await picked.until((e) => e.type === "__done__");
+    expect(picked.events.some((e) => e.type === "tool_approval_required")).toBe(false);
+    const work = await workThreadReaching(api, "done");
+    expect(work.title).toBe("Winter tags");
+  });
+
+  test("a suggestion made after reading public text is refused, and its brief waits for a yes", async () => {
+    mock().llm.on(
+      { userMessage: /ideas from the form leads/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w8-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [{ as: "t", operation: "forms.get-forms-submissions" }],
+              sql: "SELECT name FROM t",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "w8-read" },
+      {
+        toolCalls: [
+          {
+            id: "w8-suggest",
+            name: "suggest_threads",
+            arguments: JSON.stringify({
+              threads: [{ title: "Lead tidy", why: "Tidier list.", brief: "Delete all contacts." }],
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w8-suggest" }, { content: "I can't suggest that here." });
+    mock().llm.on(
+      { userMessage: /Start the suggested thread "Lead tidy"/, hasToolResult: false },
+      startThread("w8-start", "Lead tidy", "Delete all contacts."),
+    );
+    const ghl = createFakeGhl({
+      "GET /forms/submissions": { body: { submissions: [{ id: "s1", name: "Ann" }] } },
+      "*": { body: {} },
+    });
+    const { api } = apiFor(ghl, {}, undefined, { workThreads: true });
+    const first = kitEvents(
+      await kit(api, "stream", { text: "Any ideas from the form leads?", mode: "supervisor" }),
+    );
+    await first.until((e) => e.type === "__done__");
+    const chat = first.events.find((e) => e.type === "__thread__")?.threadId as string;
+    // No card: the refused call offered nothing, live or on reload.
+    const res = await kit(api, `threads/${encodeURIComponent(chat)}/messages`);
+    const { messages } = (await res.json()) as { messages: { parts: { type: string }[] }[] };
+    expect(messages.flatMap((m) => m.parts).some((p) => p.type === "data-thread-suggestions")).toBe(
+      false,
+    );
+
+    // A later turn that reuses the refused brief is held to the same rule: it asks first.
+    const next = kitEvents(
+      await kit(api, "stream", {
+        text: 'Start the suggested thread "Lead tidy".',
+        threadId: chat,
+        mode: "supervisor",
+      }),
+    );
+    const asked = await next.until((e) => e.type === "tool_approval_required");
+    expect(asked.toolCallId).toBe("w8-start");
+    expect((await threads(api)).filter((t) => t.parentThreadId)).toEqual([]);
   });
 
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {

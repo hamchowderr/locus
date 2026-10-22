@@ -24,7 +24,7 @@
 import { createTool } from "@mastra/core/tools";
 import { z } from "zod";
 import type { RunContext } from "./tools.ts";
-import { isTainted, locusError } from "./untrusted.ts";
+import { hasRefusedBrief, isTainted, locusError } from "./untrusted.ts";
 
 export interface AppTool {
   slug: string;
@@ -152,7 +152,9 @@ export function createAppTools(
     }),
     requireApproval: async ({ tool }, ctx) => {
       try {
-        if (isTainted(ctx?.requestContext) || !isSlug(tool)) return true;
+        // A run that read untrusted content, or holds a refused suggestion's brief, asks first.
+        if (isTainted(ctx?.requestContext) || hasRefusedBrief(ctx?.requestContext)) return true;
+        if (!isSlug(tool)) return true;
         const apps = await resolve(asRunContext(ctx?.requestContext));
         const toolkit = await apps.toolkit(tool);
         if (!toolkit || !(await apps.offers(tool))) return true;

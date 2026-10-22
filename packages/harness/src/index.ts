@@ -83,8 +83,11 @@ export {
 } from "./test-mode.ts";
 export { createLocusTools, type RunContext, type ToolDeps } from "./tools.ts";
 export {
+  hasRefusedBrief,
   isTainted,
   looksLikeInstructions,
+  REFUSED_BRIEF_KEY,
+  REFUSED_BRIEF_MARK,
   readsPublicText,
   TAINT_KEY,
   TAINT_MARK,
