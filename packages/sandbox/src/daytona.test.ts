@@ -6,6 +6,7 @@ import { DaytonaNotFoundError, SandboxState } from "@daytonaio/sdk";
 import { DaytonaSandbox, type DaytonaSandboxOptions } from "@mastra/daytona";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DAYTONA_PREVIEW_HOSTS,
   DaytonaRuntimeProvider,
   type DaytonaSandboxConfig,
   daytonaFromEnv,
@@ -232,6 +233,15 @@ const callerCommands = (vm: FakeVm | undefined) =>
   (vm?.commands ?? []).filter((c) => !c.includes("test -f"));
 
 describe("DaytonaRuntimeProvider", () => {
+  it("says which hosts its previews are served on, for next dev's allowed origins", async () => {
+    const fake = fakeDaytona();
+    const runtime = await provider(fake).open("site");
+    expect(runtime.previewHosts).toEqual(["*.proxy.daytona.works"]);
+    expect(runtime.previewHosts).toBe(DAYTONA_PREVIEW_HOSTS);
+    const proxied = await provider(fake, { previewHosts: ["*.preview.locus.test"] }).open("other");
+    expect(proxied.previewHosts).toEqual(["*.preview.locus.test"]);
+  });
+
   it("creates one private, named sandbox per site and never hands the API key to it", async () => {
     const fake = fakeDaytona((command) =>
       command.includes("cat") ? { stdout: "hello" } : undefined,
