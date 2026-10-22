@@ -11,7 +11,7 @@ import { z } from "zod";
 import { ActionError, loadSkill, needsApproval, performAction } from "./actions.ts";
 import { QueryError, type QueryLimits, runQuery } from "./query-data.ts";
 import type { WriteGuard } from "./test-mode.ts";
-import { isTainted, type LOCUS, locusError } from "./untrusted.ts";
+import { hasRefusedBrief, isTainted, type LOCUS, locusError } from "./untrusted.ts";
 
 /** What a tool can read of its run's request context. */
 export interface RunContext {
@@ -116,9 +116,12 @@ export function createLocusTools(deps: ToolDeps) {
       operation: z.string().describe("Operation id, e.g. contacts.create-contact"),
       params: requestInput.optional(),
     }),
-    // A run that read untrusted content (see `untrusted.ts`) approves every write.
+    // A run that read untrusted content, or holds a refused suggestion's brief (see
+    // `untrusted.ts`), approves every write.
     requireApproval: ({ operation }, ctx) =>
-      isTainted(ctx?.requestContext) || needsApproval(operation),
+      isTainted(ctx?.requestContext) ||
+      hasRefusedBrief(ctx?.requestContext) ||
+      needsApproval(operation),
     execute: async (input, context) =>
       recoverable(async () =>
         performAction(input, {

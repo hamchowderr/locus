@@ -125,7 +125,7 @@ export function clientWorkThreads(
     startsUntrusted: isTainted,
     // A suggestion refused for a tainted run keeps its briefs in the chat's history, so its
     // result is marked: a later run that reads it asks before starting or messaging a thread,
-    // showing the brief, without being tainted itself.
+    // or making any change, without being tainted itself.
     refusedSuggestion: { refusedBrief: REFUSED_BRIEF_MARK },
     runContext: (context, thread) => {
       if (thread.untrusted) context.set(TAINT_KEY, true);
