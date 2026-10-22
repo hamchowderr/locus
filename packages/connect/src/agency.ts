@@ -173,6 +173,16 @@ async function renewGrant(
         if (isFresh(stored.grant, now)) return stored.grant;
         const grant = await refreshGrant(deps.ghl, stored.grant, deps.http, now);
         await deps.secrets.set(stored.secretRef, JSON.stringify(grant));
+        // The agency may have been deleted while GHL answered, its credentials removed first:
+        // without its row the new grant would belong to no one, so it goes too.
+        const [still] = await deps.db
+          .select({ organizationId: agencyGhlConnection.organizationId })
+          .from(agencyGhlConnection)
+          .where(mine);
+        if (!still) {
+          await deps.secrets.delete(stored.secretRef);
+          throw new ConnectError("This agency isn't connected to GoHighLevel.");
+        }
         return grant;
       } finally {
         // Only our own lease: if GHL was slow and the lease passed to another process, it is theirs.
