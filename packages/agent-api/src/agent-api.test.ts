@@ -351,6 +351,26 @@ describe("the chat kit's routes", () => {
     expect(messages.status).toBe(200);
   });
 
+  test("Stop aborts the run on the server, so a change waiting on the member never runs", async () => {
+    mock().llm.on(
+      { userMessage: /delete contact c4/i, hasToolResult: false },
+      perform("k5-del", "contacts.delete-contact", { path: { contactId: "c4" } }),
+    );
+    const ghl = createFakeGhl({ "*": { body: {} } });
+    const { api } = apiFor(ghl);
+
+    const stream = kitEvents(await kit(api, "stream", { text: "Delete contact c4" }));
+    await stream.until((e) => e.type === "tool_approval_required");
+    const thread = stream.events.find((e) => e.type === "__thread__")?.threadId as string;
+
+    const stopped = await kit(api, "abort", { threadId: thread });
+    expect(stopped.status).toBe(200);
+    await stream.until((e) => e.type === "__done__");
+    const late = await kit(api, "approve", { decision: "approve", toolCallId: "k5-del" });
+    expect(late.status).not.toBe(200);
+    expect(ghl.requests).toEqual([]);
+  });
+
   test("runs get the host's request context, not the browser's", async () => {
     mock().llm.on(
       { userMessage: /which site now/i, hasToolResult: false },
