@@ -12,6 +12,9 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@daytonaio/sdk": "0.201.0",
+    "@mastra/core": "1.75.0",
+    "@mastra/daytona": "0.11.3",
     "@vercel/sandbox": "3.8.0"
   },
   "devDependencies": {

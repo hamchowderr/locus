@@ -57,7 +57,7 @@ import {
   user,
 } from "@locus/db/control";
 import { siteBrief } from "@locus/db/tenant";
-import { FakeRuntimeProvider } from "@locus/sandbox";
+import { DaytonaRuntimeProvider, FakeRuntimeProvider } from "@locus/sandbox";
 import { generateSecretsKey, MemorySecretStore, SecretCipher } from "@locus/secrets";
 import {
   annotateSource,
@@ -1759,6 +1759,27 @@ describe("sandboxes from the environment", () => {
     await expect(opening).rejects.toBeInstanceOf(BuilderError);
     await expect(opening).rejects.toThrow("Site previews aren't set up on this deployment.");
     await expect(opening).rejects.not.toThrow(/LOCUS_SANDBOX/);
+  });
+
+  it("runs sandboxes on Daytona only when LOCUS_SANDBOX_PROVIDER says so, with its key", async () => {
+    const daytona = { LOCUS_SANDBOX_PROVIDER: "daytona", NODE_ENV: "production" };
+    expect(runtimesFromEnv({ ...daytona, DAYTONA_API_KEY: "k" })).toBeInstanceOf(
+      DaytonaRuntimeProvider,
+    );
+    expect(runtimesFromEnv({ DAYTONA_API_KEY: "k" })).toBeInstanceOf(FakeRuntimeProvider);
+    const opening = runtimesFromEnv(daytona).open("x");
+    await expect(opening).rejects.toThrow("Site previews aren't set up on this deployment.");
+    await expect(opening).rejects.not.toThrow(/DAYTONA/);
+  });
+
+  it("answers the usual way, never with a crash, when the provider setting names none", async () => {
+    for (const NODE_ENV of ["production", "development"]) {
+      const runtimes = runtimesFromEnv({ LOCUS_SANDBOX_PROVIDER: "dayton", NODE_ENV });
+      expect(runtimes).not.toBeInstanceOf(FakeRuntimeProvider);
+      const opening = runtimes.open("x");
+      await expect(opening).rejects.toBeInstanceOf(BuilderError);
+      await expect(opening).rejects.toThrow("Site previews aren't set up on this deployment.");
+    }
   });
 });
 
