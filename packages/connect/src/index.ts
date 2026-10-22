@@ -215,6 +215,11 @@ export {
   vercelSecretRef,
 } from "./vercel.ts";
 export {
+  handleVercelWebhook,
+  type VercelWebhook,
+  verifyVercelSignature,
+} from "./vercel-webhook.ts";
+export {
   type GhlAppWebhook,
   handleGhlWebhook,
   verifyGhlSignature,

@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +21,7 @@ import {
   STUB_GITHUB_CODE,
   STUB_GITHUB_INSTALLATION,
   STUB_VERCEL_CODE,
+  STUB_VERCEL_CONFIGURATION,
   STUB_VERCEL_TEAM,
 } from "./stub-hosts.ts";
 import {
@@ -28,6 +30,7 @@ import {
   vercelInstallUrl,
   vercelSecretRef,
 } from "./vercel.ts";
+import { handleVercelWebhook, verifyVercelSignature } from "./vercel-webhook.ts";
 
 let dir: string;
 let db: ControlDb;
@@ -226,5 +229,55 @@ describe("connecting Vercel", () => {
     await expect(
       connectVercel(vercelDeps(), ctx("staff", "agency-a"), { code: STUB_VERCEL_CODE }),
     ).rejects.toBeInstanceOf(ClientAccessDenied);
+  });
+});
+
+describe("the Vercel integration removed on Vercel's side", () => {
+  const removed = (configurationId: string, teamId: string | null = STUB_VERCEL_TEAM.id) => ({
+    type: "integration-configuration.removed",
+    payload: {
+      configuration: { id: configurationId },
+      team: teamId ? { id: teamId } : null,
+      user: { id: "user_stub" },
+    },
+  });
+
+  it("checks Vercel's signature on the exact body", () => {
+    const body = JSON.stringify(removed(STUB_VERCEL_CONFIGURATION));
+    const signature = createHmac("sha1", "vercel-secret").update(body).digest("hex");
+    expect(verifyVercelSignature(body, signature, "vercel-secret")).toBe(true);
+    expect(verifyVercelSignature(`${body} `, signature, "vercel-secret")).toBe(false);
+    expect(verifyVercelSignature(body, signature, "other-secret")).toBe(false);
+    expect(verifyVercelSignature(body, null, "vercel-secret")).toBe(false);
+    expect(verifyVercelSignature(body, "short", "vercel-secret")).toBe(false);
+  });
+
+  it("disconnects the agency that installed it and drops its token", async () => {
+    await connectVercel(vercelDeps(), ctx("owner", "agency-a"), { code: STUB_VERCEL_CODE });
+
+    expect(await handleVercelWebhook({ db, secrets }, removed(STUB_VERCEL_CONFIGURATION))).toBe(
+      "disconnected",
+    );
+    expect(await db.select().from(hostConnection)).toEqual([]);
+    expect(await secrets.get(vercelSecretRef("agency-a"))).toBeUndefined();
+    // Delivered again: nothing left to do.
+    expect(await handleVercelWebhook({ db, secrets }, removed(STUB_VERCEL_CONFIGURATION))).toBe(
+      "ignored",
+    );
+  });
+
+  it("keeps a connection made since by another installation, and other teams' alone", async () => {
+    await connectVercel(vercelDeps(), ctx("owner", "agency-a"), { code: STUB_VERCEL_CODE });
+
+    for (const event of [
+      removed("icfg_older"),
+      removed(STUB_VERCEL_CONFIGURATION, "team_other"),
+      { type: "project.created", payload: { configuration: { id: STUB_VERCEL_CONFIGURATION } } },
+      { type: "integration-configuration.removed", payload: {} },
+    ]) {
+      expect(await handleVercelWebhook({ db, secrets }, event)).toBe("ignored");
+    }
+    expect(await db.select().from(hostConnection)).toHaveLength(1);
+    expect(await secrets.get(vercelSecretRef("agency-a"))).toBeDefined();
   });
 });
