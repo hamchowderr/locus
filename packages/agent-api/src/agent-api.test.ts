@@ -726,6 +726,18 @@ describe("work threads, through the chat kit's routes", () => {
     });
     // The thread runs in the operator's mode, with every GHL tool.
     expect(offered(/Retire the winter tags/)).toContain("perform_action");
+
+    // A turn in the thread keeps it there, whatever mode the request names.
+    mock().llm.on({ userMessage: /Check the winter tags/ }, { content: "All gone." });
+    const steer = kitEvents(
+      await kit(api, "stream", {
+        text: "Check the winter tags",
+        threadId: work.id,
+        mode: "supervisor",
+      }),
+    );
+    await steer.until((e) => e.type === "__done__");
+    expect(offered(/Check the winter tags/)).toContain("perform_action");
   });
 
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {

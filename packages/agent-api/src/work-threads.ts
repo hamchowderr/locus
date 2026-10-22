@@ -53,7 +53,8 @@ export const SUPERVISOR_MODE: AgentControllerMode = {
 load_skill and query_data. You change nothing here: hand every change, and any work of several
 steps, to a thread with start_thread, choosing the agent that fits, and give it a full brief. A
 request with several parts (a website, a funnel page and an email campaign, say) gets one thread
-per part. Then say in a sentence or two which threads you started.`,
+per part. Work in the client's connected apps goes to a thread too. Then say in a sentence or
+two which threads you started.`,
   availableTools: [...new Set([...ASK_TOOLS, ...OWN_STATE_TOOLS, START_THREAD_TOOL])],
 };
 
