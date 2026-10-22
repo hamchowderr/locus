@@ -548,6 +548,8 @@ describe("Composio connections", () => {
       ["oldapp", true],
     ]);
     expect(listed[0]).toMatchObject({ name: "Gmail", logo: "https://logos.test/gmail.png" });
+    // Slack's sign-in expired: shown as needing a reconnect, the others not.
+    expect(listed.filter((app) => app.expired).map((app) => app.toolkit)).toEqual(["slack"]);
     const [list] = seen.filter((s) => s.path === ACCOUNTS);
     expect(list?.query.getAll("user_ids").join(",")).toBe(appUserId("client-1"));
   });

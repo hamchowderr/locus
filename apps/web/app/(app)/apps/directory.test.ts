@@ -38,6 +38,15 @@ describe("filterApps", () => {
     ]);
   });
 
+  it("keeps an app whose sign-in expired with the connected ones", () => {
+    const expired = { ...app("hubspot", "HubSpot", "CRM", ["crm"]), expired: true };
+    expect(slugs(filterApps([...APPS.slice(0, 2), expired], { q: "", category: "" }))).toEqual([
+      "slack",
+      "hubspot",
+      "gmail",
+    ]);
+  });
+
   it("finds apps by name, slug or description, every word, ignoring case and accents", () => {
     expect(slugs(filterApps(APPS, { q: "NOTION", category: "" }))).toEqual(["notion"]);
     expect(slugs(filterApps(APPS, { q: "google cal", category: "" }))).toEqual(["googlecalendar"]);
