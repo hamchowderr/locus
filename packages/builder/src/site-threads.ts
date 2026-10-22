@@ -41,6 +41,21 @@ type ToolContext = { requestContext?: unknown; agent?: { threadId?: string } };
 
 /** The tools a site-builder thread uses to pick the one site it works on. */
 export function createSiteThreadTools(deps: SiteThreadToolDeps) {
+  /**
+   * One site change per thread at a time: a step's tool calls run together, and two
+   * create_site calls checked at once would both make a site (and both count on the plan).
+   */
+  const queues = new Map<string, Promise<unknown>>();
+  const oneAtATime = <T>(threadId: string, work: () => Promise<T>): Promise<T> => {
+    const run = (queues.get(threadId) ?? Promise.resolve()).then(work, work);
+    const settled = run.catch(() => undefined);
+    queues.set(threadId, settled);
+    void settled.then(() => {
+      if (queues.get(threadId) === settled) queues.delete(threadId);
+    });
+    return run;
+  };
+
   /** The run's work thread and its site, or a refusal for any other conversation. */
   const workThread = async (context: ToolContext) => {
     const threadId = context?.agent?.threadId;
@@ -84,17 +99,20 @@ export function createSiteThreadTools(deps: SiteThreadToolDeps) {
     }),
     execute: async (input, context: ToolContext) =>
       recoverable(async () => {
-        const thread = await workThread(context);
-        if (thread.siteId) throw new BuilderError("This thread already has its site.");
-        const siteId = await deps.create(context?.requestContext, {
-          name: input.name,
-          kind: input.kind,
-          ...(input.description ? { description: input.description } : {}),
-          ...(input.goal ? { goal: input.goal } : {}),
-          ...(input.audience ? { audience: input.audience } : {}),
+        const threadId = (await workThread(context)).threadId;
+        return oneAtATime(threadId, async () => {
+          const thread = await workThread(context);
+          if (thread.siteId) throw new BuilderError("This thread already has its site.");
+          const siteId = await deps.create(context?.requestContext, {
+            name: input.name,
+            kind: input.kind,
+            ...(input.description ? { description: input.description } : {}),
+            ...(input.goal ? { goal: input.goal } : {}),
+            ...(input.audience ? { audience: input.audience } : {}),
+          });
+          await bind(thread.threadId, siteId);
+          return { siteId, note: "Version 1 is ready. Read the brief next." };
         });
-        await bind(thread.threadId, siteId);
-        return { siteId, note: "Version 1 is ready. Read the brief next." };
       }),
   });
 
@@ -106,12 +124,15 @@ export function createSiteThreadTools(deps: SiteThreadToolDeps) {
     inputSchema: z.object({ siteId: z.string().min(1).max(64) }),
     execute: async (input, context: ToolContext) =>
       recoverable(async () => {
-        const thread = await workThread(context);
-        if (thread.siteId === input.siteId) return { siteId: input.siteId };
-        if (thread.siteId) throw new BuilderError("This thread already works on another site.");
-        const siteId = await deps.choose(context?.requestContext, input.siteId);
-        await bind(thread.threadId, siteId);
-        return { siteId };
+        const threadId = (await workThread(context)).threadId;
+        return oneAtATime(threadId, async () => {
+          const thread = await workThread(context);
+          if (thread.siteId === input.siteId) return { siteId: input.siteId };
+          if (thread.siteId) throw new BuilderError("This thread already works on another site.");
+          const siteId = await deps.choose(context?.requestContext, input.siteId);
+          await bind(thread.threadId, siteId);
+          return { siteId };
+        });
       }),
   });
 
