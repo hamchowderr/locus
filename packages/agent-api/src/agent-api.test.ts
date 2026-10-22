@@ -630,6 +630,9 @@ describe("work threads, through the chat kit's routes", () => {
           },
         ),
       );
+    // Only a thread can be resolved, never the chat itself.
+    expect((await patch(work.parentThreadId ?? "", { resolved: true })).status).toBe(409);
+    expect((await patch("someone-elses", { resolved: true })).status).toBe(404);
     expect((await patch(work.id, { resolved: true })).status).toBe(200);
     const resolved = (await threads(api)).find((t) => t.id === work.id) as typeof work;
     expect(resolved).toMatchObject({ resolved: true, status: "done", title: "Autumn tags" });

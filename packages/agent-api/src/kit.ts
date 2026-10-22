@@ -197,18 +197,25 @@ async function resolve(
 ) {
   if (!(await ownsThread(await getSession(), id))) return c.json({ error: "not found" }, 404);
   const store = await memoryOf(controller);
-  let work = false;
+  let refused: string | undefined = "only a thread can be resolved";
   await store.updateThreadMetadata({
     id,
     update: (thread) => {
       const info = workThreadOf(thread);
       if (!info) return undefined;
-      work = true;
-      const { resolved: _, ...rest } = info;
-      return { [WORK_THREAD_KEY]: resolved ? { ...rest, resolved: true } : rest };
+      if (resolved && (info.status === "working" || info.status === "needs_you")) {
+        refused = "a thread that is working or waiting on you can't be resolved";
+        return undefined;
+      }
+      refused = undefined;
+      // Merged into what is stored, so keys this route doesn't know survive.
+      const raw = { ...((thread.metadata as Record<string, unknown>)[WORK_THREAD_KEY] as object) };
+      const next: Record<string, unknown> = { ...raw, resolved: true };
+      if (!resolved) delete next.resolved;
+      return { [WORK_THREAD_KEY]: next };
     },
   });
-  if (!work) return c.json({ error: "only a thread can be resolved" }, 409);
+  if (refused) return c.json({ error: refused }, 409);
   return c.json({ ok: true });
 }
 
