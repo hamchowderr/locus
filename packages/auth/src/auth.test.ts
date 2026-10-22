@@ -269,7 +269,10 @@ describe("signing in", () => {
   });
 
   describe("deleting an agency", () => {
-    function withHook(hook: (organizationId: string) => Promise<void>) {
+    function withHook(
+      hook: (organizationId: string) => Promise<void>,
+      after?: (organizationId: string) => Promise<void>,
+    ) {
       auth = createAuth({
         db,
         schema,
@@ -279,6 +282,7 @@ describe("signing in", () => {
           sent.push(message);
         },
         beforeAgencyDeleted: hook,
+        afterAgencyDeleted: after,
       });
     }
 
@@ -308,6 +312,25 @@ describe("signing in", () => {
 
       expect(seen).toEqual([`${id}:1`]);
       expect(await db.select().from(schema.organization)).toEqual([]);
+    });
+
+    it("runs the clean-up again once the agency is gone", async () => {
+      const seen: string[] = [];
+      withHook(
+        async () => {},
+        async (organizationId) => {
+          const rows = await db
+            .select()
+            .from(schema.organization)
+            .where(eq(schema.organization.id, organizationId));
+          seen.push(`${organizationId}:${rows.length}`);
+        },
+      );
+      const { headers, id } = await ownedAgency();
+
+      await auth.api.deleteOrganization({ body: { organizationId: id }, headers });
+
+      expect(seen).toEqual([`${id}:0`]);
     });
 
     it("keeps the agency when the clean-up fails", async () => {
