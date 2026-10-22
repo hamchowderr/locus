@@ -41,6 +41,7 @@ export {
   createLocusController,
   LOCUS_MODES,
   type LocusControllerConfig,
+  OWN_STATE_TOOLS,
   openClientSession,
 } from "./controller.ts";
 export {

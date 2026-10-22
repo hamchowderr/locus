@@ -30,6 +30,9 @@ import {
 import { type ThreadItem, useThreads } from '@/lib/agent-controller/use-threads';
 import { cn } from '@/lib/utils';
 import { ProjectSidebar } from './project-sidebar';
+import { ThreadChecklist } from './thread-checklist';
+import type { ThreadOutput } from './thread-groups';
+import { OutputIcon } from './thread-list';
 import { ThreadRow, ThreadStatus, threadIdFromHref } from './thread-row';
 
 /** How wide the chat area must be for an open thread to sit beside the chat, not over it. */
@@ -68,6 +71,7 @@ export function ProjectChat({
   toolViews,
   modes,
   isChat = isConversation,
+  outputsOf,
   placeholder = 'Ask anything…',
   emptyText = 'Ask for anything. Bigger pieces of work get a thread of their own.',
 }: {
@@ -86,12 +90,19 @@ export function ProjectChat({
    * thread; a host with conversations of its own (a site's, say) leaves those out.
    */
   isChat?: ((t: ThreadItem) => boolean) | undefined;
+  /**
+   * What each thread made that opens on its own page (a site it built, say): an icon on its
+   * row and a link in its header.
+   */
+  outputsOf?: ((t: ThreadItem) => ThreadOutput[]) | undefined;
   placeholder?: string;
   emptyText?: string;
 }) {
   const main = useAgentControllerChat();
   const thread = useAgentControllerChat();
-  const { threads, refresh, rename, remove } = useThreads({ refreshSignal: main.refreshSignal });
+  const { threads, refresh, rename, remove, resolve } = useThreads({
+    refreshSignal: main.refreshSignal,
+  });
   const [openId, setOpenId] = useState<string | null>(null);
   const [threadRunning, setThreadRunning] = useState(false);
   const [listOpen, setListOpen] = useState(false);
@@ -101,12 +112,6 @@ export function ProjectChat({
   const opened = openId ? work.get(openId) : undefined;
   const mainBusy = main.status === 'streaming';
   const chats = threads.filter((t) => isChat(t) && !t.archived);
-  // Each chat's threads, oldest first (the list comes newest first).
-  const threadsOf = new Map<string, ThreadItem[]>();
-  for (const t of [...work.values()].reverse()) {
-    const parent = t.parentThreadId as string;
-    threadsOf.set(parent, [...(threadsOf.get(parent) ?? []), t]);
-  }
 
   // The engines' functions are stable; the objects around them are not.
   const { openThread: openInThread } = thread;
@@ -208,6 +213,28 @@ export function ProjectChat({
     return () => clearInterval(timer);
   }, [active, refresh, openId, threadRunning, threadBusy, open]);
 
+  // A page that links here as `/chat#thread=<id>` (a host's list of what threads made, say)
+  // opens that thread once the list has it, then drops the hash so a reload starts clean.
+  // After the status effect above, so its reload of the main chat can't land over the
+  // linked thread's chat. An id the list never has (a deleted thread) is dropped too.
+  const [linked, setLinked] = useState<string | null>(null);
+  useEffect(() => {
+    const read = () => setLinked(threadIdFromHref(window.location.hash));
+    read();
+    window.addEventListener('hashchange', read);
+    return () => window.removeEventListener('hashchange', read);
+  }, []);
+  const linkedReady = linked !== null && work.has(linked);
+  const linkedGone = linked !== null && threads.length > 0 && !linkedReady;
+  const openLinked = useRef(openFromList);
+  openLinked.current = openFromList;
+  useEffect(() => {
+    if (!linked || (!linkedReady && !linkedGone)) return;
+    setLinked(null);
+    window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    if (linkedReady) openLinked.current(linked);
+  }, [linkedReady, linkedGone, linked]);
+
   // Escape closes the list where it opens over the chat (a phone).
   useEffect(() => {
     if (!listOpen) return;
@@ -293,6 +320,25 @@ export function ProjectChat({
           <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
           <span className="min-w-0 truncate font-medium">{opened?.title ?? 'Thread'}</span>
         </nav>
+        {opened &&
+          outputsOf?.(opened).map((o) => (
+            <a
+              key={o.href}
+              href={o.href}
+              className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <OutputIcon kind={o.kind} />
+              <span className="max-sm:sr-only">{o.label}</span>
+            </a>
+          ))}
+        {opened?.agent && (
+          <span
+            className="hidden shrink-0 rounded-full border border-border px-2 py-0.5 text-muted-foreground text-xs sm:inline"
+            title="The agent doing this work"
+          >
+            {opened.agent.name}
+          </span>
+        )}
         <ThreadStatus status={opened?.status} />
         <button
           ref={panelClose}
@@ -304,6 +350,10 @@ export function ProjectChat({
           <XIcon className="size-4" aria-hidden />
         </button>
       </div>
+      <ThreadChecklist
+        // Live while this view streams the thread's turn; otherwise as the list last read it.
+        tasks={thread.transcript.tasks.length > 0 ? thread.transcript.tasks : opened?.tasks}
+      />
       <ChatView
         controller={thread}
         approvalViews={approvalViews}
@@ -313,6 +363,7 @@ export function ProjectChat({
         onOpenThread={open}
         onLinkClick={onLinkClick}
         work={work}
+        outputsOf={outputsOf}
       />
       <Composer
         label="Message this thread"
@@ -329,7 +380,8 @@ export function ProjectChat({
     <div className={cn('relative flex h-full min-h-0', className)}>
       <ProjectSidebar
         chats={chats}
-        threadsOf={threadsOf}
+        // Threads of an archived chat go with it.
+        threads={[...work.values()].filter((t) => chats.some((c) => c.id === t.parentThreadId))}
         activeChatId={mainId}
         openThreadId={openId}
         // A chat that is answering keeps its place until the answer ends.
@@ -339,11 +391,13 @@ export function ProjectChat({
           if (!openId) opener.current = document.activeElement as HTMLElement | null;
           openFromList(id);
         }}
+        onResolveThread={(t, resolved) => void resolve(t, resolved)}
         onNew={newChat}
         onRename={rename}
         onDelete={deleteChat}
+        outputsOf={outputsOf}
         className={cn(
-          'w-60 shrink-0 border-border border-r bg-background',
+          'w-72 shrink-0 border-border border-r bg-background',
           listOpen ? 'absolute inset-y-0 left-0 z-20 shadow-lg' : 'max-md:hidden',
         )}
       />
@@ -374,6 +428,7 @@ export function ProjectChat({
             onLinkClick={onLinkClick}
             work={work}
             openThreadId={openId}
+            outputsOf={outputsOf}
           />
           <Composer
             placeholder={placeholder}
@@ -443,6 +498,7 @@ export function ChatView({
   work,
   toolViews,
   openThreadId = null,
+  outputsOf,
 }: {
   controller: UseAgentControllerChat;
   approvalViews?: ApprovalViews | undefined;
@@ -456,6 +512,8 @@ export function ChatView({
   work: Map<string, ThreadItem>;
   /** The thread open beside this chat, whose row shows as selected. */
   openThreadId?: string | null;
+  /** What each thread made, shown beside its row (see `ProjectChat`). */
+  outputsOf?: ((t: ThreadItem) => ThreadOutput[]) | undefined;
 }) {
   const { transcript, status, answerQuestion, pendingSuspension } = controller;
   const busy = status === 'streaming';
@@ -504,6 +562,7 @@ export function ChatView({
                         | undefined;
                       const title =
                         result?.title ?? (call.args as { title?: string } | undefined)?.title ?? '';
+                      const started = result?.threadId ? work.get(result.threadId) : undefined;
                       return (
                         <ThreadRow
                           key={partKey(m.id, i)}
@@ -512,6 +571,7 @@ export function ChatView({
                           status={result?.threadId ? work.get(result.threadId)?.status : undefined}
                           open={Boolean(result?.threadId) && result?.threadId === openThreadId}
                           onOpen={onOpenThread}
+                          outputs={started ? outputsOf?.(started) : undefined}
                         />
                       );
                     }

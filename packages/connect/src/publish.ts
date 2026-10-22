@@ -320,6 +320,12 @@ export async function ensureSiteRepo(
   const { organizationId } = await requireAgencyManager(deps.db, ctx);
   const row = await clientSiteRow(deps, client, input.siteId);
   if (row.repoFullName) return row;
+  // A linked project is published by its own host, so Locus never keeps its code.
+  if (row.origin === "linked") {
+    throw new ConnectError(
+      "This site was linked from an existing Vercel project, so Locus doesn't keep its code.",
+    );
+  }
   const installation = await agencyInstallation(deps, organizationId);
 
   let repoFullName: string;

@@ -45,7 +45,13 @@ function apiFor(
         }),
         storage,
         fetch: ghl.fetch,
-        ...(work ? { tools: { [work.tool.id]: work.tool }, ownTextTools: [work.tool.id] } : {}),
+        ...(work
+          ? {
+              tools: { [work.tool.id]: work.tool },
+              ownTextTools: [work.tool.id],
+              modes: [work.supervisor],
+            }
+          : {}),
         ...extras,
       });
       work?.attach(controller);
@@ -575,6 +581,73 @@ describe("work threads, through the chat kit's routes", () => {
     expect(mock().llm.getRequests().length).toBe(modelCalls);
   });
 
+  test("a thread's checklist and latest line show in the list, and the member can resolve it", async () => {
+    mock().llm.on(
+      { userMessage: /autumn tag tidy-up/i, hasToolResult: false },
+      startThread("w-cl-start", "Autumn tags", "Tidy the autumn tags."),
+    );
+    mock().llm.on({ toolCallId: "w-cl-start" }, { content: "Started a thread for it." });
+    mock().llm.on(
+      { userMessage: /tidy the autumn tags/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w-cl-tasks",
+            name: "task_write",
+            arguments: JSON.stringify({
+              tasks: [
+                { content: "List the tags", status: "completed", activeForm: "Listing the tags" },
+                { content: "Merge duplicates", status: "in_progress", activeForm: "Merging" },
+                { content: "Report back", status: "pending", activeForm: "Reporting back" },
+              ],
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "w-cl-tasks" },
+      { content: "Merged 3 duplicate tags.\nMore detail." },
+    );
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+
+    const main = kitEvents(await kit(api, "stream", { text: "Do the autumn tag tidy-up" }));
+    await main.until((e) => e.type === "__done__");
+    const work = (await workThreadReaching(api, "done")) as Listed & {
+      tasks?: unknown;
+      latest?: string;
+      resolved?: boolean;
+    };
+    expect(work.tasks).toEqual([
+      { content: "List the tags", status: "completed" },
+      { content: "Merge duplicates", status: "in_progress" },
+      { content: "Report back", status: "pending" },
+    ]);
+    expect(work.latest).toBe("Merged 3 duplicate tags.");
+
+    const patch = (id: string, body: unknown) =>
+      api.fetch(
+        new Request(
+          `http://locus.test${PREFIX}/kit/agent-controller/threads/${encodeURIComponent(id)}`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        ),
+      );
+    // Only a thread can be resolved, never the chat itself.
+    expect((await patch(work.parentThreadId ?? "", { resolved: true })).status).toBe(409);
+    expect((await patch("someone-elses", { resolved: true })).status).toBe(404);
+    expect((await patch(work.id, { resolved: true })).status).toBe(200);
+    const resolved = (await threads(api)).find((t) => t.id === work.id) as typeof work;
+    expect(resolved).toMatchObject({ resolved: true, status: "done", title: "Autumn tags" });
+    expect((await patch(work.id, { resolved: false })).status).toBe(200);
+    const reopened = (await threads(api)).find((t) => t.id === work.id) as typeof work;
+    expect(reopened.resolved).toBeUndefined();
+    expect(reopened.tasks).toHaveLength(3);
+  }, 20_000);
+
   test("deleting a chat deletes the threads it started", async () => {
     mock().llm.on(
       { userMessage: /summer tag tidy-up/i, hasToolResult: false },
@@ -603,6 +676,68 @@ describe("work threads, through the chat kit's routes", () => {
     const left = (await threads(api)).map((t) => t.id);
     expect(left).not.toContain(mainThread);
     expect(left).not.toContain(work.id);
+  });
+
+  test("the supervisor changes nothing itself; its thread runs as the agent it picked", async () => {
+    const offered = (pattern: RegExp) => {
+      const request = mock()
+        .llm.getRequests()
+        .findLast((r) => pattern.test(JSON.stringify(r.body)))?.body as {
+        tools?: { name?: string; function?: { name?: string } }[];
+      };
+      return (request?.tools ?? []).map((t) => t.name ?? t.function?.name ?? "");
+    };
+    mock().llm.on(
+      { userMessage: /winter tag tidy-up/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w-sup-start",
+            name: "start_thread",
+            arguments: JSON.stringify({
+              title: "Winter tags",
+              brief: "Retire the winter tags.",
+              agent: "operator",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w-sup-start" }, { content: "An operator is on it." });
+    mock().llm.on({ userMessage: /^Retire the winter tags\.$/ }, { content: "Retired them." });
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+
+    const main = kitEvents(
+      await kit(api, "stream", { text: "Do the winter tag tidy-up", mode: "supervisor" }),
+    );
+    await main.until((e) => e.type === "__done__");
+    const supervisorTools = offered(/winter tag tidy-up/i);
+    expect(supervisorTools).toContain("start_thread");
+    expect(supervisorTools).toContain("query_data");
+    expect(supervisorTools).not.toContain("perform_action");
+
+    const work = await workThreadReaching(api, "done");
+    const listed = (await (await kit(api, "threads")).json()) as {
+      threads: (Listed & { agent?: { id: string; name: string } })[];
+    };
+    expect(listed.threads.find((t) => t.id === work.id)?.agent).toEqual({
+      id: "operator",
+      name: "GoHighLevel operator",
+    });
+    // The thread runs in the operator's mode, with every GHL tool.
+    expect(offered(/Retire the winter tags/)).toContain("perform_action");
+
+    // A turn in the thread keeps it there, whatever mode the request names.
+    mock().llm.on({ userMessage: /Check the winter tags/ }, { content: "All gone." });
+    const steer = kitEvents(
+      await kit(api, "stream", {
+        text: "Check the winter tags",
+        threadId: work.id,
+        mode: "supervisor",
+      }),
+    );
+    await steer.until((e) => e.type === "__done__");
+    expect(offered(/Check the winter tags/)).toContain("perform_action");
   });
 
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {

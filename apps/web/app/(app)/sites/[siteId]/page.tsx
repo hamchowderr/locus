@@ -32,6 +32,8 @@ export default async function BuildSite({
     copied?: string;
     restored?: string;
     now?: string;
+    /** The thread that builds this site, opened from the main chat's list. */
+    thread?: string;
   }>;
 }) {
   const { siteId } = await params;
@@ -155,6 +157,7 @@ export default async function BuildSite({
             </div>
           )
         }
+        threadId={typeof query.thread === "string" ? query.thread : null}
         chat={
           chatKitEnabled()
             ? { mode: SITE_BUILDER_MODE_ID, refusal }

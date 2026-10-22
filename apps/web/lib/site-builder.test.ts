@@ -18,7 +18,7 @@ import {
   siteAccessLevel,
   viewOnlySites,
 } from "@locus/auth";
-import { BuilderError, PublishError } from "@locus/builder";
+import { BuilderError, NO_THREAD_SITE, PublishError } from "@locus/builder";
 import {
   ConnectError,
   countSiteLead,
@@ -340,6 +340,111 @@ describe("resolving the builder session", () => {
     const staff = await authorized("staff", clientA);
     const session = await builder.resolve(context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: staff }));
     expect(session.workspace.siteId).toBe(siteId);
+  });
+});
+
+describe("a site-builder thread", () => {
+  /** A chat store with one work thread and one ordinary chat. */
+  const fakeThreads = () => {
+    const tags = new Map<string, string>();
+    return {
+      tags,
+      threads: {
+        of: async (threadId: string) =>
+          threadId === "work" || threadId === "chat"
+            ? { work: threadId === "work", siteId: tags.get(threadId) }
+            : null,
+        tag: async (threadId: string, siteId: string) => {
+          const current = tags.get(threadId);
+          if (current && current !== siteId) return false;
+          tags.set(threadId, siteId);
+          return true;
+        },
+      },
+    };
+  };
+  const inThread = (
+    tools: unknown,
+    name: string,
+    input: unknown,
+    threadId: string,
+    requestContext: unknown = context({}),
+  ) =>
+    // biome-ignore lint/style/noNonNullAssertion: every builder tool has execute
+    (tools as Tools)[name]!.execute!(input, { requestContext, agent: { threadId } } as never);
+
+  it("works only on its own site, which it makes or picks once", async () => {
+    const client = await authorized("owner", clientA);
+    const { siteId: pageSite } = await createClientSite(deps(), ctx("owner"), client, {
+      name: "Page site",
+      kind: "website",
+    });
+    const { tags, threads } = fakeThreads();
+    const builder = createSiteBuilder(deps(), { client, threads });
+    const pageContext = context({ [SITE_ID_KEY]: pageSite });
+
+    // No site yet: the member's chosen site is not the thread's.
+    expect(await inThread(builder.tools, "files", { action: "list" }, "work", pageContext)).toEqual(
+      { error: NO_THREAD_SITE },
+    );
+
+    const made = await inThread(
+      builder.tools,
+      "create_site",
+      { name: "Spring sale", kind: "landing-page", goal: "Sign-ups" },
+      "work",
+    );
+    expect(made.siteId).toBeTruthy();
+    expect(tags.get("work")).toBe(made.siteId);
+    expect((await readBrief(await openClientDb(provisioner, client), made.siteId))?.name).toBe(
+      "Spring sale",
+    );
+
+    // From now on it builds that site, whatever site the member has chosen.
+    const session = await builder.resolve(pageContext, { threadId: "work" });
+    expect(session.workspace.siteId).toBe(made.siteId);
+    await session.release?.();
+    expect(
+      await inThread(builder.tools, "create_site", { name: "Again", kind: "website" }, "work"),
+    ).toEqual({ error: "This thread already has its site." });
+    expect(await inThread(builder.tools, "choose_site", { siteId: pageSite }, "work")).toEqual({
+      error: "This thread already works on another site.",
+    });
+
+    // An ordinary chat keeps building the site its page chose, and can't pick one.
+    const chat = await builder.resolve(pageContext, { threadId: "chat" });
+    expect(chat.workspace.siteId).toBe(pageSite);
+    await chat.release?.();
+    expect(await inThread(builder.tools, "choose_site", { siteId: pageSite }, "chat")).toEqual({
+      error: "Only a thread picks its site. This chat works on the site its page is for.",
+    });
+  });
+
+  it("lists and picks only the client's own sites", async () => {
+    const owner = await authorized("owner", clientA);
+    const { siteId: mine } = await createClientSite(deps(), ctx("owner"), owner, {
+      name: "Mine",
+      kind: "website",
+    });
+    const { siteId: theirs } = await createClientSite(
+      deps(),
+      ctx("owner"),
+      await authorized("owner", clientB),
+      { name: "Theirs", kind: "website" },
+    );
+    const { tags, threads } = fakeThreads();
+    const builder = createSiteBuilder(deps(), { client: owner, threads });
+    expect(await inThread(builder.tools, "list_sites", {}, "work")).toEqual({
+      sites: [{ id: mine, name: "Mine" }],
+    });
+    expect(await inThread(builder.tools, "choose_site", { siteId: theirs }, "work")).toEqual({
+      error: "There's no such site.",
+    });
+    expect(tags.size).toBe(0);
+    expect(await inThread(builder.tools, "choose_site", { siteId: mine }, "work")).toEqual({
+      siteId: mine,
+    });
+    expect(tags.get("work")).toBe(mine);
   });
 });
 
@@ -1058,6 +1163,33 @@ describe("turning the site builder off for clients", () => {
 
     await deleteClientSite(deps(), ctx("owner"), off, siteId);
     expect(await db.select().from(site).where(eq(site.id, siteId))).toEqual([]);
+  });
+});
+
+describe("a site linked from an existing Vercel project", () => {
+  it("can't be chosen, built or copied", async () => {
+    const owner = await authorized("owner", clientA);
+    const siteId = "linked-1";
+    await db.insert(site).values({
+      id: siteId,
+      locationId: clientA,
+      host: "vercel",
+      hostProjectId: "prj_linked",
+      status: "deployed",
+      origin: "linked",
+    });
+    await expect(chooseActiveSite(db, ctx("owner"), owner, siteId)).rejects.toThrow(
+      /linked from an existing Vercel project/,
+    );
+    const builder = createSiteBuilder(deps(), { client: owner });
+    await expect(
+      builder.resolve(context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: owner })),
+    ).rejects.toThrow(/linked from an existing Vercel project/);
+    await expect(
+      copyClientSite(deps(), ctx("owner"), owner, siteId, await authorized("owner", clientB), {
+        name: "Copy",
+      }),
+    ).rejects.toThrow(/linked from an existing Vercel project/);
   });
 });
 

@@ -23,7 +23,8 @@ Work in three steps:
 3. perform_action to change anything, one operation at a time.
 
 When a tool returns { error }, read it, fix the call and try again. Never invent ids: find them
-with query_data. Answer briefly and say what you changed.`;
+with query_data. For work of several steps, list the steps with task_write first and mark each
+one done as you go. Answer briefly and say what you changed.`;
 
 /** Added when the client has connected apps; a fixed line, so instructions still cache. */
 export const APP_INSTRUCTIONS = `For the client's connected apps (email, calendar, Slack and the others on
