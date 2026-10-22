@@ -1,5 +1,10 @@
 export type { DaytonaSandboxConfig } from "./daytona.ts";
-export { DaytonaRuntimeProvider, daytonaFromEnv, daytonaOptions } from "./daytona.ts";
+export {
+  DAYTONA_PREVIEW_HOSTS,
+  DaytonaRuntimeProvider,
+  daytonaFromEnv,
+  daytonaOptions,
+} from "./daytona.ts";
 export type { SandboxProviderName } from "./env.ts";
 export {
   missingSandboxSettings,

@@ -63,6 +63,12 @@ export interface DaytonaSandboxConfig {
    * for a Locus proxy that holds the preview token. Gets the started sandbox and the port.
    */
   previewUrl?: (sandbox: DaytonaSandbox, port: number) => Promise<string>;
+  /**
+   * Hosts the preview URL is served on, which `next dev` must allow as dev origins. Default
+   * `DAYTONA_PREVIEW_HOSTS` (Daytona Cloud's proxy); set it with `previewUrl`, another region's
+   * proxy or a self-hosted Daytona.
+   */
+  previewHosts?: readonly string[];
   /** Bound on each of stdout, stderr and the preview log. Default 64k characters. */
   maxOutputChars?: number;
   /** Prefix of sandbox names. Default `locus-site-`. */
@@ -78,6 +84,12 @@ export interface DaytonaSandboxConfig {
    */
   createSandbox?: (options: DaytonaSandboxOptions) => DaytonaSandbox | Promise<DaytonaSandbox>;
 }
+
+/**
+ * The hosts Daytona Cloud serves preview URLs on (`https://<port>-<id or token>.proxy.daytona.works`),
+ * signed or not.
+ */
+export const DAYTONA_PREVIEW_HOSTS: readonly string[] = ["*.proxy.daytona.works"];
 
 const DEFAULTS = {
   autoStopMinutes: 30,
@@ -305,6 +317,7 @@ async function destroyDetached(key: string, config: DaytonaSandboxConfig): Promi
 
 class DaytonaSiteRuntime implements SiteRuntime {
   readonly id: string;
+  readonly previewHosts: readonly string[];
   readonly key: string;
   private readonly config: DaytonaSandboxConfig;
   private readonly onStop: () => void;
@@ -329,6 +342,7 @@ class DaytonaSiteRuntime implements SiteRuntime {
     this.onStop = onStop;
     this.pinned = pinned;
     this.id = sandboxName(key, config.namePrefix ?? DEFAULTS.namePrefix);
+    this.previewHosts = config.previewHosts ?? DAYTONA_PREVIEW_HOSTS;
   }
 
   private get root(): string {
