@@ -60,18 +60,28 @@ export async function handleVercelWebhook(
     .where(and(eq(hostConnection.provider, "vercel"), eq(hostConnection.teamId, scope)));
   let removed = 0;
   for (const row of rows) {
-    const sealed = await deps.secrets.get(row.secretRef);
-    const grant = sealed ? (JSON.parse(sealed) as Partial<VercelGrant>) : undefined;
-    // A connection whose token is already gone was this installation's too.
+    // A token that's already gone, or can't be read, was this installation's too.
+    let grant: Partial<VercelGrant> | undefined;
+    try {
+      const sealed = await deps.secrets.get(row.secretRef);
+      grant = sealed ? (JSON.parse(sealed) as Partial<VercelGrant>) : undefined;
+    } catch {
+      // Not the error itself: a parse error can quote the token.
+      console.error("Couldn't read a sealed Vercel grant; removing its connection.");
+    }
     if (grant && grant.configurationId !== configurationId) continue;
-    await deps.db
+    // Matching connectedAt keeps a connection the agency made again meanwhile.
+    const deleted = await deps.db
       .delete(hostConnection)
       .where(
         and(
           eq(hostConnection.organizationId, row.organizationId),
           eq(hostConnection.secretRef, row.secretRef),
+          eq(hostConnection.connectedAt, row.connectedAt),
         ),
-      );
+      )
+      .returning({ secretRef: hostConnection.secretRef });
+    if (deleted.length === 0) continue;
     await deps.secrets.delete(row.secretRef);
     removed++;
   }

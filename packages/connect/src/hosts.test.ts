@@ -6,7 +6,7 @@ import { ClientAccessDenied, type SessionContext } from "@locus/auth";
 import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import { githubInstallation, hostConnection, member, organization, user } from "@locus/db/control";
 import { MemorySecretStore } from "@locus/secrets";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectError } from "./agency.ts";
 import {
   connectGithub,
@@ -279,5 +279,18 @@ describe("the Vercel integration removed on Vercel's side", () => {
     }
     expect(await db.select().from(hostConnection)).toHaveLength(1);
     expect(await secrets.get(vercelSecretRef("agency-a"))).toBeDefined();
+  });
+
+  it("removes a connection whose sealed token can't be read", async () => {
+    await connectVercel(vercelDeps(), ctx("owner", "agency-a"), { code: STUB_VERCEL_CODE });
+    await secrets.set(vercelSecretRef("agency-a"), "not json");
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await handleVercelWebhook({ db, secrets }, removed(STUB_VERCEL_CONFIGURATION))).toBe(
+      "disconnected",
+    );
+    expect(await db.select().from(hostConnection)).toEqual([]);
+    expect(await secrets.get(vercelSecretRef("agency-a"))).toBeUndefined();
+    logged.mockRestore();
   });
 });
