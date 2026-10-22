@@ -6,7 +6,13 @@
  */
 
 import { createClient } from "@libsql/client";
-import { clientWorkThreads, createAgentApi, KIT_STREAM_BODY_LIMIT } from "@locus/agent-api";
+import {
+  clientSiteThreads,
+  clientWorkThreads,
+  createAgentApi,
+  KIT_STREAM_BODY_LIMIT,
+  OPERATOR_AGENT,
+} from "@locus/agent-api";
 import {
   type AuthorizedClient,
   authorizeClient,
@@ -18,7 +24,7 @@ import {
   resolveActiveClient,
   type SessionContext,
 } from "@locus/auth";
-import { imagesFromEnv } from "@locus/builder";
+import { imagesFromEnv, SITE_BUILDER_AGENT } from "@locus/builder";
 import {
   activeSiteIdForSession,
   createSiteBuilder,
@@ -389,6 +395,8 @@ export function createHost({
               client: await anyAuthorized(clientId),
               requester: (requestContext) =>
                 runClient(requestContext as { get: (key: string) => unknown } | undefined),
+              // A thread the main chat starts builds only its own site.
+              threads: clientSiteThreads(storage),
             },
           )
         : null;
@@ -397,7 +405,10 @@ export function createHost({
       const appSettings = tenantDbOver(clientDb);
       // The main chat hands longer work to threads of their own (`start_thread`), which run in
       // the background and report back. Its result is the new thread's id and title only.
-      const workThreads = clientWorkThreads(storage);
+      const workThreads = clientWorkThreads(
+        storage,
+        builder ? [OPERATOR_AGENT, SITE_BUILDER_AGENT] : [OPERATOR_AGENT],
+      );
       const controller = await createLocusController({
         model,
         locationId,
