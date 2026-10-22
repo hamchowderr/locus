@@ -127,13 +127,66 @@ function label(call: Call, result: Result): string | null {
   return null;
 }
 
+/**
+ * The first line of a build's output that says what went wrong (`Type error: …`, `Module not
+ * found: …`), else its first line, at most 200 characters.
+ */
+export function buildError(output: unknown, step?: unknown): string {
+  const lines = (typeof output === "string" ? output : "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && line !== "…");
+  const line =
+    lines.find((l) => /error/i.test(l)) ??
+    lines.find((l) => /cannot|can't|not found|failed/i.test(l)) ??
+    lines[0] ??
+    `The ${str(step) ?? "build"} failed.`;
+  return line.length <= 200 ? line : `${line.slice(0, 199)}…`;
+}
+
+/**
+ * Why a `check_site` call found the site doesn't build, or undefined when it built (or isn't a
+ * check that ran). A failed build is a normal result `{ ok: false, step, output }`, not an error.
+ */
+export function checkFailure(call: Pick<Call, "name">, result: Result): string | undefined {
+  if (call.name !== "check_site" || !result || callFailed(result)) return undefined;
+  const out = result.result as { ok?: unknown; step?: unknown; output?: unknown } | undefined;
+  return out?.ok === false ? buildError(out.output, out.step) : undefined;
+}
+
 /** A builder tool call as a step row, or null when it isn't one of the builder's tools. */
 export function builderStep(call: Call, result: Result): BuilderStep | null {
   const text = label(call, result);
   if (!text) return null;
+  const broken = checkFailure(call, result);
+  if (broken) return { label: text, detail: broken, failed: true };
   if (!callFailed(result)) return { label: text };
   const detail = failure(result);
   return detail ? { label: text, detail, failed: true } : { label: text, failed: true };
+}
+
+type Part = { type: string; name?: unknown; result?: unknown; isError?: unknown };
+
+/**
+ * What the newest `check_site` in a conversation found: the problem in a line when the build
+ * failed, null when it passed or nothing has checked the site yet. So a failure shows until a
+ * later check passes.
+ */
+export function lastCheckFailure(
+  messages: ReadonlyArray<{ content: ReadonlyArray<Part> }>,
+): string | null {
+  for (let m = messages.length - 1; m >= 0; m--) {
+    const content = messages[m]?.content ?? [];
+    for (let p = content.length - 1; p >= 0; p--) {
+      const part = content[p];
+      if (part?.type !== "tool_result" || part.name !== "check_site") continue;
+      const result = { result: part.result, isError: part.isError === true };
+      // A check that couldn't run says nothing about the build either way.
+      if (callFailed(result)) continue;
+      return checkFailure({ name: "check_site" }, result) ?? null;
+    }
+  }
+  return null;
 }
 
 /** Tools that change the site's files without naming them: components, images, CRM pieces. */
@@ -144,6 +197,38 @@ function wroteFiles(name: string, action: unknown): boolean {
   if (name === "crm") return typeof action === "string" && /^(add_|use_media$)/.test(action);
   if (name === "database") return action === "add";
   return true;
+}
+
+/**
+ * Whether a call changed the site's files, so the preview needs loading again: a file written,
+ * edited or deleted, a version restored, or a tool from OTHER_CHANGES that wrote files.
+ */
+export function changedFiles(call: Call, result: Result): boolean {
+  if (!result || callFailed(result)) return false;
+  const action = ((call.args ?? {}) as { action?: unknown }).action;
+  if (call.name === "files") return action === "write" || action === "edit" || action === "delete";
+  if (call.name === "versions") return action === "restore";
+  return OTHER_CHANGES.has(call.name) && wroteFiles(call.name, action);
+}
+
+/** Whether any of the calls named by `ids` changed the site's files, as the conversation has them. */
+export function callsChangedFiles(
+  messages: ReadonlyArray<{ content: ReadonlyArray<Part & { id?: unknown; args?: unknown }> }>,
+  ids: ReadonlySet<string>,
+): boolean {
+  const calls = new Map<string, Call>();
+  const results = new Map<string, Result>();
+  for (const { content } of messages) {
+    for (const part of content) {
+      if (typeof part.id !== "string" || !ids.has(part.id)) continue;
+      if (part.type === "tool_call" && typeof part.name === "string") {
+        calls.set(part.id, { name: part.name, args: part.args });
+      } else if (part.type === "tool_result") {
+        results.set(part.id, { result: part.result, isError: part.isError === true });
+      }
+    }
+  }
+  return [...calls].some(([id, call]) => changedFiles(call, results.get(id)));
 }
 
 /** A saved version, as a `versions` save call's result says. */

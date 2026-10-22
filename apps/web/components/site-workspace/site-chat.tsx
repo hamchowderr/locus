@@ -6,15 +6,12 @@ import type { ToolViews } from "@/components/chat/tool-steps";
 import { ChatView, Composer } from "@/components/chat-project/project-chat";
 import { useAgentControllerChat } from "@/lib/agent-controller/use-agent-controller-chat";
 import type { ThreadItem } from "@/lib/agent-controller/use-threads";
-import { builderStep, savedVersion } from "@/lib/builder-steps";
+import { builderStep, callsChangedFiles, savedVersion } from "@/lib/builder-steps";
 import { cn } from "@/lib/utils";
 import { VersionCard } from "./version-card";
 
 /** How often a thread working on the site in the background is read again. */
 const THREAD_POLL_MS = 4_000;
-
-/** The builder tools whose success means the site's files changed. */
-const CHANGES_FILES = new Set(["files", "versions", "add_dependency"]);
 
 const noThreads = new Map<string, ThreadItem>();
 
@@ -40,12 +37,16 @@ export function useSiteChat({
   /** Called when a turn that changed the site's files ends. */
   onFilesChanged: () => void;
 }) {
-  const changed = useRef(false);
+  // The tool calls that finished in the turn streaming now; whether they changed the site's
+  // files is read from the conversation (their arguments and results) when the turn ends.
+  const ended = useRef(new Set<string>());
   const controller = useAgentControllerChat({
     onToolEnd: (tool) => {
-      if (!tool.isError && CHANGES_FILES.has(tool.toolName)) changed.current = true;
+      if (!tool.isError) ended.current.add(tool.toolCallId);
     },
   });
+  const messages = useRef(controller.transcript.messages);
+  messages.current = controller.transcript.messages;
   const [problem, setProblem] = useState<string | null>(null);
 
   // Open the site's conversation once, if it has one. Nothing is sent until this settles, so
@@ -130,9 +131,10 @@ export function useSiteChat({
   const filesChanged = useRef(onFilesChanged);
   filesChanged.current = onFilesChanged;
   useEffect(() => {
-    if (wasBusy.current && !busy && changed.current) {
-      changed.current = false;
-      filesChanged.current();
+    if (wasBusy.current && !busy && ended.current.size > 0) {
+      const ids = ended.current;
+      ended.current = new Set();
+      if (callsChangedFiles(messages.current, ids)) filesChanged.current();
     }
     wasBusy.current = busy;
   }, [busy]);

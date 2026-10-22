@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { builderStep, savedVersion } from "./builder-steps";
+import {
+  buildError,
+  builderStep,
+  callsChangedFiles,
+  changedFiles,
+  checkFailure,
+  lastCheckFailure,
+  savedVersion,
+} from "./builder-steps";
 
 const call = (name: string, args: unknown, id = name) => ({ id, name, args });
 
@@ -26,8 +34,36 @@ describe("builderStep", () => {
     expect(builderStep(call("check_site", {}), { result: { ok: false } })?.label).toBe(
       "Checked the site and found a problem",
     );
-    expect(builderStep(call("check_site", {}), { result: { ok: true } })?.label).toBe(
-      "Checked the site",
+    expect(builderStep(call("check_site", {}), { result: { ok: true } })).toEqual({
+      label: "Checked the site",
+    });
+  });
+
+  it("marks a failed build as failed, with the line that says what went wrong", () => {
+    // check_site returns a failed build as a normal result, not an error.
+    const output = [
+      "   ▲ Next.js 16.0.0",
+      "   Creating an optimized production build ...",
+      "Failed to compile.",
+      "",
+      "./app/page.tsx:3:10",
+      "Type error: Cannot find name 'Hero'.",
+    ].join("\n");
+    expect(
+      builderStep(call("check_site", {}), { result: { ok: false, step: "build", output } }),
+    ).toEqual({
+      label: "Checked the site and found a problem",
+      detail: "Type error: Cannot find name 'Hero'.",
+      failed: true,
+    });
+    // No output still says something, and a long line is cut to fit.
+    expect(
+      builderStep(call("check_site", {}), { result: { ok: false, step: "install" } })?.detail,
+    ).toBe("The install failed.");
+    expect(buildError(`Error: ${"x".repeat(300)}`)).toHaveLength(200);
+    // The preview's own ok: false is the preview's business, not a build check.
+    expect(checkFailure({ name: "preview" }, { result: { ok: false, output: "Error" } })).toBe(
+      undefined,
     );
   });
 
@@ -70,6 +106,94 @@ describe("builderStep", () => {
 
   it("leaves tools it doesn't know to the plain view", () => {
     expect(builderStep(call("find_app_tools", {}), undefined)).toBeNull();
+  });
+});
+
+describe("lastCheckFailure", () => {
+  const check = (id: string, result: unknown, isError = false) => ({
+    content: [
+      { type: "tool_call", id, name: "check_site", args: {} },
+      { type: "tool_result", id, name: "check_site", result, isError },
+    ],
+  });
+  const broken = { ok: false, step: "build", output: "Error: Module not found: './hero'" };
+
+  it("is the newest check's failure until a later check passes", () => {
+    expect(lastCheckFailure([])).toBeNull();
+    expect(lastCheckFailure([check("1", { ok: true }), check("2", broken)])).toBe(
+      "Error: Module not found: './hero'",
+    );
+    expect(lastCheckFailure([check("1", broken), check("2", { ok: true })])).toBeNull();
+  });
+
+  it("looks past a check that couldn't run", () => {
+    expect(lastCheckFailure([check("1", broken), check("2", { error: "No credits left." })])).toBe(
+      "Error: Module not found: './hero'",
+    );
+    expect(lastCheckFailure([check("1", broken), check("2", undefined, true)])).toBe(
+      "Error: Module not found: './hero'",
+    );
+  });
+});
+
+describe("changedFiles", () => {
+  const ok = { result: {} };
+
+  it("is true for every builder step that writes the site's files", () => {
+    for (const [name, args] of [
+      ["files", { action: "write", path: "a.tsx" }],
+      ["files", { action: "edit", path: "a.tsx" }],
+      ["files", { action: "delete", paths: ["a.tsx"] }],
+      ["add_dependency", { package: "zod" }],
+      ["add_dependency", { component: "card" }],
+      ["generate_image", { path: "public/hero.png" }],
+      ["crm", { action: "add_booking" }],
+      ["crm", { action: "add_tracking" }],
+      ["crm", { action: "use_media" }],
+      ["database", { action: "add" }],
+      ["versions", { action: "restore", number: 2 }],
+    ] as const) {
+      expect(changedFiles(call(name, args), ok), `${name} ${JSON.stringify(args)}`).toBe(true);
+    }
+  });
+
+  it("is false for steps that only look, and for any that failed or hasn't finished", () => {
+    for (const [name, args] of [
+      ["files", { action: "read", path: "a.tsx" }],
+      ["files", { action: "list" }],
+      ["crm", { action: "calendars" }],
+      ["crm", { action: "media" }],
+      ["database", { action: "apply" }],
+      ["versions", { action: "save", message: "x" }],
+      ["versions", { action: "list" }],
+      ["check_site", {}],
+      ["preview", {}],
+    ] as const) {
+      expect(changedFiles(call(name, args), ok), `${name} ${JSON.stringify(args)}`).toBe(false);
+    }
+    const write = call("files", { action: "write", path: "a.tsx" });
+    expect(changedFiles(write, undefined)).toBe(false);
+    expect(changedFiles(write, { isError: true })).toBe(false);
+    expect(changedFiles(write, { result: { error: "write needs a path" } })).toBe(false);
+  });
+
+  it("reads a turn's finished calls from the conversation", () => {
+    const messages = [
+      {
+        content: [
+          { type: "tool_call", id: "1", name: "files", args: { action: "read", path: "a" } },
+          { type: "tool_call", id: "2", name: "crm", args: { action: "use_media" } },
+        ],
+      },
+      {
+        content: [
+          { type: "tool_result", id: "1", name: "files", result: { content: "" } },
+          { type: "tool_result", id: "2", name: "crm", result: { used: "public/a.png" } },
+        ],
+      },
+    ];
+    expect(callsChangedFiles(messages, new Set(["1"]))).toBe(false);
+    expect(callsChangedFiles(messages, new Set(["1", "2"]))).toBe(true);
   });
 });
 

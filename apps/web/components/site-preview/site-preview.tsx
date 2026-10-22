@@ -55,7 +55,10 @@ export function SitePreview({
    * against), the page's full address and its route. Null until a preview has started.
    */
   onPageChange?: (page: { origin: string; url: string; route: string } | null) => void;
-  /** Bump to load the page in the frame again (after the site builder changed files). */
+  /**
+   * Bump to show the site's latest files (after the site builder changed them): the preview
+   * starts again, which syncs them into the sandbox and lists the pages, then the frame reloads.
+   */
   reloadSignal?: number;
 }) {
   const [preview, setPreview] = useState<Started | null>(null);
@@ -91,12 +94,15 @@ export function SitePreview({
     run();
   }, [run, version]);
 
+  // A reload starts the preview again rather than only loading the frame again: that puts the
+  // draft's latest files into the sandbox first, and lists the pages again (a new page shows in
+  // the page picker). Both are quick once the preview runs.
   const lastReload = useRef(reloadSignal);
   useEffect(() => {
     if (lastReload.current === reloadSignal) return;
     lastReload.current = reloadSignal;
-    setReloads((n) => n + 1);
-  }, [reloadSignal]);
+    run();
+  }, [run, reloadSignal]);
 
   const src = preview ? pageUrl(preview.url, route) : null;
   const pageChanged = useRef(onPageChange);
