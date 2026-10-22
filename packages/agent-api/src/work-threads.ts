@@ -17,17 +17,54 @@
  * - A report carries the thread's own words into the main chat, so what reads like
  *   instructions in it is withheld, as in any GHL data.
  * - Its sessions get no grants: Locus's approval rules hold there as everywhere.
+ *
+ * The main chat is a supervisor (`SUPERVISOR_MODE`): it reads and answers, and hands every
+ * change to a thread run by one of the specialist agents (`ThreadAgent`), each a controller
+ * mode with its own instructions and tools.
  */
 
-import { isTainted, withholdInstructions } from "@locus/harness";
-import type { AgentController } from "@mastra/core/agent-controller";
+import { ASK_TOOLS, isTainted, OWN_STATE_TOOLS, withholdInstructions } from "@locus/harness";
+import type { AgentController, AgentControllerMode } from "@mastra/core/agent-controller";
 import type { MastraStorage } from "@mastra/core/storage";
-import { createWorkThreads, type WorkThreads } from "./mastra/lib/work-threads.ts";
+import { START_THREAD_TOOL } from "./mastra/lib/work-thread-info.ts";
+import {
+  createWorkThreads,
+  type ThreadAgent,
+  type WorkThreads,
+} from "./mastra/lib/work-threads.ts";
+
+/** The agent that reads and changes the sub-account's GoHighLevel records. */
+export const OPERATOR_AGENT: ThreadAgent = {
+  id: "operator",
+  name: "GoHighLevel operator",
+  description:
+    "Reads and changes this sub-account's GoHighLevel records: contacts, conversations, opportunities, calendars, invoices, tags, workflows and the rest.",
+  modeId: "act",
+};
+
+export const SUPERVISOR_MODE_ID = "supervisor";
+
+/** The main chat: reads and answers itself, and hands every change to a thread. */
+export const SUPERVISOR_MODE: AgentControllerMode = {
+  id: SUPERVISOR_MODE_ID,
+  name: "Supervisor",
+  description: "Answers questions about the sub-account and hands work to agents in threads.",
+  instructions: `You are this sub-account's main chat. You answer questions yourself, reading with
+load_skill and query_data. You change nothing here: hand every change, and any work of several
+steps, to a thread with start_thread, choosing the agent that fits, and give it a full brief. A
+request with several parts (a website, a funnel page and an email campaign, say) gets one thread
+per part. Work in the client's connected apps goes to a thread too. Then say in a sentence or
+two which threads you started.`,
+  availableTools: [...new Set([...ASK_TOOLS, ...OWN_STATE_TOOLS, START_THREAD_TOOL])],
+};
 
 const attached = new WeakMap<AgentController, WorkThreads>();
 
 /** Work threads over one client's store, to attach to that client's controller once made. */
-export function clientWorkThreads(storage: MastraStorage) {
+export function clientWorkThreads(
+  storage: MastraStorage,
+  agents: readonly ThreadAgent[] = [OPERATOR_AGENT],
+) {
   let attach!: (controller: AgentController) => void;
   const controller = new Promise<AgentController>((resolve) => {
     attach = resolve;
@@ -35,6 +72,7 @@ export function clientWorkThreads(storage: MastraStorage) {
   const threads = createWorkThreads({
     getController: () => controller,
     storage,
+    agents,
     requireApproval: isTainted,
     startsUntrusted: isTainted,
     screenReport: (text) => {
@@ -45,6 +83,8 @@ export function clientWorkThreads(storage: MastraStorage) {
   return {
     /** The `start_thread` tool, for `createLocusController({ tools })`. */
     tool: threads.tool,
+    /** The main chat's mode, for `createLocusController({ modes })`. */
+    supervisor: SUPERVISOR_MODE,
     /** Binds the work threads to the controller made with `tool`. */
     attach(made: AgentController) {
       attached.set(made, threads);

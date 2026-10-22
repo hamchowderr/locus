@@ -418,7 +418,10 @@ export function createHost({
           : {}),
         tools: { ...builder?.tools, [workThreads.tool.id]: workThreads.tool },
         ownTextTools: [...(builder?.ownTextTools ?? []), workThreads.tool.id],
-        ...(builder ? { modes: builder.modes, processors: builder.processors } : {}),
+        // The chat page names the supervisor on every turn, and the server saves it on the chat;
+        // work threads keep their agent's mode whatever a turn names.
+        modes: [workThreads.supervisor, ...(builder?.modes ?? [])],
+        ...(builder ? { processors: builder.processors } : {}),
       });
       workThreads.attach(controller);
       return controller;
