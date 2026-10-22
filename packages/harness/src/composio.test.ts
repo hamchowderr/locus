@@ -576,6 +576,21 @@ describe("Composio connections", () => {
     expect(deleted()).toEqual(["ca_gmail", "ca_second"]);
   });
 
+  test("a client that goes loses every app it connected, in any state", async () => {
+    routes[`GET ${ACCOUNTS}`] = () =>
+      accountsBody([
+        ["ca_gmail", "ACTIVE"],
+        ["ca_slack", "EXPIRED", "slack"],
+      ]);
+    routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
+    routes[`DELETE ${ACCOUNTS}/ca_slack`] = () => ({ success: true });
+    await connections().disconnectAll("client-1");
+    const [list] = seen.filter((s) => s.path === ACCOUNTS);
+    expect(list?.query.getAll("user_ids").join(",")).toContain(appUserId("client-1"));
+    expect(list?.query.getAll("toolkit_slugs")).toEqual([]);
+    expect(deleted()).toEqual(["ca_gmail", "ca_slack"]);
+  });
+
   test("an app that left the catalog can still be disconnected; a strange name can't", async () => {
     routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_old", "ACTIVE", "oldapp"]]);
     routes[`DELETE ${ACCOUNTS}/ca_old`] = () => ({ success: true });

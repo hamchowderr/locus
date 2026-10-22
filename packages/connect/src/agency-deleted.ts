@@ -1,5 +1,5 @@
-import type { ControlDb } from "@locus/db";
-import { agencyGhlConnection, hostConnection } from "@locus/db/control";
+import { type ControlDb, offboardLocation, type TenantProvisioner } from "@locus/db";
+import { agencyGhlConnection, hostConnection, location } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
 import { eq } from "drizzle-orm";
 import { ghlSecretRef } from "./agency.ts";
@@ -40,4 +40,34 @@ export async function deleteAgencySecrets(
     ...host.map((row) => row.secretRef),
   ]);
   for (const path of paths) await deps.secrets.delete(path);
+}
+
+/**
+ * Removes what an agency's clients leave outside the control database: each client's connected
+ * apps (its Composio user's accounts), its app-style sites' databases and its own database
+ * (`offboardLocation`). A client's registry row goes too, so nothing names the client after.
+ *
+ * Run it before the agency is deleted: a failure stops the deletion and a retry picks up where it
+ * stopped, since each client is removed only once its apps and databases are gone.
+ */
+export async function offboardAgencyClients(
+  deps: {
+    db: ControlDb;
+    /** Built only when the agency has a client, so one with none needs no database service. */
+    provisioner: () => TenantProvisioner;
+    /** Removes every app the client connected; left out where connected apps aren't set up. */
+    disconnectApps?: (clientId: string) => Promise<void>;
+  },
+  organizationId: string,
+): Promise<void> {
+  const clients = await deps.db
+    .select({ id: location.id })
+    .from(location)
+    .where(eq(location.organizationId, organizationId));
+  if (clients.length === 0) return;
+  const provisioner = deps.provisioner();
+  for (const client of clients) {
+    await deps.disconnectApps?.(client.id);
+    await offboardLocation({ control: deps.db, provisioner }, client.id);
+  }
 }
