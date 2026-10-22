@@ -1,20 +1,43 @@
+import type { ControlDb } from "@locus/db";
+import { agencyGhlConnection, hostConnection } from "@locus/db/control";
 import type { SecretStore } from "@locus/secrets";
+import { eq } from "drizzle-orm";
 import { ghlSecretRef } from "./agency.ts";
 import { vercelSecretRef } from "./vercel.ts";
 
 /**
- * Removes every credential Locus sealed for an agency: its GHL grant and its Vercel token. The
+ * Removes every credential Locus sealed for an agency: its GHL grant and its host token. The
  * agency's connection rows go with the agency (they cascade), but the sealed values live in
  * `secret` by path, with no foreign key, so they would outlive it. GitHub keeps none per agency:
  * the App's installation token is minted on demand from the App's own key.
  *
- * Run before the agency is deleted, so a failure stops the deletion instead of leaving tokens
- * no agency owns. Deleting a path that isn't there is not an error, so a retry is safe.
+ * The paths come from the agency's connection rows while they exist, and the paths Locus saves
+ * them at today always, so a row naming another path (a new host) is not missed and a run after
+ * the rows are gone still finds the usual ones.
+ *
+ * Run it before the agency is deleted, so a failure stops the deletion instead of leaving tokens
+ * no agency owns, and again after, for a token a renewal saved meanwhile. Deleting a path that
+ * isn't there is not an error, so a retry is safe.
  */
 export async function deleteAgencySecrets(
-  secrets: Pick<SecretStore, "delete">,
+  deps: { db: ControlDb; secrets: Pick<SecretStore, "delete"> },
   organizationId: string,
 ): Promise<void> {
-  await secrets.delete(ghlSecretRef(organizationId));
-  await secrets.delete(vercelSecretRef(organizationId));
+  const [ghl, host] = await Promise.all([
+    deps.db
+      .select({ secretRef: agencyGhlConnection.secretRef })
+      .from(agencyGhlConnection)
+      .where(eq(agencyGhlConnection.organizationId, organizationId)),
+    deps.db
+      .select({ secretRef: hostConnection.secretRef })
+      .from(hostConnection)
+      .where(eq(hostConnection.organizationId, organizationId)),
+  ]);
+  const paths = new Set([
+    ghlSecretRef(organizationId),
+    vercelSecretRef(organizationId),
+    ...ghl.map((row) => row.secretRef),
+    ...host.map((row) => row.secretRef),
+  ]);
+  for (const path of paths) await deps.secrets.delete(path);
 }
