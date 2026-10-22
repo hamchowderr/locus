@@ -1425,14 +1425,17 @@ export async function siteSeo(
   return checks;
 }
 
-/** The sites' names from their briefs in the client's database, by site id. */
-export async function siteNames(
+/** What a site is, from its brief: its name and kind (website, funnel, ...). */
+export type SiteSummary = { name: string; kind: SiteKind };
+
+/** The sites' names and kinds from their briefs in the client's database, by site id. */
+export async function siteSummaries(
   deps: Pick<SiteBuilderDeps, "openClientDb">,
   client: AuthorizedClient,
   siteIds: string[],
-): Promise<Map<string, string>> {
-  const names = new Map<string, string>();
-  if (siteIds.length === 0) return names;
+): Promise<Map<string, SiteSummary>> {
+  const summaries = new Map<string, SiteSummary>();
+  if (siteIds.length === 0) return summaries;
   const { db: tenant, release } = await leaseClientDb(deps.openClientDb, client);
   try {
     for (const id of siteIds) {
@@ -1442,12 +1445,22 @@ export async function siteNames(
         console.error("A site's brief couldn't be read", { siteId: id, error });
         return null;
       });
-      if (brief) names.set(id, brief.name);
+      if (brief) summaries.set(id, { name: brief.name, kind: brief.kind });
     }
   } finally {
     release();
   }
-  return names;
+  return summaries;
+}
+
+/** The sites' names from their briefs in the client's database, by site id. */
+export async function siteNames(
+  deps: Pick<SiteBuilderDeps, "openClientDb">,
+  client: AuthorizedClient,
+  siteIds: string[],
+): Promise<Map<string, string>> {
+  const summaries = await siteSummaries(deps, client, siteIds);
+  return new Map([...summaries].map(([id, s]) => [id, s.name]));
 }
 
 export { saveVisualEdits, type VisualEditsSaved } from "./visual-edits.ts";
