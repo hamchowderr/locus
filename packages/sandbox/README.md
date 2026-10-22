@@ -47,17 +47,23 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   call (`retryOnDead`). Seeding (`onCreate`, the same `.locus/seeded` marker) runs in Mastra's
   `onStart` hook, so it also covers a sandbox recreated mid-call, and every other call waits for
   it. `install` shares one in-flight install per runtime and takes a `flock` in the sandbox, so
-  the web app and the agent server never install at once; the dev server holds a lock for its
-  life, so a second `startPreview` from another process leaves it running. `next dev` is spawned
-  in the background through Mastra's process manager with no timeout or abort signal, its output
-  in a log file (`previewLogs`).
+  the web app and the agent server never install at once; the shell running the dev server holds
+  a lock while it runs (the dev server itself doesn't inherit it, so nothing it leaves behind
+  keeps it), so a second `startPreview` from another process leaves it running. Both locks need
+  `flock` (util-linux) in the image; without it they are skipped. `next dev` is spawned in the
+  background through Mastra's process manager with no timeout or abort signal, its output in a
+  log file (`previewLogs`).
+  Deleting a site marks its runtime deleted before the sandbox goes: a call still under way whose
+  sandbox vanished can neither find nor create one again (Mastra's `find`/`create` steps refuse,
+  and so does the start hook), so a deleted client's files are never seeded anywhere.
   The preview URL is Daytona's **signed preview URL** for the port (expires after
   `previewUrlTtlSeconds`, default 6 h; asked for again on every `startPreview`). It carries no
   API key, but the browser does hold a short-lived preview token. `previewUrl` is the seam for a
   Locus proxy that keeps the token server-side instead (not built yet).
   Files reach the sandbox only through `writeFiles` (the draft in Locus stays the source of
   truth); Mastra's workspace tools are never handed to an agent.
-  Tests run the real `DaytonaSandbox` on a fake Daytona client (`createSandbox`).
+  Tests run the real `DaytonaSandbox` on a fake Daytona client (`createSandbox`), and the install
+  and preview scripts for real under `sh` (`installScript`, `previewLaunchScript`).
 - **`FakeRuntimeProvider`** (`@locus/sandbox/fake`, also exported from the index): in-memory
   files, a scriptable `(cmd, args, files) => Partial<CommandResult>` handler (exit 0 by default),
   every call in `runtime.calls`, preview URL `https://preview.fake/<key>`, `setPreviewLogs()`.

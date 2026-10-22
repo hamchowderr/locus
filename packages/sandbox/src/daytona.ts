@@ -113,6 +113,62 @@ const PNPM_FALLBACK = "npx --yes pnpm@10.28.0";
 /** The exit code Mastra's Daytona process handle reports for a command it cut at its timeout. */
 const TIMED_OUT_EXIT = 124;
 
+/** Where the scripts below keep their locks and state in the sandbox; tests point them elsewhere. */
+export interface SandboxScriptPaths {
+  installLock: string;
+  previewLock: string;
+  previewPid: string;
+  previewLog: string;
+}
+
+const SCRIPT_PATHS: SandboxScriptPaths = {
+  installLock: INSTALL_LOCK,
+  previewLock: PREVIEW_LOCK,
+  previewPid: PREVIEW_PID,
+  previewLog: PREVIEW_LOG,
+};
+
+/**
+ * Installs in the project root (the cwd) when `package.json` or a lockfile changed since the
+ * last successful install. It takes the install lock first and only then compares the stamp, so a
+ * second install (another process) waits for the first and then finds nothing to do.
+ */
+export function installScript(paths: SandboxScriptPaths = SCRIPT_PATHS): string {
+  const digest = `{ cat package.json; cat pnpm-lock.yaml 2>/dev/null; cat package-lock.json 2>/dev/null; } | sha256sum | cut -d' ' -f1`;
+  return [
+    `[ -f package.json ] || { echo "package.json not found" >&2; exit 1; }`,
+    `if command -v flock >/dev/null 2>&1; then exec 9>${shellQuote(paths.installLock)}; flock 9; fi`,
+    `sum=$(${digest})`,
+    `if [ -f ${INSTALL_STAMP} ] && [ "$(cat ${INSTALL_STAMP})" = "$sum" ]; then echo "dependencies up to date"; exit 0; fi`,
+    `if [ -f package-lock.json ] && [ ! -f pnpm-lock.yaml ]; then npm install`,
+    `elif command -v pnpm >/dev/null 2>&1; then pnpm install`,
+    `else ${PNPM_FALLBACK} install; fi`,
+    `code=$?`,
+    `if [ "$code" -eq 0 ]; then mkdir -p node_modules && ${digest} > ${INSTALL_STAMP}; fi`,
+    `exit "$code"`,
+  ].join("\n");
+}
+
+/**
+ * Starts `next dev` from the project root (the cwd). This shell holds the preview lock for as
+ * long as the dev server runs and waits on it, so a start from another process (the web app and
+ * the agent server share sandboxes) finds it taken, exits 0 and leaves the running one alone. The
+ * dev server itself gets the lock's descriptor closed, so a process it leaves behind can never
+ * keep the lock once it has died; the pid file names the dev server.
+ */
+export function previewLaunchScript(
+  port: number,
+  paths: SandboxScriptPaths = SCRIPT_PATHS,
+): string {
+  return [
+    `exec 9>${shellQuote(paths.previewLock)}`,
+    `if command -v flock >/dev/null 2>&1; then flock -n 9 || exit 0; fi`,
+    `./node_modules/.bin/next dev --port ${port} --hostname 0.0.0.0 > ${shellQuote(paths.previewLog)} 2>&1 9>&- &`,
+    `echo $! > ${shellQuote(paths.previewPid)}`,
+    `wait $!`,
+  ].join("\n");
+}
+
 function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
@@ -223,6 +279,24 @@ async function buildSandbox(
   return (config.createSandbox ?? defaultCreateSandbox)(options);
 }
 
+/**
+ * Makes `sandbox` refuse to find or create a Daytona sandbox once `refused()` holds (the site
+ * was deleted), so a call already in flight whose sandbox vanished can't recreate it. Wraps
+ * Mastra's `find` and `create` acquisition steps, which every start goes through.
+ */
+function refuseCreateWhen(sandbox: DaytonaSandbox, refused: () => boolean): DaytonaSandbox {
+  type Step = (options?: unknown) => Promise<unknown>;
+  const acquiring = sandbox as unknown as { find: Step; create: Step };
+  for (const step of ["find", "create"] as const) {
+    const original = acquiring[step].bind(sandbox);
+    acquiring[step] = async (options) => {
+      if (refused()) throw new Error("This site was deleted.");
+      return original(options);
+    };
+  }
+  return sandbox;
+}
+
 /** Looks the site's sandbox up by name without starting it, and deletes it if it exists. */
 async function destroyDetached(key: string, config: DaytonaSandboxConfig): Promise<void> {
   const sandbox = await buildSandbox(key, config, async () => {});
@@ -276,7 +350,9 @@ class DaytonaSiteRuntime implements SiteRuntime {
     if (this.destroyed) throw new Error("This site was deleted.");
     if (this.pinned) return this.pinned;
     if (!this.sandbox) {
-      const built = buildSandbox(this.key, this.config, (args) => this.onStart(args));
+      const built = buildSandbox(this.key, this.config, (args) => this.onStart(args)).then(
+        (sandbox) => refuseCreateWhen(sandbox, () => this.destroyed),
+      );
       this.sandbox = built;
       built.catch(() => {
         if (this.sandbox === built) this.sandbox = null;
@@ -295,8 +371,20 @@ class DaytonaSiteRuntime implements SiteRuntime {
     return sandbox;
   }
 
-  /** Mastra's start hook: on every start, make the project root and seed it if never done. */
+  /**
+   * Mastra's start hook: on every start, make the project root and seed it if never done. A
+   * start after the site was deleted (a restart under a call already in flight) deletes whatever
+   * it reached and fails, so a deleted client's files are never seeded anywhere again.
+   */
   private onStart({ sandbox }: { sandbox: unknown; outcome?: "created" | "connected" }) {
+    if (this.destroyed) {
+      return (sandbox as DaytonaSandbox)
+        .destroy()
+        .catch(() => {})
+        .then(() => {
+          throw new Error("This site was deleted.");
+        });
+    }
     const seeding = this.seed(sandbox as DaytonaSandbox);
     this.seeding = seeding;
     return seeding.finally(() => {
@@ -306,9 +394,11 @@ class DaytonaSiteRuntime implements SiteRuntime {
 
   private async seed(sandbox: DaytonaSandbox): Promise<void> {
     const marker = posix.join(this.root, SEED_MARKER);
+    // The marker's folder too: Daytona's upload isn't documented to make parent folders.
+    const folders = `${shellQuote(this.root)} ${shellQuote(posix.dirname(marker))}`;
     const check = await sandbox.executeCommand?.(
       "sh",
-      ["-c", `mkdir -p ${shellQuote(this.root)} && test -f ${shellQuote(marker)}`],
+      ["-c", `mkdir -p ${folders} && test -f ${shellQuote(marker)}`],
       { cwd: "/", env: commandEnv(COMMAND_ENV), timeout: 60_000 },
     );
     if (!check) throw new Error("This Daytona sandbox can't run commands.");
@@ -320,6 +410,7 @@ class DaytonaSiteRuntime implements SiteRuntime {
     if (onCreate) {
       await onCreate(this.key, new DaytonaSiteRuntime(this.key, this.config, () => {}, sandbox));
     }
+    if (this.destroyed) throw new Error("This site was deleted.");
     await sandbox.writeFiles?.([{ path: marker, content: new Date().toISOString() }]);
   }
 
@@ -421,22 +512,9 @@ class DaytonaSiteRuntime implements SiteRuntime {
   }
 
   private doInstall(opts: { timeoutMs?: number }): Promise<CommandResult> {
-    const digest = `{ cat package.json; cat pnpm-lock.yaml 2>/dev/null; cat package-lock.json 2>/dev/null; } | sha256sum | cut -d' ' -f1`;
-    const script = [
-      `[ -f package.json ] || { echo "package.json not found" >&2; exit 1; }`,
-      `if command -v flock >/dev/null 2>&1; then exec 9>${INSTALL_LOCK}; flock 9; fi`,
-      `sum=$(${digest})`,
-      `if [ -f ${INSTALL_STAMP} ] && [ "$(cat ${INSTALL_STAMP})" = "$sum" ]; then echo "dependencies up to date"; exit 0; fi`,
-      `if [ -f package-lock.json ] && [ ! -f pnpm-lock.yaml ]; then npm install`,
-      `elif command -v pnpm >/dev/null 2>&1; then pnpm install`,
-      `else ${PNPM_FALLBACK} install; fi`,
-      `code=$?`,
-      `if [ "$code" -eq 0 ]; then mkdir -p node_modules && ${digest} > ${INSTALL_STAMP}; fi`,
-      `exit "$code"`,
-    ].join("\n");
     return this.exec(
       "sh",
-      ["-c", script],
+      ["-c", installScript()],
       opts.timeoutMs ?? this.config.installTimeoutMs ?? DEFAULTS.installTimeoutMs,
       { ...COMMAND_ENV, CI: "1" },
     );
@@ -462,14 +540,7 @@ class DaytonaSiteRuntime implements SiteRuntime {
   private async doStartPreview(): Promise<{ url: string }> {
     const port = this.previewPort;
     if (!(await this.previewRunning())) {
-      // The dev server holds the lock for its lifetime, so a start from another process (the
-      // web app and the agent server share sandboxes) finds it taken and leaves it running.
-      const script = [
-        `exec 9>${PREVIEW_LOCK}`,
-        `if command -v flock >/dev/null 2>&1; then flock -n 9 || exit 0; fi`,
-        `echo $$ > ${PREVIEW_PID}`,
-        `exec ./node_modules/.bin/next dev --port ${port} --hostname 0.0.0.0 > ${PREVIEW_LOG} 2>&1`,
-      ].join("\n");
+      const script = previewLaunchScript(port);
       await this.use(async (sandbox) => {
         if (!sandbox.processes) throw new Error("This Daytona sandbox can't run processes.");
         // In the background, outliving this call: no timeout and no abort signal, and its
@@ -541,7 +612,14 @@ class DaytonaSiteRuntime implements SiteRuntime {
     this.destroyed = true;
     const sandbox = await this.sandbox?.catch(() => null);
     this.sandbox = null;
-    if (sandbox) await sandbox.destroy();
-    else await destroyDetached(this.key, this.config);
+    if (!sandbox) {
+      await destroyDetached(this.key, this.config);
+      return;
+    }
+    // Mastra's own delete (found by name even if this process never started it), then marked
+    // destroyed so its lazy start refuses; a restart under a call in flight still meets the
+    // `create` guard and the start hook.
+    await sandbox.destroy();
+    sandbox.status = "destroyed";
   }
 }

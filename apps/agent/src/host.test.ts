@@ -802,8 +802,11 @@ describe("the site builder", () => {
     return { runtimes, callers, fetchWeb };
   }
 
-  /** A host with the site builder; owner chose site-1, the staff member (allowed) site-2. */
-  async function builderHost(model?: MastraModelConfig) {
+  /**
+   * A host with the site builder; owner chose site-1, the staff member (allowed) site-2. With
+   * `daytona`, its sandboxes open in the agent itself, as on Daytona, from that provider.
+   */
+  async function builderHost(model?: MastraModelConfig, daytona?: FakeRuntimeProvider) {
     mock().llm.on(
       { userMessage: /list the site files/i, hasToolResult: false },
       {
@@ -840,14 +843,22 @@ describe("the site builder", () => {
       origin: "http://locus.test",
       siteBuilder: {
         openClientDb: (c) => openClientDb(connect.provisioner, c),
-        runtimes: () => {
-          throw new Error("no local sandboxes on the agent");
-        },
-        openRuntime: remoteSiteRuntimes({
-          url: "http://web.test",
-          authSecret: SECRET,
-          fetch: web.fetchWeb,
-        }),
+        ...(daytona
+          ? siteSandboxes(
+              { LOCUS_SANDBOX_PROVIDER: "daytona", DAYTONA_API_KEY: "k" },
+              { url: "http://web.test", authSecret: SECRET, fetch: web.fetchWeb },
+              () => daytona,
+            )
+          : {
+              runtimes: () => {
+                throw new Error("no local sandboxes on the agent");
+              },
+              openRuntime: remoteSiteRuntimes({
+                url: "http://web.test",
+                authSecret: SECRET,
+                fetch: web.fetchWeb,
+              }),
+            }),
         publish: null,
         locusUrl: "http://web.test",
       },
@@ -915,6 +926,29 @@ describe("the site builder", () => {
     const callsBefore = web.callers.length;
     await expect(runAs("staff", "List the site files")).rejects.toThrow();
     expect(web.callers.length).toBe(callsBefore);
+  });
+
+  test("on Daytona, a member restricted away from the client is refused before any sandbox opens", async () => {
+    const local = new FakeRuntimeProvider({
+      handler: (command) => ({ stdout: `ran ${command} here`, exitCode: 0 }),
+    });
+    const opened: string[] = [];
+    const open = local.open.bind(local);
+    local.open = async (key) => {
+      opened.push(key);
+      return open(key);
+    };
+    const { client, web, runAs } = await builderHost(undefined, local);
+
+    // The owner's own site opens here, keyed by the session's client, and not via the web app.
+    expect(JSON.stringify(await runAs("owner", "List the site files"))).toContain("ran ls here");
+    expect(opened).toEqual([`${client.id}/site-1`]);
+    expect(web.callers).toEqual([]);
+
+    await db.delete(memberLocation).where(eq(memberLocation.memberId, "m-staff"));
+    await expect(runAs("staff", "List the site files")).rejects.toThrow();
+    expect(opened).toEqual([`${client.id}/site-1`]);
+    expect(web.callers).toEqual([]);
   });
 
   test("the scripted model's sandbox check runs a command in the site's sandbox, for free", async () => {
@@ -1156,5 +1190,10 @@ describe("the site builder's sandboxes", () => {
     expect(sandboxes.openRuntime).toBeUndefined();
     expect(sandboxes.runtimes()).toBeInstanceOf(DaytonaRuntimeProvider);
     expect(sandboxes.runtimes()).toBe(sandboxes.runtimes());
+  });
+
+  test("an unknown provider is no crash: it stays on the web app, and the settings check says so", () => {
+    const sandboxes = siteSandboxes({ LOCUS_SANDBOX_PROVIDER: "dayton" }, webApp);
+    expect(sandboxes.openRuntime).toBeTypeOf("function");
   });
 });
