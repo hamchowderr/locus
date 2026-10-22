@@ -153,6 +153,7 @@ export async function createLocusController({
     ...(keepResults ? { keepResults } : {}),
     ...(ownTextTools ? { ownTextTools } : {}),
     ...(apps ? { apps } : {}),
+    ...(tools ? { runTools: tools } : {}),
   });
   const controller = new AgentController({
     id: CONTROLLER_ID,
