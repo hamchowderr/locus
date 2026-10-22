@@ -81,7 +81,11 @@ export async function syncRuntime(
   draft: SiteFile[],
   options: { editorOrigins?: string[] } = {},
 ): Promise<SyncReport> {
-  const files = previewFiles(draft, options);
+  // Each sandbox service serves previews on its own hosts, which `next dev` must allow.
+  const files = previewFiles(draft, {
+    ...options,
+    ...(runtime.previewHosts ? { devHosts: [...runtime.previewHosts] } : {}),
+  });
   const present = await sandboxHashes(runtime);
   const wanted = new Set(files.map((f) => f.path));
   const toWrite = files.filter((f) => present.get(f.path) !== hashOf(f.content));
