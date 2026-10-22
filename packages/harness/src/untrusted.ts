@@ -73,11 +73,15 @@ export function hasRefusedBrief(requestContext: unknown): boolean {
 }
 
 function taint(requestContext: ContextLike | undefined): void {
-  // Without a context the run cannot be marked; refuse rather than run untainted.
+  mark(requestContext, TAINT_KEY);
+}
+
+function mark(requestContext: ContextLike | undefined, key: string): void {
+  // Without a context the run cannot be marked; refuse rather than run unmarked.
   if (typeof requestContext?.set !== "function") {
     throw new Error("untrusted-content screen needs the run's request context");
   }
-  requestContext.set(TAINT_KEY, true);
+  requestContext.set(key, true);
 }
 
 /** Our own tools, named inside data: they have no business being there. */
@@ -217,7 +221,7 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
         const result = JSON.stringify(part.toolInvocation.result ?? null);
         if (result.includes(TAINT_MARK) && !isTainted(requestContext)) taint(requestContext);
         if (result.includes(REFUSED_BRIEF_MARK) && !hasRefusedBrief(requestContext)) {
-          requestContext?.set?.(REFUSED_BRIEF_KEY, true);
+          mark(requestContext, REFUSED_BRIEF_KEY);
         }
       }
     }

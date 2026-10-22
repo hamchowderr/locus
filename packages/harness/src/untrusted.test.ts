@@ -4,6 +4,7 @@ import { createFakeGhl, type FakeRoutes, useAimock } from "@locus/testing";
 import { RequestContext } from "@mastra/core/request-context";
 import { beforeEach, describe, expect, test } from "vitest";
 import { createLocusAgent } from "./agent.ts";
+import { createLocusTools } from "./tools.ts";
 import {
   hasRefusedBrief,
   isTainted,
@@ -134,6 +135,17 @@ describe("marks in a run's history", () => {
     const context = step({ refused: "No.", refusedBrief: REFUSED_BRIEF_MARK });
     expect(hasRefusedBrief(context)).toBe(true);
     expect(isTainted(context)).toBe(false);
+  });
+
+  test("a refused brief makes every GHL write ask, not only threads", () => {
+    const { perform_action } = createLocusTools({
+      session: { token: "t", tokenKind: "location", locationId: "loc" },
+    });
+    const asks = perform_action.requireApproval as (i: unknown, c: unknown) => boolean;
+    const input = { operation: "contacts.add-tags" };
+    expect(asks(input, { requestContext: new RequestContext() })).toBe(false);
+    const refused = step({ refused: "No.", refusedBrief: REFUSED_BRIEF_MARK });
+    expect(asks(input, { requestContext: refused })).toBe(true);
   });
 
   test("a taint mark taints the run, and nothing else", () => {
