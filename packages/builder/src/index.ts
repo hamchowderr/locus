@@ -1,5 +1,6 @@
 export {
   createSiteBuilderAgent,
+  SITE_BUILDER_AGENT,
   SITE_BUILDER_INSTRUCTIONS,
   SITE_BUILDER_MODE,
   SITE_BUILDER_MODE_ID,
@@ -18,11 +19,18 @@ export {
 } from "./images.ts";
 export { OFFICIAL_REGISTRY } from "./registry.ts";
 export type {
+  BuilderRun,
   BuilderSession,
   BuilderUsage,
   ResolveBuilderSession,
   UsageMeter,
 } from "./session.ts";
+export {
+  NO_THREAD_SITE,
+  SITE_THREAD_TOOL_NAMES,
+  type SiteThreads,
+  type SiteThreadTools,
+} from "./site-threads.ts";
 export {
   createSkillTools,
   SITE_BUILDER_SKILL_NAMES,

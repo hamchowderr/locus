@@ -8,6 +8,7 @@ import {
   SITE_BUILDER_MODE,
   SITE_BUILDER_OWN_TEXT_TOOLS,
 } from "./agent.ts";
+import { createSiteThreadTools } from "./site-threads.ts";
 import { SKILL_FILES } from "./skills/bundle.generated.ts";
 import { readSkillFiles, SKILLS_DIR } from "./skills/files.ts";
 import { SITE_BUILDER_SKILL_NAMES, siteBuilderSkills } from "./skills/index.ts";
@@ -81,8 +82,20 @@ test("the mode exposes every builder tool by name, and the tools match", () => {
   expect(SITE_BUILDER_MODE).toMatchObject({ id: "site-builder", name: "Site builder" });
   expect(SITE_BUILDER_MODE.instructions).toBe(SITE_BUILDER_INSTRUCTIONS);
   expect("additionalTools" in SITE_BUILDER_MODE).toBe(false);
-  const tools = createSiteBuilderTools({ resolve: async () => t.session });
-  expect([...(SITE_BUILDER_MODE.availableTools ?? [])].sort()).toEqual(Object.keys(tools).sort());
+  const tools = {
+    ...createSiteBuilderTools({ resolve: async () => t.session }),
+    ...createSiteThreadTools({
+      threads: { of: async () => null, tag: async () => false },
+      list: async () => [],
+      create: async () => "",
+      choose: async () => "",
+    }),
+  };
+  // Every builder tool, the site tools for threads, and the checklist (a built-in).
+  const checklist = ["task_write", "task_update", "task_complete", "task_check"];
+  expect([...(SITE_BUILDER_MODE.availableTools ?? [])].sort()).toEqual(
+    [...Object.keys(tools), ...checklist].sort(),
+  );
   // The ids the model sees are the record's keys.
   for (const [name, tool] of Object.entries(tools)) expect(tool.id).toBe(name);
 });
