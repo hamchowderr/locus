@@ -27,7 +27,7 @@ export const SUB_ACCOUNT_PAGES: AppSection = {
   name: "Sub-account",
   pages: [
     { href: "/chat", name: "Chat", icon: "chat" },
-    { href: "/sites", name: "Sites", icon: "sites" },
+    { href: "/sites", name: "Library", icon: "sites" },
     { href: "/apps", name: "Connectors", icon: "connectors" },
   ],
 };

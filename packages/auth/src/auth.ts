@@ -24,6 +24,16 @@ export interface LocusAuthConfig {
   sendEmail: SendEmail;
   /** Stripe, when the deployment bills. Without it billing is off and nothing calls Stripe. */
   billing?: { secretKey: string; webhookSecret: string } | undefined;
+  /**
+   * Runs before an agency (organisation) is deleted; throwing stops the deletion. The web app
+   * removes the agency's sealed credentials here, which would otherwise outlive it.
+   */
+  beforeAgencyDeleted?: ((organizationId: string) => Promise<void>) | undefined;
+  /**
+   * Runs after an agency is deleted. The web app removes its sealed credentials again here, for
+   * one saved while the deletion ran (a token renewal that finished meanwhile).
+   */
+  afterAgencyDeleted?: ((organizationId: string) => Promise<void>) | undefined;
 }
 
 // Without billing the plugin still loads, so the schema and the API's types are the same
@@ -168,6 +178,14 @@ export function createAuth(config: LocusAuthConfig) {
     plugins: [
       organization({
         requireEmailVerificationOnInvitation: true,
+        organizationHooks: {
+          beforeDeleteOrganization: async ({ organization: agency }) => {
+            await config.beforeAgencyDeleted?.(agency.id);
+          },
+          afterDeleteOrganization: async ({ organization: agency }) => {
+            await config.afterAgencyDeleted?.(agency.id);
+          },
+        },
         sendInvitationEmail: async ({ id, email, organization: agency }) => {
           await sendEmail({
             to: email,

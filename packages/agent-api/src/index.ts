@@ -61,7 +61,13 @@ import { asCaller, isKitRoute, type KitCaller, kitRoutes } from "./kit.ts";
 /** The Mastra routes the chat needs. Anything else answers 404. */
 /** The largest body the chat kit's stream route takes (a message with its attachments). */
 export { STREAM_BODY_LIMIT as KIT_STREAM_BODY_LIMIT } from "./mastra/routes/stream-body.ts";
-export { clientWorkThreads } from "./work-threads.ts";
+export {
+  clientSiteThreads,
+  clientWorkThreads,
+  OPERATOR_AGENT,
+  SUPERVISOR_MODE,
+  SUPERVISOR_MODE_ID,
+} from "./work-threads.ts";
 
 export const SERVED_ROUTES = [
   CREATE_AGENT_CONTROLLER_SESSION_ROUTE,

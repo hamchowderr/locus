@@ -10,6 +10,7 @@ import {
   STATEMENT_BREAKPOINT,
 } from "@locus/db";
 import type { SiteFile } from "../workspace.ts";
+import { LOCUS_SETTINGS_PATH, locusSettingsFile } from "./forms.ts";
 
 // What an app-style site adds to the base project: its own database and logins.
 //
@@ -770,6 +771,18 @@ export function hasBackendFiles(files: SiteFile[]): boolean {
  * Turns a site's files into an app-style site's. Safe to repeat: files the site already has
  * are kept as they are, so a schema the agent has grown is never reset.
  */
+/** The site's name as an older lib/locus.ts wrote it, or "". */
+function siteNameIn(settings: string): string {
+  const quoted = /site:\s*\{\s*"?name"?:\s*("(?:[^"\\]|\\.)*")/.exec(settings)?.[1];
+  if (!quoted) return "";
+  try {
+    const name: unknown = JSON.parse(quoted);
+    return typeof name === "string" ? name : "";
+  } catch {
+    return "";
+  }
+}
+
 export function withBackend(files: SiteFile[]): SiteFile[] {
   const byPath = new Map(files.map((file) => [file.path, file]));
   const pkg = byPath.get("package.json");
@@ -797,6 +810,15 @@ export function withBackend(files: SiteFile[]): SiteFile[] {
   if (auth?.content === AUTH_BEFORE_MEMBERS) byPath.delete("lib/auth.ts");
   for (const file of backendFiles()) {
     if (!byPath.has(file.path) || LOCUS_FILES.has(file.path)) byPath.set(file.path, file);
+  }
+  // lib/members.ts and lib/files.ts read `locus.siteApi`, which a site made before Locus had
+  // site calls lacks; it would stop at type-checking. Outside a published site its values are
+  // null but the site's name, and publishing writes it again, so the draft's copy is replaced
+  // keeping that name.
+  const settings = byPath.get(LOCUS_SETTINGS_PATH)?.content;
+  if (typeof settings !== "string" || !settings.includes("siteApi")) {
+    const name = typeof settings === "string" ? siteNameIn(settings) : "";
+    byPath.set(LOCUS_SETTINGS_PATH, locusSettingsFile({ site: { name, description: "" } }));
   }
   return [...byPath.values()];
 }

@@ -85,9 +85,31 @@ describe("an app-style site's files", () => {
       { path: "app/api/files/[action]/route.ts", content: "// old" },
     ];
     const renewed = withBackend(older);
+
     expect(text(renewed, "lib/files.ts")).toContain("keepFile");
     expect(renewed.map((f) => f.path)).not.toContain("app/api/files/[action]/route.ts");
 
+    // A site made before Locus had site calls has a lib/locus.ts without siteApi, which the
+    // members and files code read; it gets the current one.
+    const beforeSiteApi = app.map((f) =>
+      f.path === "lib/locus.ts"
+        ? { ...f, content: "export const locus = { leadEndpoint: null as string | null };\n" }
+        : f,
+    );
+    expect(text(withBackend(beforeSiteApi), "lib/locus.ts")).toContain("siteApi: null");
+    const noSettings = app.filter((f) => f.path !== "lib/locus.ts");
+    expect(text(withBackend(noSettings), "lib/locus.ts")).toContain("siteApi: null");
+    // One written between the sitemap and site calls already named the site; the name stays.
+    const named = app.map((f) =>
+      f.path === "lib/locus.ts"
+        ? {
+            ...f,
+            content:
+              'export const locus = {\n  leadEndpoint: null as string | null,\n  site: {\n    "name": "Snap \\"Club\\"",\n    "description": ""\n  },\n};\n',
+          }
+        : f,
+    );
+    expect(text(withBackend(named), "lib/locus.ts")).toContain('"name": "Snap \\"Club\\""');
     // A login file from before sign-ups went to HighLevel gets the hook; a changed one is kept.
     expect(text(app, "lib/auth.ts")).toContain(
       "databaseHooks: { user: { create: { after: memberSignedUp } } }",

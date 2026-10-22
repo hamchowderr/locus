@@ -436,7 +436,7 @@ describe("results of tools added by a feature", () => {
   });
 
   test("a tool the controller asks about still makes GHL data forgotten at its pause", async () => {
-    // A boolean `false` doesn't stop the controller asking; neither does the task list.
+    // A boolean `false` doesn't stop the controller asking.
     const plain = createTool({
       id: "plain",
       description: "A host tool with a boolean flag.",
@@ -482,7 +482,7 @@ describe("results of tools added by a feature", () => {
     await session.mode.switch({ modeId: "build" });
     const seen = await send(session, "Look up c1");
 
-    expect(seen).toEqual(["approval:pause-p1", "approval:pause-t1"]);
+    expect(seen).toEqual(["approval:pause-p1"]);
     const bodies = mock()
       .llm.getRequests()
       .map((r) => JSON.stringify(r.body));
