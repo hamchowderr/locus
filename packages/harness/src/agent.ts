@@ -59,6 +59,11 @@ export interface LocusAgentConfig extends ToolDeps {
   ownTextTools?: readonly string[];
   /** The client's connected apps (see `apps.ts`). Without it the agent has GHL tools only. */
   apps?: Parameters<typeof createAppTools>[0];
+  /**
+   * Tools the agent is handed at run time (an AgentController's `tools`): consulted, with the
+   * agent's own, when `ForgetGhlData` asks whether a step will pause for a person.
+   */
+  runTools?: Record<string, unknown>;
 }
 
 /**
@@ -86,6 +91,7 @@ export function createLocusAgent({
   keepResults = [],
   ownTextTools = [],
   apps,
+  runTools = {},
   ...deps
 }: LocusAgentConfig): Agent {
   const tools = { ...createLocusTools(deps), ...(apps ? createAppTools(apps) : {}) };
@@ -103,7 +109,12 @@ export function createLocusAgent({
       untrusted,
       ...(processors.output ?? []),
       ...(storage
-        ? [new ForgetGhlData(waitsForApproval(tools), [...keepResults, ...ownTextTools])]
+        ? [
+            new ForgetGhlData(waitsForApproval({ ...runTools, ...tools }), [
+              ...keepResults,
+              ...ownTextTools,
+            ]),
+          ]
         : []),
     ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
