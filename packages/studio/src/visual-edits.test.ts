@@ -1,5 +1,9 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parse } from "@babel/parser";
 import { describe, expect, it } from "vitest";
+import { withPreviewDevHosts } from "./preview-config.ts";
 import { renderTemplate, TEMPLATES } from "./templates/index.ts";
 import {
   annotateSource,
@@ -530,6 +534,44 @@ describe("previewFiles", () => {
     // The draft itself is untouched.
     expect(draft.find((f) => f.path === "app/page.tsx")?.content).not.toContain(SOURCE_ATTR);
     expect(out.filter((f) => f.path === VISUAL_EDITS_SCRIPT_PATH)).toHaveLength(1);
+  });
+
+  it("lets the preview's host use the dev server, keeping the site's own next.config", async () => {
+    const template = TEMPLATES.find((t) => t.id === "local-business");
+    if (!template) throw new Error("no local-business template");
+    const draft = renderTemplate(template, { name: "Acme", kind: "website" });
+    const own = draft.find((f) => f.path === "next.config.ts")?.content;
+    expect(own).toBeTypeOf("string");
+    const out = previewFiles(draft, { devHosts: ["*.preview.test"] });
+    expect(out.find((f) => f.path === "next.config.site.ts")?.content).toBe(own);
+    expect(out.filter((f) => f.path === "next.config.ts")).toHaveLength(1);
+    expect(previewFiles(draft).find((f) => f.path === "next.config.ts")?.content).toContain(
+      '["*.vercel.run"]',
+    );
+    // The draft itself is untouched.
+    expect(draft.find((f) => f.path === "next.config.ts")?.content).toBe(own);
+
+    // Both forms of a site's config get the hosts added to their own.
+    const dir = await mkdtemp(join(tmpdir(), "locus-next-config-"));
+    try {
+      const site = (body: string) => [
+        { path: "next.config.ts", content: `export default ${body};\n` },
+      ];
+      for (const [body, expected] of [
+        ['{ allowedDevOrigins: ["own.test"], poweredByHeader: false }', ["own.test", "*.p.test"]],
+        ["async () => ({ poweredByHeader: false })", ["*.p.test"]],
+      ] as const) {
+        const sub = await mkdtemp(join(dir, "c-"));
+        for (const file of withPreviewDevHosts(site(body), ["*.p.test"])) {
+          await writeFile(join(sub, file.path), String(file.content));
+        }
+        const loaded = (await import(join(sub, "next.config.ts"))).default;
+        const config = typeof loaded === "function" ? await loaded("phase", {}) : loaded;
+        expect(config).toEqual({ poweredByHeader: false, allowedDevOrigins: expected });
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("ships a script that parses", () => {

@@ -24,6 +24,7 @@ export {
   normalizeSitePath,
   WorkspaceError,
 } from "./paths.ts";
+export { PREVIEW_DEV_HOSTS, withPreviewDevHosts } from "./preview-config.ts";
 export {
   DESCRIPTION_MAX,
   imagesWithoutAlt,

@@ -128,6 +128,8 @@ Media Library.
   data, and only touch rows whose `user_id` is that member's.
 - Sign-up, sign-in and sign-out forms are "use client" components that use `authClient`.
   Give them labels and clear error messages. Ask for the member's name on the sign-up form.
+  Give every such `<form>` `method="post"` as well as its `onSubmit`, so a page whose script
+  hasn't loaded yet never puts a password in the address bar.
 - On the published site, every new member also becomes a contact in the client's HighLevel
   (tagged `website form: sign-up`), through the `databaseHooks` line in `lib/auth.ts`. Keep it
   when you change `lib/auth.ts`, and keep `import { memberSignedUp } from "@/lib/members"`. If
