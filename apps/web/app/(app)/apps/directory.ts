@@ -56,7 +56,13 @@ export function filterApps<T extends AppConnection>(
     const all = `${name} ${fold(app.description)}`;
     if (!words.every((word) => all.includes(word))) return [];
     const inName = words.length > 0 && words.every((word) => name.includes(word));
-    return [{ app, index, rank: (app.connected ? 0 : 2) + (inName || words.length === 0 ? 0 : 1) }];
+    return [
+      {
+        app,
+        index,
+        rank: (app.connected || app.expired ? 0 : 2) + (inName || words.length === 0 ? 0 : 1),
+      },
+    ];
   });
   scored.sort((a, b) => a.rank - b.rank || a.index - b.index);
   return scored.map((s) => s.app);

@@ -1,5 +1,5 @@
 import { ClientAccessDenied } from "@locus/auth";
-import { CheckIcon } from "lucide-react";
+import { CheckIcon, TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Notice } from "@/app/ui";
@@ -97,9 +97,10 @@ function Directory({
   query: ReturnType<typeof readQuery>;
 }) {
   const matching = filterApps(apps, query);
-  const connectedApps = matching.filter((app) => app.connected);
+  // An app whose sign-in expired stays with the connected ones, so it's seen and reconnected.
+  const connectedApps = matching.filter((app) => app.connected || app.expired);
   const others = pageOf(
-    matching.filter((app) => !app.connected),
+    matching.filter((app) => !app.connected && !app.expired),
     query.page,
   );
   const filtered = query.q !== "" || query.category !== "";
@@ -199,6 +200,10 @@ function AppCard({ app, manager }: { app: ClientApp; manager: boolean }) {
               <span className="flex items-center gap-1 text-xs text-emerald-700">
                 <CheckIcon className="size-3" /> Connected
               </span>
+            ) : app.expired ? (
+              <span className="flex items-center gap-1 text-xs text-amber-700">
+                <TriangleAlertIcon className="size-3" /> Sign-in expired
+              </span>
             ) : (
               category && (
                 <Badge variant="secondary" className="mt-0.5">
@@ -223,7 +228,11 @@ function AppCard({ app, manager }: { app: ClientApp; manager: boolean }) {
                 </Button>
               </form>
             ) : (
-              <ConnectButton toolkit={app.toolkit} name={app.name} />
+              <ConnectButton
+                toolkit={app.toolkit}
+                name={app.name}
+                {...(app.expired ? { label: "Reconnect" } : {})}
+              />
             )}
           </CardAction>
         )}
