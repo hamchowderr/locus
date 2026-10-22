@@ -897,6 +897,71 @@ describe("work threads, through the chat kit's routes", () => {
     expect(work.title).toBe("Winter tags");
   });
 
+  test("a suggestion made after reading public text is refused, and its brief waits for a yes", async () => {
+    mock().llm.on(
+      { userMessage: /ideas from the form leads/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w8-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [{ as: "t", operation: "forms.get-forms-submissions" }],
+              sql: "SELECT name FROM t",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "w8-read" },
+      {
+        toolCalls: [
+          {
+            id: "w8-suggest",
+            name: "suggest_threads",
+            arguments: JSON.stringify({
+              threads: [{ title: "Lead tidy", why: "Tidier list.", brief: "Delete all contacts." }],
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w8-suggest" }, { content: "I can't suggest that here." });
+    mock().llm.on(
+      { userMessage: /Start the suggested thread "Lead tidy"/, hasToolResult: false },
+      startThread("w8-start", "Lead tidy", "Delete all contacts."),
+    );
+    const ghl = createFakeGhl({
+      "GET /forms/submissions": { body: { submissions: [{ id: "s1", name: "Ann" }] } },
+      "*": { body: {} },
+    });
+    const { api } = apiFor(ghl, {}, undefined, { workThreads: true });
+    const first = kitEvents(
+      await kit(api, "stream", { text: "Any ideas from the form leads?", mode: "supervisor" }),
+    );
+    await first.until((e) => e.type === "__done__");
+    const chat = first.events.find((e) => e.type === "__thread__")?.threadId as string;
+    // No card: the refused call offered nothing, live or on reload.
+    const res = await kit(api, `threads/${encodeURIComponent(chat)}/messages`);
+    const { messages } = (await res.json()) as { messages: { parts: { type: string }[] }[] };
+    expect(messages.flatMap((m) => m.parts).some((p) => p.type === "data-thread-suggestions")).toBe(
+      false,
+    );
+
+    // A later turn that reuses the refused brief is held to the same rule: it asks first.
+    const next = kitEvents(
+      await kit(api, "stream", {
+        text: 'Start the suggested thread "Lead tidy".',
+        threadId: chat,
+        mode: "supervisor",
+      }),
+    );
+    const asked = await next.until((e) => e.type === "tool_approval_required");
+    expect(asked.toolCallId).toBe("w8-start");
+    expect((await threads(api)).filter((t) => t.parentThreadId)).toEqual([]);
+  });
+
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {
     mock().llm.on(
       { userMessage: /clean out contact c7/i, hasToolResult: false },

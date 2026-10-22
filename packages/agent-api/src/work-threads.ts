@@ -121,6 +121,9 @@ export function clientWorkThreads(
     maxWorking: MAX_WORKING_THREADS,
     requireApproval: isTainted,
     startsUntrusted: isTainted,
+    // A suggestion refused for a tainted run keeps the mark, so a later run that reuses its
+    // brief is tainted too and start_thread asks first, showing the brief.
+    refusedSuggestion: { taint: TAINT_MARK },
     runContext: (context, thread) => {
       if (thread.untrusted) context.set(TAINT_KEY, true);
     },
