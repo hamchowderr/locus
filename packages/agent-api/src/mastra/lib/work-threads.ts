@@ -808,6 +808,8 @@ export function createWorkThreads(config: WorkThreadsConfig) {
     message,
     requireApproval: config.requireApproval,
     screen: config.screenReport,
+    untrusted: config.startsUntrusted,
+    agents: config.agents,
   });
 
   return {

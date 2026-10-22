@@ -48,7 +48,11 @@ function apiFor(
         ...(work
           ? {
               tools: { [work.tool.id]: work.tool, ...work.steering },
-              ownTextTools: [work.tool.id, work.steering.message_thread.id],
+              ownTextTools: [
+                work.tool.id,
+                work.steering.message_thread.id,
+                work.steering.suggest_threads.id,
+              ],
               threadTextTools: work.threadTextTools,
               modes: [work.supervisor],
             }
@@ -834,6 +838,63 @@ describe("work threads, through the chat kit's routes", () => {
       .find((p) => p.type === "text" && p.text?.includes("is done"));
     expect(report?.text).toMatch(/is done\.$/);
     expect(report?.text).not.toContain("Ann");
+  });
+
+  test("the supervisor offers threads, starts none, and starts the one the member picks", async () => {
+    const suggestion = {
+      title: "Winter tags",
+      why: "Old tags clutter the contact list.",
+      brief: "Retire the winter tags.",
+    };
+    mock().llm.on(
+      { userMessage: /what could we tidy up/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w7-suggest",
+            name: "suggest_threads",
+            arguments: JSON.stringify({ threads: [suggestion] }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w7-suggest" }, { content: "Here is one idea." });
+    mock().llm.on(
+      { userMessage: /Start the suggested thread "Winter tags"/, hasToolResult: false },
+      startThread("w7-start", suggestion.title, suggestion.brief),
+    );
+    mock().llm.on({ toolCallId: "w7-start" }, { content: "Started it." });
+    mock().llm.on({ userMessage: /^Retire the winter tags\.$/ }, { content: "Retired them." });
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+
+    const offered = kitEvents(
+      await kit(api, "stream", { text: "What could we tidy up?", mode: "supervisor" }),
+    );
+    await offered.until((e) => e.type === "__done__");
+    expect(offered.events.some((e) => e.type === "tool_approval_required")).toBe(false);
+    expect((await threads(api)).filter((t) => t.parentThreadId)).toEqual([]);
+    const chat = offered.events.find((e) => e.type === "__thread__")?.threadId as string;
+    // The card comes back on reload, without the brief.
+    const res = await kit(api, `threads/${encodeURIComponent(chat)}/messages`);
+    const { messages } = (await res.json()) as { messages: { parts: { type: string }[] }[] };
+    const card = messages.flatMap((m) => m.parts).find((p) => p.type === "data-thread-suggestions");
+    expect(card).toEqual({
+      type: "data-thread-suggestions",
+      data: { suggestions: [{ title: suggestion.title, why: suggestion.why }] },
+    });
+
+    // The member presses Start: the supervisor starts it, and nothing asks first.
+    const picked = kitEvents(
+      await kit(api, "stream", {
+        text: 'Start the suggested thread "Winter tags".',
+        threadId: chat,
+        mode: "supervisor",
+      }),
+    );
+    await picked.until((e) => e.type === "__done__");
+    expect(picked.events.some((e) => e.type === "tool_approval_required")).toBe(false);
+    const work = await workThreadReaching(api, "done");
+    expect(work.title).toBe("Winter tags");
   });
 
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {
