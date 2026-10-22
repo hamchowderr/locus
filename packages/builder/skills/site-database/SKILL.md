@@ -22,8 +22,10 @@ area, saved items, or the site's own bookings or orders the person asked for.
     `signIn.email`, `signOut`, `useSession`)
   - `instrumentation.ts`, `lib/local-migrations.ts` and `app/api/locus/preview-migrations`:
     these keep the preview's database up to date.
-- Then preview. In the preview the database is a throwaway local file, so test sign-ups
-  there reach no one.
+- Then preview. In the preview the database is a local test file, so test sign-ups there
+  reach no one. It keeps its rows and uploads while the preview runs, and starts again by
+  itself when its migrations no longer match the site's (after an earlier version is
+  restored, say).
 - The published site gets its own database on Otaku's account the first time it's published.
   Locus applies the migrations, then gives the site its address, key and login secret. Never
   write a database URL, token or secret in code or in `.env` files: the site needs none.
@@ -128,6 +130,8 @@ Media Library.
   data, and only touch rows whose `user_id` is that member's.
 - Sign-up, sign-in and sign-out forms are "use client" components that use `authClient`.
   Give them labels and clear error messages. Ask for the member's name on the sign-up form.
+  Give every such `<form>` `method="post"` as well as its `onSubmit`, so a page whose script
+  hasn't loaded yet never puts a password in the address bar.
 - On the published site, every new member also becomes a contact in the client's HighLevel
   (tagged `website form: sign-up`), through the `databaseHooks` line in `lib/auth.ts`. Keep it
   when you change `lib/auth.ts`, and keep `import { memberSignedUp } from "@/lib/members"`. If
@@ -136,4 +140,9 @@ Media Library.
   `user: { create: { after: memberSignedUp } }` to its `databaseHooks` (or add
   `databaseHooks: { user: { create: { after: memberSignedUp } } },` when it has none).
   The preview sends nothing to HighLevel.
+- In the preview, a member's sign-in is kept inside Locus's editor only when `lib/auth.ts`
+  sets the preview's cookie (`partitioned: true` in it). A site made earlier gets that from
+  `database add`. If `lib/auth.ts` was changed and still lacks it, add this inside its
+  `betterAuth({...})`:
+  `...(isPreviewDatabase ? { advanced: { defaultCookieAttributes: { sameSite: "none", secure: true, partitioned: true } } } : {}),`
 - Never import `lib/db.ts` or `lib/auth.ts` from a "use client" file.
