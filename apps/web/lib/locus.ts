@@ -52,6 +52,15 @@ function build() {
     secret: setting("BETTER_AUTH_SECRET", "local-development-only-secret-not-for-production"),
     sendEmail: emailFromEnv(),
     billing: billingFromEnv(),
+    // An agency's sealed tokens have no foreign key to it, so they go first. Loaded on use:
+    // `./connect` imports this module.
+    beforeAgencyDeleted: async (organizationId) => {
+      const [{ deleteAgencySecrets }, { secretStore }] = await Promise.all([
+        import("@locus/connect"),
+        import("./connect"),
+      ]);
+      await deleteAgencySecrets(secretStore(db), organizationId);
+    },
   });
   return { db, auth };
 }
