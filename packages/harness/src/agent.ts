@@ -60,6 +60,12 @@ export interface LocusAgentConfig extends ToolDeps {
   ownTextTools?: readonly string[];
   /** The client's connected apps (see `apps.ts`). Without it the agent has GHL tools only. */
   apps?: Parameters<typeof createAppTools>[0];
+  /**
+   * Tools the agent is handed at run time (an AgentController's `tools`): consulted, with the
+   * agent's own, when `ForgetGhlData` asks whether a step will pause for a person. Only a
+   * function rule is trusted: the controller asks about every other tool, `false` included.
+   */
+  runTools?: Record<string, unknown>;
 }
 
 /**
@@ -87,6 +93,7 @@ export function createLocusAgent({
   keepResults = [],
   ownTextTools = [],
   apps,
+  runTools = {},
   ...deps
 }: LocusAgentConfig): Agent {
   const tools = { ...createLocusTools(deps), ...(apps ? createAppTools(apps) : {}) };
@@ -104,7 +111,12 @@ export function createLocusAgent({
       untrusted,
       ...(processors.output ?? []),
       ...(storage
-        ? [new ForgetGhlData(waitsForApproval(tools), [...keepResults, ...ownTextTools])]
+        ? [
+            new ForgetGhlData(waitsForApproval({ ...decidesOwnApproval(runTools), ...tools }), [
+              ...keepResults,
+              ...ownTextTools,
+            ]),
+          ]
         : []),
     ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
@@ -115,4 +127,13 @@ export function createLocusAgent({
   // Approvals are resumed from a run snapshot, which Mastra keeps in its instance's storage.
   const mastra = new Mastra({ agents: { locus: agent }, storage, logger: false });
   return mastra.getAgent("locus");
+}
+
+/** The tools whose own function decides approval; the rest count as unknown, so as pausing. */
+function decidesOwnApproval(tools: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(tools).filter(
+      ([, tool]) => typeof (tool as { requireApproval?: unknown })?.requireApproval === "function",
+    ),
+  );
 }
