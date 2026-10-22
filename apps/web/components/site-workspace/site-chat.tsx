@@ -64,11 +64,13 @@ export function useSiteChat({
         const res = await fetch("/api/agent-controller/threads", { cache: "no-store" });
         const data = (await res.json()) as { threads?: ThreadItem[] };
         const ofSite = (data.threads ?? []).filter((t) => t.siteId === siteId && !t.archived);
-        const mine = ofSite.find((t) => t.id === threadId) ?? ofSite[0];
+        // The thread asked for, else the site's own chat (never one of its threads).
+        const mine = ofSite.find((t) => t.id === threadId) ?? ofSite.find((t) => !t.parentThreadId);
         if (mine && !stale) {
           tagged.current = mine.id;
-          await openThread(mine.id);
-          if (mine.status === "working") setWorking(mine.id);
+          const { running } = await openThread(mine.id);
+          // A thread's run may not have said it is working yet; the session knows.
+          if (mine.parentThreadId && (running || mine.status === "working")) setWorking(mine.id);
         }
       } catch {
         // No history to show; the first message starts the site's conversation.
@@ -90,8 +92,8 @@ export function useSiteChat({
         const res = await fetch("/api/agent-controller/threads", { cache: "no-store" });
         const data = (await res.json()) as { threads?: ThreadItem[] };
         const now = data.threads?.find((t) => t.id === working);
-        await openThread(working);
-        if (now?.status !== "working") {
+        const { running } = await openThread(working);
+        if (!running && now?.status !== "working") {
           setWorking(null);
           filesChanged.current();
         }
