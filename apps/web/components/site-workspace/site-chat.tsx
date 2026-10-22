@@ -205,6 +205,8 @@ export function SiteChat({
           placeholder="Describe a change to this site…"
           busy={chat.busy}
           onSend={(text) => chat.send(text)}
+          // Only a turn streaming here can be stopped, not the page still opening the chat.
+          onStop={chat.controller.status === "streaming" ? chat.controller.stop : undefined}
         />
       )}
     </aside>
