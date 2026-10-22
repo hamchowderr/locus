@@ -193,11 +193,6 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
   processInputStep({ messages, requestContext }: ProcessInputStepArgs) {
     if (isTainted(requestContext)) return;
     for (const message of messages) {
-      // A work thread's report of what it did after reading untrusted content is marked too.
-      if (JSON.stringify(message.content.metadata ?? null).includes(TAINT_MARK)) {
-        taint(requestContext);
-        return;
-      }
       for (const part of message.content.parts ?? []) {
         if (part.type !== "tool-invocation" || part.toolInvocation.state !== "result") continue;
         if (JSON.stringify(part.toolInvocation.result ?? null).includes(TAINT_MARK)) {
