@@ -178,10 +178,16 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
   readonly id = "locus-untrusted-content" as const;
   readonly name = "Withhold instructions in GoHighLevel data";
   readonly #trusted: ReadonlySet<string>;
+  readonly #threadText: ReadonlySet<string>;
 
-  /** `trusted`: further tools whose results are Locus's own text (e.g. skill tools). */
-  constructor(trusted: readonly string[] = []) {
+  /**
+   * `trusted`: further tools whose results are Locus's own text (e.g. skill tools).
+   * `threadText`: tools whose results are another agent's words (a work thread's replies),
+   * which can quote what that agent read: always treated as outside text.
+   */
+  constructor(trusted: readonly string[] = [], threadText: readonly string[] = []) {
     this.#trusted = new Set([...TRUSTED_TOOLS, ...trusted]);
+    this.#threadText = new Set(threadText);
   }
 
   processInputStep({ messages, requestContext }: ProcessInputStepArgs) {
@@ -207,19 +213,24 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
   }: ProcessToolResultArgs) {
     if (this.#trusted.has(toolName)) return;
     const screened = withholdInstructions(result);
+    const fromThread = this.#threadText.has(toolName);
     const publicText =
-      OUTSIDE_TEXT_TOOLS.has(toolName) || sourceOperations(toolName, args).some(readsPublicText);
+      OUTSIDE_TEXT_TOOLS.has(toolName) ||
+      fromThread ||
+      sourceOperations(toolName, args).some(readsPublicText);
     if (screened.withheld === 0 && !publicText) return;
 
     taint(requestContext);
     const fromApp = OUTSIDE_TEXT_TOOLS.has(toolName);
-    const source = fromApp ? "a connected app" : "GoHighLevel";
+    const source = fromApp ? "a connected app" : fromThread ? "a thread" : "GoHighLevel";
     const why =
       screened.withheld > 0
         ? `${screened.withheld} value(s) from ${source} read like instructions and were withheld.`
         : fromApp
           ? "This result comes from a connected app and holds text written by other people."
-          : "This result holds text written by the public.";
+          : fromThread
+            ? "This result holds a thread's words, which can quote text written by other people."
+            : "This result holds text written by the public.";
     messageList.updateToolInvocation({
       type: "tool-invocation",
       toolInvocation: {

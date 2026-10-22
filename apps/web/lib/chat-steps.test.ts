@@ -31,6 +31,13 @@ describe("chatStep", () => {
     );
   });
 
+  it("says how the chat followed its threads", () => {
+    expect(chatStep(call("list_threads", {}), undefined)?.label).toBe("Checked on the threads");
+    expect(chatStep(call("message_thread", { threadId: "t" }), undefined)?.label).toBe(
+      "Messaged a thread",
+    );
+  });
+
   it("marks a failure the tool returned, with its reason", () => {
     expect(
       chatStep(call("perform_action", { operation: "contacts.delete-contact" }), {
