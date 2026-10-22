@@ -216,23 +216,15 @@ function AppCard({ app, manager }: { app: ClientApp; manager: boolean }) {
         {manager && (
           <CardAction>
             {app.connected ? (
-              <form action={disconnectApp}>
-                <input type="hidden" name="toolkit" value={app.toolkit} />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  size="sm"
-                  aria-label={`Disconnect ${app.name}`}
-                >
-                  Disconnect
-                </Button>
-              </form>
+              <DisconnectButton app={app} />
+            ) : app.expired ? (
+              // An expired app can be signed in again, or removed without signing in.
+              <div className="flex items-center gap-2">
+                <ConnectButton toolkit={app.toolkit} name={app.name} label="Reconnect" />
+                <DisconnectButton app={app} label="Remove" />
+              </div>
             ) : (
-              <ConnectButton
-                toolkit={app.toolkit}
-                name={app.name}
-                {...(app.expired ? { label: "Reconnect" } : {})}
-              />
+              <ConnectButton toolkit={app.toolkit} name={app.name} />
             )}
           </CardAction>
         )}
@@ -251,6 +243,17 @@ function AppCard({ app, manager }: { app: ClientApp; manager: boolean }) {
         </CardContent>
       )}
     </Card>
+  );
+}
+
+function DisconnectButton({ app, label = "Disconnect" }: { app: ClientApp; label?: string }) {
+  return (
+    <form action={disconnectApp}>
+      <input type="hidden" name="toolkit" value={app.toolkit} />
+      <Button type="submit" variant="outline" size="sm" aria-label={`${label} ${app.name}`}>
+        {label}
+      </Button>
+    </form>
   );
 }
 
