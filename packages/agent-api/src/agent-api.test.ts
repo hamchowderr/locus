@@ -575,6 +575,73 @@ describe("work threads, through the chat kit's routes", () => {
     expect(mock().llm.getRequests().length).toBe(modelCalls);
   });
 
+  test("a thread's checklist and latest line show in the list, and the member can resolve it", async () => {
+    mock().llm.on(
+      { userMessage: /autumn tag tidy-up/i, hasToolResult: false },
+      startThread("w-cl-start", "Autumn tags", "Tidy the autumn tags."),
+    );
+    mock().llm.on({ toolCallId: "w-cl-start" }, { content: "Started a thread for it." });
+    mock().llm.on(
+      { userMessage: /tidy the autumn tags/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w-cl-tasks",
+            name: "task_write",
+            arguments: JSON.stringify({
+              tasks: [
+                { content: "List the tags", status: "completed", activeForm: "Listing the tags" },
+                { content: "Merge duplicates", status: "in_progress", activeForm: "Merging" },
+                { content: "Report back", status: "pending", activeForm: "Reporting back" },
+              ],
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "w-cl-tasks" },
+      { content: "Merged 3 duplicate tags.\nMore detail." },
+    );
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+
+    const main = kitEvents(await kit(api, "stream", { text: "Do the autumn tag tidy-up" }));
+    await main.until((e) => e.type === "__done__");
+    const work = (await workThreadReaching(api, "done")) as Listed & {
+      tasks?: unknown;
+      latest?: string;
+      resolved?: boolean;
+    };
+    expect(work.tasks).toEqual([
+      { content: "List the tags", status: "completed" },
+      { content: "Merge duplicates", status: "in_progress" },
+      { content: "Report back", status: "pending" },
+    ]);
+    expect(work.latest).toBe("Merged 3 duplicate tags.");
+
+    const patch = (id: string, body: unknown) =>
+      api.fetch(
+        new Request(
+          `http://locus.test${PREFIX}/kit/agent-controller/threads/${encodeURIComponent(id)}`,
+          {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        ),
+      );
+    // Only a thread can be resolved, never the chat itself.
+    expect((await patch(work.parentThreadId ?? "", { resolved: true })).status).toBe(409);
+    expect((await patch("someone-elses", { resolved: true })).status).toBe(404);
+    expect((await patch(work.id, { resolved: true })).status).toBe(200);
+    const resolved = (await threads(api)).find((t) => t.id === work.id) as typeof work;
+    expect(resolved).toMatchObject({ resolved: true, status: "done", title: "Autumn tags" });
+    expect((await patch(work.id, { resolved: false })).status).toBe(200);
+    const reopened = (await threads(api)).find((t) => t.id === work.id) as typeof work;
+    expect(reopened.resolved).toBeUndefined();
+    expect(reopened.tasks).toHaveLength(3);
+  }, 20_000);
+
   test("deleting a chat deletes the threads it started", async () => {
     mock().llm.on(
       { userMessage: /summer tag tidy-up/i, hasToolResult: false },
