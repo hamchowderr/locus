@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
+import { PREVIEW_DEV_HOSTS, withPreviewDevHosts } from "./preview-config.ts";
 import { annotateSource, isAnnotatable } from "./visual-edits.ts";
 import { SOURCE_ATTR, VISUAL_EDITS_MESSAGE } from "./visual-edits-protocol.ts";
 import type { SiteFile } from "./workspace.ts";
@@ -32,6 +33,7 @@ export function draftFingerprint(files: SiteFile[]): string {
  * page and component is annotated (`annotateSource`), `app/layout.tsx` loads the script, and
  * the script itself is added under `public/__locus/`. The draft itself is never changed.
  * A draft file at the script's path is replaced: the preview's copy must be Locus's own.
+ * Its `next.config` also lets the preview's host use the dev server (`withPreviewDevHosts`).
  */
 export function previewFiles(
   files: SiteFile[],
@@ -41,6 +43,8 @@ export function previewFiles(
      * With none, the script is still added but never answers anyone.
      */
     editorOrigins?: string[];
+    /** Hosts the preview is opened on (`PREVIEW_DEV_HOSTS` unless given). */
+    devHosts?: string[];
   } = {},
 ): SiteFile[] {
   let loadsScript = false;
@@ -62,7 +66,7 @@ export function previewFiles(
       content: visualEditsScript(options.editorOrigins ?? [], draftFingerprint(files)),
     });
   }
-  return out;
+  return withPreviewDevHosts(out, options.devHosts ?? PREVIEW_DEV_HOSTS);
 }
 
 /** The layout with `<script src="/__locus/visual-edits.js" async />` at the end of `<body>`. */

@@ -158,7 +158,7 @@ describe("sandbox tools", () => {
     expect(runtime.readText("a.txt")).toBe("draft");
   });
 
-  it("never deletes lockfiles or files the build makes", async () => {
+  it("never deletes lockfiles, files the build makes, or the preview's database and uploads", async () => {
     const { call } = await setup({
       runtime: {
         files: {
@@ -168,6 +168,8 @@ describe("sandbox tools", () => {
           "tsconfig.tsbuildinfo": "{}",
           "stray.txt": "x",
           ".locus/seeded": "1",
+          ".data/site.db": "rows",
+          ".data/files/photo.jpg": "jpeg",
         },
       },
     });
@@ -175,6 +177,8 @@ describe("sandbox tools", () => {
     await call("run_command", { command: "ls" });
     const runtime = await t.runtimes.open("site-1");
     expect([...runtime.files.keys()].sort()).toEqual([
+      ".data/files/photo.jpg",
+      ".data/site.db",
       ".locus/seeded",
       "a.txt",
       "next-env.d.ts",

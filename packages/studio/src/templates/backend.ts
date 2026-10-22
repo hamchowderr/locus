@@ -309,7 +309,10 @@ export async function POST() {
 
 // The site's own logins: email and password, stored in the site's own database. Each new member
 // is also sent to the client's HighLevel contacts (lib/members.ts).
-const authContent = (withMembers: boolean) => `import { betterAuth } from "better-auth";
+const authContent = (
+  withMembers: boolean,
+  previewCookies = true,
+) => `import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as schema from "@/db/schema";
 import { db, isPreviewDatabase } from "@/lib/db";
@@ -328,6 +331,15 @@ export const auth = betterAuth({
     (isPreviewDatabase ? "locus-preview-only-not-a-secret-at-all" : undefined),
   database: drizzleAdapter(db, { provider: "sqlite", schema }),
   emailAndPassword: { enabled: true },${
+    previewCookies
+      ? `
+  // The preview runs inside Locus's editor, a frame on another site, where the browser only
+  // keeps a login cookie that is SameSite=None, Secure and partitioned to that editor.
+  ...(isPreviewDatabase
+    ? { advanced: { defaultCookieAttributes: { sameSite: "none", secure: true, partitioned: true } } }
+    : {}),`
+      : ""
+  }${
     withMembers
       ? `
   databaseHooks: { user: { create: { after: memberSignedUp } } },`
@@ -377,8 +389,13 @@ export async function memberSignedUp(
 `,
 });
 
-/** lib/auth.ts as sites got it before sign-ups went to HighLevel: replaced when unchanged. */
-const AUTH_BEFORE_MEMBERS = authContent(false);
+/** lib/auth.ts as sites got it in earlier versions: replaced when unchanged. */
+const EARLIER_AUTH = new Set([
+  // before sign-ups went to HighLevel
+  authContent(false, false),
+  // before the preview's login cookie worked inside the editor
+  authContent(true, false),
+]);
 
 const authRouteFile = (): SiteFile => ({
   path: "app/api/auth/[...all]/route.ts",
@@ -804,10 +821,10 @@ export function withBackend(files: SiteFile[]): SiteFile[] {
   }
   // Files from an earlier version of the uploads, replaced by the current ones.
   for (const path of RETIRED_FILES) byPath.delete(path);
-  // A login file nobody has changed since sign-ups went to HighLevel gets the new one; one the
+  // A login file nobody has changed since an earlier version gets the current one; one the
   // agent changed is kept, and the site's skill says how to add the hook by hand.
-  const auth = byPath.get("lib/auth.ts");
-  if (auth?.content === AUTH_BEFORE_MEMBERS) byPath.delete("lib/auth.ts");
+  const auth = byPath.get("lib/auth.ts")?.content;
+  if (typeof auth === "string" && EARLIER_AUTH.has(auth)) byPath.delete("lib/auth.ts");
   for (const file of backendFiles()) {
     if (!byPath.has(file.path) || LOCUS_FILES.has(file.path)) byPath.set(file.path, file);
   }
