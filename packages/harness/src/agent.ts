@@ -4,6 +4,7 @@ import type { MastraModelConfig } from "@mastra/core/llm";
 import type { InputProcessorOrWorkflow, OutputProcessorOrWorkflow } from "@mastra/core/processors";
 import { APP_TOOL_NAMES, createAppTools } from "./apps.ts";
 import { type ConversationStore, createLocusMemory, ForgetGhlData } from "./conversation.ts";
+import { RUN_STOP_CONDITIONS } from "./run-limits.ts";
 import { createLocusTools, type ToolDeps, waitsForApproval } from "./tools.ts";
 import { UntrustedContentProcessor } from "./untrusted.ts";
 
@@ -106,6 +107,8 @@ export function createLocusAgent({
         : []),
     ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
+    // Merged into every run, so it holds for the agent controller's runs and their resumes.
+    defaultOptions: { stopWhen: RUN_STOP_CONDITIONS },
   });
   if (!storage) return agent;
   // Approvals are resumed from a run snapshot, which Mastra keeps in its instance's storage.
