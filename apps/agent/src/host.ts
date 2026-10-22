@@ -156,12 +156,14 @@ const NO_LOCAL_SANDBOXES: SiteBuilderDeps["runtimes"] = () => ({
 export function siteSandboxes(
   env: Env,
   webApp: Parameters<typeof remoteSiteRuntimes>[0],
+  /** The local provider when on Daytona; tests pass a fake. */
+  local: () => ReturnType<typeof runtimesFromEnv> = () => runtimesFromEnv(env),
 ): Pick<SiteBuilderDeps, "runtimes" | "openRuntime"> {
   if (daytonaSandboxes(env)) {
     let runtimes: ReturnType<typeof runtimesFromEnv> | undefined;
     return {
       runtimes: () => {
-        runtimes ??= runtimesFromEnv(env);
+        runtimes ??= local();
         return runtimes;
       },
     };

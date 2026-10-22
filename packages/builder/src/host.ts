@@ -53,7 +53,6 @@ import {
   SANDBOX_RPC_PATH,
   type SiteRuntime,
   sandboxProviderFromEnv,
-  sandboxProviderName,
 } from "@locus/sandbox";
 import {
   bookingCalendarIds,
@@ -593,25 +592,37 @@ export const pooledUsers = (locationId: string) => pool.get(locationId)?.users ?
 export function runtimesFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeProvider {
-  const real = sandboxProviderFromEnv(env);
-  if (real) return real;
-  if (env.NODE_ENV !== "production") return new FakeRuntimeProvider();
+  // A provider setting that names no provider is reported (here and by the settings checks),
+  // never thrown at whoever first asks for a sandbox, and never quietly replaced by the fake.
+  let misconfigured: string | null = null;
+  try {
+    const real = sandboxProviderFromEnv(env);
+    if (real) return real;
+  } catch (error) {
+    misconfigured = error instanceof Error ? error.message : String(error);
+  }
+  if (!misconfigured && env.NODE_ENV !== "production") return new FakeRuntimeProvider();
   return {
     async open() {
-      const missing = missingSandboxSettings(env);
+      const missing = misconfigured ? [] : missingSandboxSettings(env);
       console.error(
-        missing.length > 0
-          ? `Locus is not configured: site sandboxes need ${missing.join(", ")}`
-          : "Locus is not configured: site sandboxes are off (LOCUS_SANDBOX=off)",
+        misconfigured
+          ? `Locus is not configured: ${misconfigured}`
+          : missing.length > 0
+            ? `Locus is not configured: site sandboxes need ${missing.join(", ")}`
+            : "Locus is not configured: site sandboxes are off (LOCUS_SANDBOX=off)",
       );
       throw new BuilderError("Site previews aren't set up on this deployment.");
     },
   };
 }
 
-/** Sandboxes run on Daytona (`LOCUS_SANDBOX_PROVIDER=daytona`), which any host can reach. */
+/**
+ * Sandboxes run on Daytona (`LOCUS_SANDBOX_PROVIDER=daytona`), which any host can reach. Any
+ * other value, unknown ones included, is not Daytona; the settings checks report unknown ones.
+ */
 export const daytonaSandboxes = (env: Record<string, string | undefined> = process.env) =>
-  sandboxProviderName(env) === "daytona";
+  env.LOCUS_SANDBOX_PROVIDER === "daytona";
 
 /** How a Locus backend off Vercel reaches the web app (`remoteSiteRuntimes`, `remotePublish`). */
 export interface WebAppOptions {

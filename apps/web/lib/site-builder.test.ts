@@ -1771,6 +1771,16 @@ describe("sandboxes from the environment", () => {
     await expect(opening).rejects.toThrow("Site previews aren't set up on this deployment.");
     await expect(opening).rejects.not.toThrow(/DAYTONA/);
   });
+
+  it("answers the usual way, never with a crash, when the provider setting names none", async () => {
+    for (const NODE_ENV of ["production", "development"]) {
+      const runtimes = runtimesFromEnv({ LOCUS_SANDBOX_PROVIDER: "dayton", NODE_ENV });
+      expect(runtimes).not.toBeInstanceOf(FakeRuntimeProvider);
+      const opening = runtimes.open("x");
+      await expect(opening).rejects.toBeInstanceOf(BuilderError);
+      await expect(opening).rejects.toThrow("Site previews aren't set up on this deployment.");
+    }
+  });
 });
 
 describe("storing the GitHub App key", () => {

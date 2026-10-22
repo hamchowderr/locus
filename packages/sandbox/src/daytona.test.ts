@@ -1,7 +1,18 @@
+import { spawn } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, posix } from "node:path";
 import { DaytonaNotFoundError, SandboxState } from "@daytonaio/sdk";
 import { DaytonaSandbox, type DaytonaSandboxOptions } from "@mastra/daytona";
-import { describe, expect, it, vi } from "vitest";
-import { DaytonaRuntimeProvider, type DaytonaSandboxConfig, daytonaFromEnv } from "./daytona.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  DaytonaRuntimeProvider,
+  type DaytonaSandboxConfig,
+  daytonaFromEnv,
+  installScript,
+  previewLaunchScript,
+  type SandboxScriptPaths,
+} from "./daytona.ts";
 import { InvalidPathError } from "./paths.ts";
 import type { SiteRuntime } from "./runtime.ts";
 import { sandboxName } from "./vercel.ts";
@@ -30,6 +41,8 @@ interface FakeVm {
   state: SandboxState;
   createdAt: string;
   files: Map<string, string>;
+  /** Folders that exist: `/`, and every absolute path a `mkdir` command named, with its parents. */
+  dirs: Set<string>;
   commands: string[];
   process: Record<string, (...args: never[]) => unknown>;
   fs: { uploadFiles: (files: { source: Buffer; destination: string }[]) => Promise<void> };
@@ -46,10 +59,31 @@ function fakeDaytona(handler: Handler = () => undefined) {
     stopped: [] as string[],
     deleted: [] as string[],
     signed: [] as { port: number; ttl: number | undefined }[],
+    /** Uploads waiting on `holdUploads`. */
+    held: 0,
   };
   let counter = 0;
+  /** While set, uploads wait for it (to delete a site with an upload in flight). */
+  let uploadGate: Promise<void> | null = null;
+  const holdUploads = () => {
+    let release = () => {};
+    uploadGate = new Promise<void>((resolve) => {
+      release = () => {
+        uploadGate = null;
+        resolve();
+      };
+    });
+    return release;
+  };
 
   const notRunning = () => new Error("Sandbox is not running");
+  /** Daytona's upload makes no folders here: the runtime has to have made them. */
+  const addDirs = (vm: FakeVm, command: string) => {
+    if (!command.includes("mkdir")) return;
+    for (const path of command.match(/\/[\w.\-/]+/g) ?? []) {
+      for (let dir = path; dir !== "/" && dir !== "."; dir = posix.dirname(dir)) vm.dirs.add(dir);
+    }
+  };
 
   function makeVm(name: string): FakeVm {
     counter += 1;
@@ -60,6 +94,7 @@ function fakeDaytona(handler: Handler = () => undefined) {
       state: SandboxState.STARTED,
       createdAt: new Date().toISOString(),
       files: new Map(),
+      dirs: new Set(["/", "/tmp", "/home", "/home/daytona"]),
       commands: [],
       process: {
         createSession: async () => {
@@ -68,6 +103,7 @@ function fakeDaytona(handler: Handler = () => undefined) {
         executeSessionCommand: async (sessionId: string, req: { command: string }) => {
           if (vm.state !== SandboxState.STARTED) throw notRunning();
           vm.commands.push(req.command);
+          addDirs(vm, req.command);
           const outcome = (await shell(req.command, vm)) ?? {};
           let finish = () => {};
           const done = new Promise<void>((resolve) => {
@@ -103,7 +139,20 @@ function fakeDaytona(handler: Handler = () => undefined) {
       fs: {
         uploadFiles: async (files) => {
           if (vm.state !== SandboxState.STARTED) throw notRunning();
-          for (const file of files) vm.files.set(file.destination, file.source.toString());
+          if (uploadGate) {
+            calls.held += 1;
+            await uploadGate;
+          }
+          // Deleted while the upload was under way.
+          if (vm.state !== SandboxState.STARTED) {
+            throw new DaytonaNotFoundError(`Sandbox ${vm.id} not found`, 404);
+          }
+          for (const file of files) {
+            if (!vm.dirs.has(posix.dirname(file.destination))) {
+              throw new Error(`no such folder: ${posix.dirname(file.destination)}`);
+            }
+            vm.files.set(file.destination, file.source.toString());
+          }
         },
       },
       getSignedPreviewUrl: async (port, ttl) => {
@@ -164,7 +213,7 @@ function fakeDaytona(handler: Handler = () => undefined) {
     return sandbox;
   };
 
-  return { vms, calls, client, createSandbox, options };
+  return { vms, calls, client, createSandbox, options, holdUploads };
 }
 type Fake = ReturnType<typeof fakeDaytona>;
 
@@ -363,7 +412,7 @@ describe("DaytonaRuntimeProvider", () => {
     expect(result).toMatchObject({ timedOut: true, exitCode: 124 });
   });
 
-  it("shares one install between concurrent calls, under a lock in the sandbox", async () => {
+  it("shares one install between concurrent calls in this process", async () => {
     const fake = fakeDaytona((command) =>
       command.includes("pnpm install") ? { delayMs: 20, stdout: "installed" } : undefined,
     );
@@ -372,9 +421,7 @@ describe("DaytonaRuntimeProvider", () => {
     expect(a).toBe(b);
     const installs = callerCommands(vmOf(fake, "site")).filter((c) => c.includes("pnpm install"));
     expect(installs).toHaveLength(1);
-    expect(installs[0]).toContain("flock 9");
-    expect(installs[0]).toContain("node_modules/.locus-install-stamp");
-    expect(installs[0]).toContain("npx --yes pnpm@10.28.0 install");
+    expect(installs[0]).toContain(`CI=1`);
   });
 
   it("starts next dev once in the background and returns a signed, expiring preview URL", async () => {
@@ -394,8 +441,7 @@ describe("DaytonaRuntimeProvider", () => {
     ]);
     const launches = callerCommands(vmOf(fake, "site")).filter((c) => c.includes("next dev"));
     expect(launches).toHaveLength(1);
-    expect(launches[0]).toContain("flock -n 9 || exit 0");
-    expect(launches[0]).toContain("--port 3000 --hostname 0.0.0.0 > /tmp/locus-preview.log 2>&1");
+    expect(launches[0]).toContain("--port 3000 --hostname 0.0.0.0");
     expect(fake.calls.signed).toEqual([{ port: 3000, ttl: 600 }]);
   });
 
@@ -458,6 +504,147 @@ describe("DaytonaRuntimeProvider", () => {
     expect(fake.calls.deleted).toEqual([sandboxName("site"), sandboxName("other")]);
     // Nothing there: fine.
     await provider(fake).destroy("never-made");
+  });
+
+  it("never recreates a deleted site's sandbox for a call that was under way", async () => {
+    const fake = fakeDaytona();
+    const onCreate = vi.fn(async () => {});
+    const runtimes = provider(fake, { onCreate });
+    const runtime = await runtimes.open("site");
+    const release = fake.holdUploads();
+    const writing = runtime.writeFiles([{ path: "lead.txt", content: "a deleted client's data" }]);
+    writing.catch(() => {});
+    await vi.waitFor(() => expect(fake.calls.held).toBe(1));
+
+    await runtimes.destroy("site");
+    release(); // the upload now finds its sandbox gone, and Mastra would start a new one
+
+    await expect(writing).rejects.toThrow(/deleted/);
+    expect(fake.calls.created).toHaveLength(1);
+    expect(fake.vms.size).toBe(0);
+    expect(onCreate).toHaveBeenCalledTimes(1);
+    await expect(runtime.run("ls")).rejects.toThrow(/deleted/);
+    expect(fake.calls.created).toHaveLength(1);
+  });
+
+  it("makes the seed marker's folder before writing it", async () => {
+    const fake = fakeDaytona();
+    await provider(fake, { onCreate: async () => {} }).open("site");
+    const vm = vmOf(fake, "site") as FakeVm;
+    expect(vm.dirs.has(`${ROOT}/.locus`)).toBe(true);
+    expect(vm.files.has(MARKER)).toBe(true);
+  });
+});
+
+/** Runs a script under `sh` in `cwd`; resolves with its exit code and output. */
+function sh(script: string, cwd: string, path: string) {
+  const child = spawn("sh", ["-c", script], {
+    cwd,
+    env: { PATH: `${path}:${posix.dirname(process.execPath)}:/usr/bin:/bin` },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let out = "";
+  child.stdout.on("data", (chunk) => {
+    out += chunk;
+  });
+  child.stderr.on("data", (chunk) => {
+    out += chunk;
+  });
+  const done = new Promise<{ code: number | null; out: string }>((resolve) => {
+    child.on("close", (code) => resolve({ code, out }));
+  });
+  return { child, done };
+}
+
+async function executable(file: string, body: string) {
+  await writeFile(file, `#!/bin/sh\n${body}\n`);
+  await chmod(file, 0o755);
+}
+
+// The scripts themselves, run for real under sh (with stand-ins for pnpm and next), so the locks
+// are shown to work rather than only to be present.
+describe("the sandbox's scripts", () => {
+  let dir: string;
+  let root: string;
+  let bin: string;
+  let paths: SandboxScriptPaths;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "locus-daytona-"));
+    root = join(dir, "site");
+    bin = join(dir, "bin");
+    await mkdir(join(root, "node_modules", ".bin"), { recursive: true });
+    await mkdir(bin);
+    await writeFile(join(root, "package.json"), '{"name":"site"}');
+    paths = {
+      installLock: join(dir, "install.lock"),
+      previewLock: join(dir, "preview.lock"),
+      previewPid: join(dir, "preview.pid"),
+      previewLog: join(dir, "preview.log"),
+    };
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("lets only one of two concurrent installs run, and the second finds it done", async () => {
+    const runs = join(dir, "runs.log");
+    await executable(
+      join(bin, "pnpm"),
+      `echo "start $$" >> ${runs}; sleep 0.4; echo "end $$" >> ${runs}`,
+    );
+    const first = sh(installScript(paths), root, bin);
+    const second = sh(installScript(paths), root, bin);
+    const results = await Promise.all([first.done, second.done]);
+    expect(results.map((r) => r.code)).toEqual([0, 0]);
+    const lines = (await readFile(runs, "utf8")).trim().split("\n");
+    // One install, start then end, never two overlapping.
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^start /);
+    expect(lines[1]).toMatch(/^end /);
+    expect(results.some((r) => r.out.includes("dependencies up to date"))).toBe(true);
+
+    // A changed package.json installs again.
+    await writeFile(join(root, "package.json"), '{"name":"site","version":"2"}');
+    expect((await sh(installScript(paths), root, bin).done).code).toBe(0);
+    expect((await readFile(runs, "utf8")).trim().split("\n")).toHaveLength(4);
+  });
+
+  it("starts one dev server; a second start leaves it running, and one can start once it's gone", async () => {
+    const launches = join(dir, "launches.log");
+    // A stand-in dev server that leaves a process behind (as next's workers could), holding
+    // whatever descriptors it was given.
+    await executable(
+      join(root, "node_modules", ".bin", "next"),
+      [
+        `echo "next $*" >> ${launches}`,
+        `sleep 30 &`,
+        `exec node -e "setTimeout(() => {}, 30000)" next-stand-in`,
+      ].join("\n"),
+    );
+    const pid = async () => Number((await readFile(paths.previewPid, "utf8")).trim());
+    const first = sh(previewLaunchScript(3000, paths), root, bin);
+    await vi.waitFor(async () => expect(await readFile(launches, "utf8")).toContain("next dev"));
+    await vi.waitFor(async () => expect(await pid()).toBeGreaterThan(0));
+    const second = await sh(previewLaunchScript(3000, paths), root, bin).done;
+    expect(second.code).toBe(0);
+    expect((await readFile(launches, "utf8")).trim().split("\n")).toEqual([
+      "next dev --port 3000 --hostname 0.0.0.0",
+    ]);
+    expect(first.child.exitCode).toBeNull();
+    // The pid file names the dev server, which is what `previewRunning` checks.
+    expect(await readFile(`/proc/${await pid()}/cmdline`, "utf8")).toContain("next-stand-in");
+
+    // The dev server dies; what it left behind must not keep the lock.
+    process.kill(await pid(), "SIGKILL");
+    expect((await first.done).code).not.toBe(0);
+    const third = sh(previewLaunchScript(3000, paths), root, bin);
+    await vi.waitFor(async () =>
+      expect((await readFile(launches, "utf8")).trim().split("\n")).toHaveLength(2),
+    );
+    await vi.waitFor(async () => expect(await pid()).not.toBe(0));
+    process.kill(await pid(), "SIGKILL");
+    await third.done;
   });
 });
 
