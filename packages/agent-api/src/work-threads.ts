@@ -33,8 +33,10 @@
 
 import {
   ASK_TOOLS,
+  hasRefusedBrief,
   isTainted,
   OWN_STATE_TOOLS,
+  REFUSED_BRIEF_MARK,
   TAINT_KEY,
   TAINT_MARK,
   withholdInstructions,
@@ -119,11 +121,12 @@ export function clientWorkThreads(
     storage,
     agents,
     maxWorking: MAX_WORKING_THREADS,
-    requireApproval: isTainted,
+    requireApproval: (context) => isTainted(context) || hasRefusedBrief(context),
     startsUntrusted: isTainted,
-    // A suggestion refused for a tainted run keeps the mark, so a later run that reuses its
-    // brief is tainted too and start_thread asks first, showing the brief.
-    refusedSuggestion: { taint: TAINT_MARK },
+    // A suggestion refused for a tainted run keeps its briefs in the chat's history, so its
+    // result is marked: a later run that reads it asks before starting or messaging a thread,
+    // showing the brief, without being tainted itself.
+    refusedSuggestion: { refusedBrief: REFUSED_BRIEF_MARK },
     runContext: (context, thread) => {
       if (thread.untrusted) context.set(TAINT_KEY, true);
     },
