@@ -436,6 +436,7 @@ export function createHost({
           ...(builder?.ownTextTools ?? []),
           workThreads.tool.id,
           workThreads.steering.message_thread.id,
+          workThreads.steering.suggest_threads.id,
         ],
         // A thread's words can quote what it read, so reading them taints the run.
         threadTextTools: workThreads.threadTextTools,

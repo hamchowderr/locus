@@ -33,8 +33,10 @@
 
 import {
   ASK_TOOLS,
+  hasRefusedBrief,
   isTainted,
   OWN_STATE_TOOLS,
+  REFUSED_BRIEF_MARK,
   TAINT_KEY,
   TAINT_MARK,
   withholdInstructions,
@@ -51,6 +53,7 @@ import {
   LIST_THREADS_TOOL,
   MESSAGE_THREAD_TOOL,
   READ_THREAD_TOOL,
+  SUGGEST_THREADS_TOOL,
 } from "./mastra/lib/work-thread-steering.ts";
 import {
   createWorkThreads,
@@ -73,7 +76,12 @@ export const SUPERVISOR_MODE_ID = "supervisor";
 export const MAX_WORKING_THREADS = 3;
 
 /** The supervisor's tools for the threads it started. */
-export const STEERING_TOOLS = [LIST_THREADS_TOOL, READ_THREAD_TOOL, MESSAGE_THREAD_TOOL] as const;
+export const STEERING_TOOLS = [
+  SUGGEST_THREADS_TOOL,
+  LIST_THREADS_TOOL,
+  READ_THREAD_TOOL,
+  MESSAGE_THREAD_TOOL,
+] as const;
 
 /** The main chat: reads and answers itself, and hands every change to a thread. */
 export const SUPERVISOR_MODE: AgentControllerMode = {
@@ -85,9 +93,12 @@ load_skill and query_data. You change nothing here: hand every change, and any w
 steps, to a thread with start_thread, choosing the agent that fits, and give it a full brief. A
 request with several parts (a website, a funnel page and an email campaign, say) gets one thread
 per part. Work in the client's connected apps goes to a thread too. Then say in a sentence or
-two which threads you started. To say how the work is going, use list_threads and read_thread.
-To change a thread's plan, or pass on what the person says about it, use message_thread rather
-than starting another thread. At most ${MAX_WORKING_THREADS} threads work at once; the rest wait
+two which threads you started. When the person asks what could be done for this sub-account, or
+a request could split into work they may not all want, offer threads with suggest_threads instead
+of starting them, then stop: they pick on the card, and you start the ones they name with
+start_thread, using each suggestion's title, brief and agent unchanged. To say how the work is
+going, use list_threads and read_thread. To change a thread's plan, or pass on what the person
+says about it, use message_thread rather than starting another thread. At most ${MAX_WORKING_THREADS} threads work at once; the rest wait
 their turn, so tell the person when one is queued.`,
   availableTools: [
     ...new Set([...ASK_TOOLS, ...OWN_STATE_TOOLS, START_THREAD_TOOL, ...STEERING_TOOLS]),
@@ -110,8 +121,12 @@ export function clientWorkThreads(
     storage,
     agents,
     maxWorking: MAX_WORKING_THREADS,
-    requireApproval: isTainted,
+    requireApproval: (context) => isTainted(context) || hasRefusedBrief(context),
     startsUntrusted: isTainted,
+    // A suggestion refused for a tainted run keeps its briefs in the chat's history, so its
+    // result is marked: a later run that reads it asks before starting or messaging a thread,
+    // or making any change, without being tainted itself.
+    refusedSuggestion: { refusedBrief: REFUSED_BRIEF_MARK },
     runContext: (context, thread) => {
       if (thread.untrusted) context.set(TAINT_KEY, true);
     },
@@ -126,7 +141,7 @@ export function clientWorkThreads(
   return {
     /** The `start_thread` tool, for `createLocusController({ tools })`. */
     tool: threads.tool,
-    /** `list_threads`, `read_thread` and `message_thread`, for the same `tools`. */
+    /** `suggest_threads`, `list_threads`, `read_thread` and `message_thread`, for the same `tools`. */
     steering: threads.steering,
     /** The steering tools that return a thread's words, for `threadTextTools`. */
     threadTextTools: [LIST_THREADS_TOOL, READ_THREAD_TOOL],
