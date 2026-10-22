@@ -62,6 +62,7 @@ import { asCaller, isKitRoute, type KitCaller, kitRoutes } from "./kit.ts";
 /** The largest body the chat kit's stream route takes (a message with its attachments). */
 export { STREAM_BODY_LIMIT as KIT_STREAM_BODY_LIMIT } from "./mastra/routes/stream-body.ts";
 export {
+  clientSiteThreads,
   clientWorkThreads,
   OPERATOR_AGENT,
   SUPERVISOR_MODE,

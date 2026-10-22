@@ -1,6 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import type { AgentControllerMode } from "@mastra/core/agent-controller";
 import type { MastraModelConfig } from "@mastra/core/llm";
+import { SITE_THREAD_TOOL_NAMES } from "./site-threads.ts";
 import { SKILL_CATALOG } from "./skills/index.ts";
 import {
   createSiteBuilderTools,
@@ -27,6 +28,8 @@ PRODUCT.md / DESIGN.md in the site); never run the shadcn CLI or npx (add compon
 add_dependency's component); the files tool replaces reading and editing files directly.
 
 How to work:
+0. In a thread the main chat started, the site comes first: create_site for new work, or
+   list_sites and choose_site for a site that exists. Keep a checklist with task_write.
 1. brief first. If it leaves design questions open and the person hasn't said to just go
    ahead, ask at most three of them in one short message, with the suggested options. Record
    answers with brief's changes. If it lists references, look at each before designing:
@@ -106,7 +109,24 @@ export const SITE_BUILDER_MODE: AgentControllerMode = {
   name: "Site builder",
   description: "Builds and changes the client's website: pages, images, previews and versions.",
   instructions: SITE_BUILDER_INSTRUCTIONS,
-  availableTools: [...SITE_BUILDER_TOOL_NAMES],
+  // The site tools work only in a thread; the checklist tools change nothing.
+  availableTools: [
+    ...SITE_BUILDER_TOOL_NAMES,
+    ...SITE_THREAD_TOOL_NAMES,
+    "task_write",
+    "task_update",
+    "task_complete",
+    "task_check",
+  ],
+};
+
+/** The builder as an agent the main chat hands work to, in a thread of its own. */
+export const SITE_BUILDER_AGENT = {
+  id: "site-builder",
+  name: "Site builder",
+  description:
+    "Builds and changes the client's websites, landing pages and funnel pages: a new one, or one that exists, with previews and saved versions. One thread per site.",
+  modeId: SITE_BUILDER_MODE_ID,
 };
 
 export interface SiteBuilderAgentConfig extends SiteBuilderToolDeps {

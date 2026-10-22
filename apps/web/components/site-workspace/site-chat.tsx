@@ -10,25 +10,33 @@ import { builderStep, savedVersion } from "@/lib/builder-steps";
 import { cn } from "@/lib/utils";
 import { VersionCard } from "./version-card";
 
+/** How often a thread working on the site in the background is read again. */
+const THREAD_POLL_MS = 4_000;
+
 /** The builder tools whose success means the site's files changed. */
 const CHANGES_FILES = new Set(["files", "versions", "add_dependency"]);
 
 const noThreads = new Map<string, ThreadItem>();
 
 /**
- * One site's conversation with the site builder. It is the sub-account's newest conversation
- * tagged with this site, or a new one the first message makes (and tags), so a site keeps its
- * own history apart from the main chat. Every turn names the builder's mode and makes this
- * site the one it works on first, so nothing needs switching by hand.
+ * One site's conversation with the site builder. It is the thread named by `threadId` (one the
+ * main chat started to build this site), else the sub-account's newest conversation tagged with
+ * this site, or a new one the first message makes (and tags), so a site keeps its own history
+ * apart from the main chat. Every turn names the builder's mode and makes this site the one it
+ * works on first, so nothing needs switching by hand. While a thread works on the site in the
+ * background, its conversation and the preview follow along.
  */
 export function useSiteChat({
   siteId,
   mode,
+  threadId = null,
   onFilesChanged,
 }: {
   siteId: string;
   /** The site builder's mode id; null when there is no chat here. */
   mode: string | null;
+  /** A thread of the main chat's to open, if it is this site's. */
+  threadId?: string | null;
   /** Called when a turn that changed the site's files ends. */
   onFilesChanged: () => void;
 }) {
@@ -44,6 +52,8 @@ export function useSiteChat({
   // a first message can't start a second conversation for the site.
   const [ready, setReady] = useState(false);
   const tagged = useRef<string | null>(null);
+  // The work thread on show, while it works in the background.
+  const [working, setWorking] = useState<string | null>(null);
   const { openThread, activeThreadId } = controller;
   useEffect(() => {
     if (!mode) return;
@@ -53,10 +63,12 @@ export function useSiteChat({
       try {
         const res = await fetch("/api/agent-controller/threads", { cache: "no-store" });
         const data = (await res.json()) as { threads?: ThreadItem[] };
-        const mine = (data.threads ?? []).find((t) => t.siteId === siteId && !t.archived);
+        const ofSite = (data.threads ?? []).filter((t) => t.siteId === siteId && !t.archived);
+        const mine = ofSite.find((t) => t.id === threadId) ?? ofSite[0];
         if (mine && !stale) {
           tagged.current = mine.id;
           await openThread(mine.id);
+          if (mine.status === "working") setWorking(mine.id);
         }
       } catch {
         // No history to show; the first message starts the site's conversation.
@@ -67,7 +79,28 @@ export function useSiteChat({
     return () => {
       stale = true;
     };
-  }, [mode, siteId, openThread]);
+  }, [mode, siteId, threadId, openThread]);
+
+  // A thread working on the site in the background: read it again until it stops, showing its
+  // conversation as it grows and the preview once it ends.
+  useEffect(() => {
+    if (!working) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch("/api/agent-controller/threads", { cache: "no-store" });
+        const data = (await res.json()) as { threads?: ThreadItem[] };
+        const now = data.threads?.find((t) => t.id === working);
+        await openThread(working);
+        if (now?.status !== "working") {
+          setWorking(null);
+          filesChanged.current();
+        }
+      } catch {
+        // Tried again on the next tick.
+      }
+    }, THREAD_POLL_MS);
+    return () => clearInterval(timer);
+  }, [working, openThread]);
 
   // A new conversation is tagged as this site's, so it opens here next time and stays out of
   // the main chat. A tag that didn't go through is tried again after the next turn.
@@ -105,7 +138,7 @@ export function useSiteChat({
   const { sendMessage } = controller;
   const send = useCallback(
     async (text: string): Promise<boolean> => {
-      if (!mode || !ready) return false;
+      if (!mode || !ready || working) return false;
       setProblem(null);
       // The builder works on the member's chosen site; this page's site is the one meant.
       const chosen = await chooseSiteForChat(siteId);
@@ -115,10 +148,10 @@ export function useSiteChat({
       }
       return sendMessage(text, { mode });
     },
-    [mode, ready, siteId, sendMessage],
+    [mode, ready, working, siteId, sendMessage],
   );
 
-  return { controller, send, busy: busy || !ready, problem };
+  return { controller, send, busy: busy || !ready || working !== null, problem };
 }
 
 export type SiteChatState = ReturnType<typeof useSiteChat>;

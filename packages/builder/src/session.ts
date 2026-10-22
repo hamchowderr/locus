@@ -45,5 +45,14 @@ export interface BuilderSession {
   ) => Promise<{ commitSha?: string; url?: string } | undefined>;
 }
 
-/** Looks up the session for a tool call from the host-set request context. */
-export type ResolveBuilderSession = (requestContext: unknown) => Promise<BuilderSession>;
+/** What a tool call knows of its run beyond the request context: the conversation it is in. */
+export interface BuilderRun {
+  /** The thread the call runs in, from Mastra's own tool context (never from a request). */
+  threadId?: string | undefined;
+}
+
+/** Looks up the session for a tool call from the host-set request context and its run. */
+export type ResolveBuilderSession = (
+  requestContext: unknown,
+  run?: BuilderRun,
+) => Promise<BuilderSession>;

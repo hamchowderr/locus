@@ -161,9 +161,11 @@ function need<T>(value: T | undefined, what: string): T {
 export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
   const withSession =
     <I, O>(run: (session: BuilderSession, input: I) => Promise<O>) =>
-    async (input: I, context: { requestContext?: unknown }) =>
+    async (input: I, context: { requestContext?: unknown; agent?: { threadId?: string } }) =>
       recoverable(async () => {
-        const session = await deps.resolve(context?.requestContext);
+        const session = await deps.resolve(context?.requestContext, {
+          threadId: context?.agent?.threadId,
+        });
         try {
           return await run(session, input);
         } finally {
@@ -1423,7 +1425,7 @@ async function migratePreview(
  * Mistakes the model can fix come back as data so it can correct itself. Anything else (a bug,
  * an outage) is thrown.
  */
-async function recoverable<T>(run: () => Promise<T>): Promise<T | { error: string }> {
+export async function recoverable<T>(run: () => Promise<T>): Promise<T | { error: string }> {
   try {
     return await run();
   } catch (error) {
