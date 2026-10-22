@@ -17,8 +17,9 @@
  * - Every run the kit starts in an `untrusted` thread (its brief, a message from the main chat)
  *   is tainted too, whatever the main chat's run was.
  * - A report carries the thread's own words into the main chat, so what reads like
- *   instructions in it is withheld, as in any GHL data, and the report of a run that read
- *   untrusted content carries `TAINT_MARK`: the main chat's runs after it are tainted.
+ *   instructions in it is withheld, as in any GHL data. A run that read untrusted content (or
+ *   any run in an untrusted thread) reports only how it ended: the supervisor reads the rest
+ *   with `read_thread`, which taints its run.
  * - Its sessions get no grants: Locus's approval rules hold there as everywhere.
  *
  * The main chat is a supervisor (`SUPERVISOR_MODE`): it reads and answers, and hands every
@@ -114,11 +115,9 @@ export function clientWorkThreads(
     runContext: (context, thread) => {
       if (thread.untrusted) context.set(TAINT_KEY, true);
     },
-    // Marked when the thread is tainted, or the reported run read something that tainted it.
-    reportMetadata: ({ thread, runMessages }) =>
-      thread.untrusted || JSON.stringify(runMessages).includes(TAINT_MARK)
-        ? { taint: TAINT_MARK }
-        : undefined,
+    // A run that read untrusted content reports how it ended, never what it said.
+    reportsWords: ({ thread, runMessages }) =>
+      !thread.untrusted && !JSON.stringify(runMessages).includes(TAINT_MARK),
     screenReport: (text) => {
       const screened = withholdInstructions(text).value;
       return typeof screened === "string" ? screened : "";

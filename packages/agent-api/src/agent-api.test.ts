@@ -791,7 +791,7 @@ describe("work threads, through the chat kit's routes", () => {
     expect(asked.toolCallId).toBe("w5-msg");
   });
 
-  test("a report from a thread that read public text taints the supervisor's next turn", async () => {
+  test("a thread that read public text reports how it ended, not what it said", async () => {
     mock().llm.on(
       { userMessage: /look over the form leads/i, hasToolResult: false },
       startThread("w6-start", "Form leads", "Summarise the form submissions."),
@@ -824,21 +824,16 @@ describe("work threads, through the chat kit's routes", () => {
     await started.until((e) => e.type === "__done__");
     const work = await workThreadReaching(api, "done");
 
-    // The report is the only thing the main chat read since, and it carries the thread's taint.
-    mock().llm.on(
-      { userMessage: /now follow up with them/i, hasToolResult: false },
-      startThread("w6-next", "Lead follow-up", "Follow up with the form leads."),
-    );
-    mock().llm.on({ toolCallId: "w6-next" }, { content: "Started it." });
-    const main = kitEvents(
-      await kit(api, "stream", {
-        text: "Now follow up with them",
-        threadId: work.parentThreadId,
-        mode: "supervisor",
-      }),
-    );
-    const asked = await main.until((e) => e.type === "tool_approval_required");
-    expect(asked.toolCallId).toBe("w6-next");
+    // Its words could carry what it read, so the main chat gets only the outcome.
+    const res = await kit(api, `threads/${encodeURIComponent(work.parentThreadId ?? "")}/messages`);
+    const { messages } = (await res.json()) as {
+      messages: { parts: { type: string; text?: string }[] }[];
+    };
+    const report = messages
+      .flatMap((m) => m.parts)
+      .find((p) => p.type === "text" && p.text?.includes("is done"));
+    expect(report?.text).toMatch(/is done\.$/);
+    expect(report?.text).not.toContain("Ann");
   });
 
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {
