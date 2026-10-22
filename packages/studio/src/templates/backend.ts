@@ -10,6 +10,7 @@ import {
   STATEMENT_BREAKPOINT,
 } from "@locus/db";
 import type { SiteFile } from "../workspace.ts";
+import { LOCUS_SETTINGS_PATH, locusSettingsFile } from "./forms.ts";
 
 // What an app-style site adds to the base project: its own database and logins.
 //
@@ -797,6 +798,13 @@ export function withBackend(files: SiteFile[]): SiteFile[] {
   if (auth?.content === AUTH_BEFORE_MEMBERS) byPath.delete("lib/auth.ts");
   for (const file of backendFiles()) {
     if (!byPath.has(file.path) || LOCUS_FILES.has(file.path)) byPath.set(file.path, file);
+  }
+  // lib/members.ts and lib/files.ts read `locus.siteApi`, which a site made before Locus had
+  // site calls lacks; it would stop at type-checking. Outside a published site every value in
+  // lib/locus.ts is null, and publishing writes it again, so the draft's copy can be replaced.
+  const settings = byPath.get(LOCUS_SETTINGS_PATH)?.content;
+  if (typeof settings !== "string" || !settings.includes("siteApi")) {
+    byPath.set(LOCUS_SETTINGS_PATH, locusSettingsFile());
   }
   return [...byPath.values()];
 }

@@ -85,6 +85,17 @@ describe("an app-style site's files", () => {
       { path: "app/api/files/[action]/route.ts", content: "// old" },
     ];
     const renewed = withBackend(older);
+
+    // A site made before Locus had site calls has a lib/locus.ts without siteApi, which the
+    // members and files code read; it gets the current one.
+    const beforeSiteApi = app.map((f) =>
+      f.path === "lib/locus.ts"
+        ? { ...f, content: "export const locus = { leadEndpoint: null as string | null };\n" }
+        : f,
+    );
+    expect(text(withBackend(beforeSiteApi), "lib/locus.ts")).toContain("siteApi: null");
+    const noSettings = app.filter((f) => f.path !== "lib/locus.ts");
+    expect(text(withBackend(noSettings), "lib/locus.ts")).toContain("siteApi: null");
     expect(text(renewed, "lib/files.ts")).toContain("keepFile");
     expect(renewed.map((f) => f.path)).not.toContain("app/api/files/[action]/route.ts");
 
