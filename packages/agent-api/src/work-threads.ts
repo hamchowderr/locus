@@ -14,8 +14,11 @@
  * - A run that read untrusted content approves every change, and a thread starts from the brief
  *   alone, so in such a run `start_thread` itself waits for the person's yes, and the thread is
  *   kept as `untrusted`: every run in it is tainted (see `kit.ts`), so its changes wait too.
+ * - Every run the kit starts in an `untrusted` thread (its brief, a message from the main chat)
+ *   is tainted too, whatever the main chat's run was.
  * - A report carries the thread's own words into the main chat, so what reads like
- *   instructions in it is withheld, as in any GHL data.
+ *   instructions in it is withheld, as in any GHL data, and the report of a run that read
+ *   untrusted content carries `TAINT_MARK`: the main chat's runs after it are tainted.
  * - Its sessions get no grants: Locus's approval rules hold there as everywhere.
  *
  * The main chat is a supervisor (`SUPERVISOR_MODE`): it reads and answers, and hands every
@@ -27,7 +30,14 @@
  * queue.
  */
 
-import { ASK_TOOLS, isTainted, OWN_STATE_TOOLS, withholdInstructions } from "@locus/harness";
+import {
+  ASK_TOOLS,
+  isTainted,
+  OWN_STATE_TOOLS,
+  TAINT_KEY,
+  TAINT_MARK,
+  withholdInstructions,
+} from "@locus/harness";
 import type { AgentController, AgentControllerMode } from "@mastra/core/agent-controller";
 import type { MastraStorage } from "@mastra/core/storage";
 import {
@@ -101,6 +111,14 @@ export function clientWorkThreads(
     maxWorking: MAX_WORKING_THREADS,
     requireApproval: isTainted,
     startsUntrusted: isTainted,
+    runContext: (context, thread) => {
+      if (thread.untrusted) context.set(TAINT_KEY, true);
+    },
+    // Marked when the thread is tainted, or the reported run read something that tainted it.
+    reportMetadata: ({ thread, runMessages }) =>
+      thread.untrusted || JSON.stringify(runMessages).includes(TAINT_MARK)
+        ? { taint: TAINT_MARK }
+        : undefined,
     screenReport: (text) => {
       const screened = withholdInstructions(text).value;
       return typeof screened === "string" ? screened : "";
