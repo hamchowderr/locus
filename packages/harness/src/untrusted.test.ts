@@ -1,12 +1,18 @@
 import type { GhlSession } from "@locus/ghl";
 import { skillDocs } from "@locus/skills";
 import { createFakeGhl, type FakeRoutes, useAimock } from "@locus/testing";
+import { RequestContext } from "@mastra/core/request-context";
 import { beforeEach, describe, expect, test } from "vitest";
 import { createLocusAgent } from "./agent.ts";
 import {
+  hasRefusedBrief,
+  isTainted,
   locusError,
   looksLikeInstructions,
+  REFUSED_BRIEF_MARK,
   readsPublicText,
+  TAINT_MARK,
+  UntrustedContentProcessor,
   WITHHELD,
   withholdInstructions,
 } from "./untrusted.ts";
@@ -98,6 +104,42 @@ describe("spotting instructions in GHL data", () => {
     for (const id of ["forms.get-forms", "contacts.get-contact", "opportunities.get-pipelines"]) {
       expect(readsPublicText(id), id).toBe(false);
     }
+  });
+});
+
+describe("marks in a run's history", () => {
+  const history = (result: unknown) =>
+    [
+      {
+        content: {
+          parts: [
+            {
+              type: "tool-invocation",
+              toolInvocation: { state: "result", toolCallId: "c1", toolName: "t", result },
+            },
+          ],
+        },
+      },
+    ] as never;
+  const step = (result: unknown) => {
+    const requestContext = new RequestContext();
+    new UntrustedContentProcessor().processInputStep({
+      messages: history(result),
+      requestContext,
+    } as never);
+    return requestContext;
+  };
+
+  test("a refused brief makes the run ask before threads, without tainting it", () => {
+    const context = step({ refused: "No.", refusedBrief: REFUSED_BRIEF_MARK });
+    expect(hasRefusedBrief(context)).toBe(true);
+    expect(isTainted(context)).toBe(false);
+  });
+
+  test("a taint mark taints the run, and nothing else", () => {
+    const context = step({ notKept: "…", taint: TAINT_MARK });
+    expect(isTainted(context)).toBe(true);
+    expect(hasRefusedBrief(context)).toBe(false);
   });
 });
 
