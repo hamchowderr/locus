@@ -238,6 +238,11 @@ export const agencyGhlConnection = sqliteTable("agency_ghl_connection", {
   whitelabelLogoUrl: text("whitelabel_logo_url"),
   companyName: text("company_name"),
   connectedAt: integer("connected_at", { mode: "timestamp_ms" }).notNull(),
+  /**
+   * While set and in the future, one process is renewing the grant. GHL's refresh token works
+   * once, so the web app and the agent server must not renew it at the same time.
+   */
+  refreshLeaseUntil: integer("refresh_lease_until", { mode: "timestamp_ms" }),
 });
 
 export const githubInstallation = sqliteTable("github_installation", {
