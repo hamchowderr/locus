@@ -7,7 +7,7 @@ const names = (sections: ReturnType<typeof menuSections>) =>
 describe("menuSections", () => {
   it("shows the sub-account's pages first once one is chosen", () => {
     expect(names(menuSections({ hasSubAccount: true, operator: false }))).toEqual([
-      ["Sub-account", ["Chat", "Sites", "Connectors"]],
+      ["Sub-account", ["Chat", "Library", "Connectors"]],
       ["Agency", ["Sub-accounts", "Team", "Integrations", "Billing"]],
     ]);
   });

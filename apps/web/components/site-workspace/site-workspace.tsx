@@ -24,11 +24,14 @@ export function SiteWorkspace({
   siteId,
   chat: setting,
   versions,
+  threadId = null,
   className,
   ...preview
 }: Omit<ComponentProps<typeof SitePreview>, "className"> & {
   siteId: string;
   chat: ChatSetting;
+  /** A thread of the main chat's that builds this site, to show instead of the site's chat. */
+  threadId?: string | null;
   /** The site's saved versions, as its chat's version cards need them. */
   versions: Omit<ChatVersions, "shown">;
   className?: string;
@@ -43,6 +46,7 @@ export function SiteWorkspace({
   const chat = useSiteChat({
     siteId,
     mode,
+    threadId,
     // Reload the preview, and the page's versions (the picker, and what's newest).
     onFilesChanged: () => {
       setReloads((n) => n + 1);
