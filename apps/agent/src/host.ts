@@ -418,7 +418,8 @@ export function createHost({
           : {}),
         tools: { ...builder?.tools, [workThreads.tool.id]: workThreads.tool },
         ownTextTools: [...(builder?.ownTextTools ?? []), workThreads.tool.id],
-        ...(builder ? { modes: builder.modes, processors: builder.processors } : {}),
+        modes: [workThreads.supervisor, ...(builder?.modes ?? [])],
+        ...(builder ? { processors: builder.processors } : {}),
       });
       workThreads.attach(controller);
       return controller;

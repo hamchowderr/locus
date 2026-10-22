@@ -47,6 +47,8 @@ export const createThreadRoutes = (deps: ChatServerDeps) => [
         tasks?: WorkThreadTask[];
         latest?: string;
         resolved?: boolean;
+        /** The specialist doing the work, when the host offers several. */
+        agent?: { id: string; name: string };
         /** A site's own conversation (the host tags it): the site it is about. */
         siteId?: string;
       }> = [];
@@ -87,6 +89,7 @@ export const createThreadRoutes = (deps: ChatServerDeps) => [
                 ...(work.tasks ? { tasks: work.tasks } : {}),
                 ...(work.latest ? { latest: work.latest } : {}),
                 ...(work.resolved ? { resolved: true } : {}),
+                ...(work.agent ? { agent: work.agent } : {}),
               }
             : {}),
           ...(site ? { siteId: site } : {}),
