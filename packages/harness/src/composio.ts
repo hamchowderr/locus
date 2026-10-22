@@ -329,6 +329,8 @@ export function createComposioConnector({
 /** One app in the directory and whether the client has connected it. */
 export interface AppConnection extends CatalogApp {
   connected: boolean;
+  /** Not connected because its sign-in expired or was revoked at the app: reconnect it. */
+  expired?: boolean;
 }
 
 /**
@@ -404,9 +406,16 @@ export function createComposioConnections({
     async list(clientId: string): Promise<AppConnection[]> {
       const [apps, held] = await Promise.all([catalog.apps(), accounts(clientId)]);
       const active = new Set(held.filter((a) => a.status === "ACTIVE").map((a) => a.toolkit));
+      const lapsed = new Set(
+        held
+          .filter((a) => a.status === "EXPIRED" || a.status === "REVOKED")
+          .map((a) => a.toolkit)
+          .filter((toolkit) => !active.has(toolkit)),
+      );
       const listed: AppConnection[] = apps.map((app) => ({
         ...app,
         connected: active.has(app.toolkit),
+        ...(lapsed.has(app.toolkit) ? { expired: true } : {}),
       }));
       const offeredSlugs = new Set(apps.map((app) => app.toolkit));
       for (const toolkit of active) {
