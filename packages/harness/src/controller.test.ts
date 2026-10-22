@@ -376,3 +376,118 @@ describe("a run that keeps failing", () => {
     expect(mock().llm.getRequests()).toHaveLength(3);
   });
 });
+
+describe("results of tools added by a feature", () => {
+  // The site builder's own tools: controller tools that never wait for a person.
+  const files = createTool({
+    id: "files",
+    description: "Read a file.",
+    requireApproval: () => false,
+    inputSchema: z.object({}),
+    execute: async () => ({ contents: "export const HERO = 'FILE-BODY-123';" }),
+  });
+  const check = createTool({
+    id: "check_site",
+    description: "Build the site.",
+    requireApproval: () => false,
+    inputSchema: z.object({}),
+    execute: async () => ({ ok: false, output: "BUILD-ERR-456 at app/page.tsx:3" }),
+  });
+
+  test("stay in the model's view for the rest of the run, and are forgotten after it", async () => {
+    mock().llm.on(
+      { userMessage: /fix the hero/i, hasToolResult: false },
+      { toolCalls: [{ id: "keep-f1", name: "files", arguments: "{}" }] },
+    );
+    mock().llm.on(
+      { toolCallId: "keep-f1" },
+      { toolCalls: [{ id: "keep-c1", name: "check_site", arguments: "{}" }] },
+    );
+    mock().llm.on({ toolCallId: "keep-c1" }, { content: "Fixed." });
+    mock().llm.on({ userMessage: /and now\?/i }, { content: "All good." });
+
+    const controller = await createLocusController({
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      locationId: "loc-A",
+      session: async () => clientA,
+      storage: new LibSQLStore({ id: "client", url: ":memory:" }),
+      fetch: createFakeGhl({}).fetch,
+      modes: [{ id: "build", name: "Build", availableTools: ["files", "check_site"] }],
+      tools: { files, check_site: check },
+    });
+    const session = await openClientSession(controller, { memberId: "m1" });
+    await session.mode.switch({ modeId: "build" });
+    await send(session, "Fix the hero");
+
+    const bodies = mock()
+      .llm.getRequests()
+      .map((r) => JSON.stringify(r.body));
+    expect(bodies).toHaveLength(3);
+    // The third model call of the same run still sees both results.
+    expect(bodies[2]).toContain("FILE-BODY-123");
+    expect(bodies[2]).toContain("BUILD-ERR-456");
+    expect(bodies[2]).not.toContain("Not kept: this tool really ran");
+
+    // The next turn gets them as stubs, as for any result not named as kept.
+    await send(session, "And now?");
+    const next = JSON.stringify(mock().llm.getRequests().at(-1)?.body);
+    expect(next).not.toContain("FILE-BODY-123");
+    expect(next).toContain("Not kept: this tool really ran");
+  });
+
+  test("a tool the controller asks about still makes GHL data forgotten at its pause", async () => {
+    // A boolean `false` doesn't stop the controller asking.
+    const plain = createTool({
+      id: "plain",
+      description: "A host tool with a boolean flag.",
+      requireApproval: false,
+      inputSchema: z.object({}),
+      execute: async () => ({ ok: true }),
+    });
+    const read = JSON.stringify({
+      sources: [
+        { as: "t", operation: "contacts.get-contact", params: { path: { contactId: "c1" } } },
+      ],
+      sql: "select * from t",
+    });
+    const tasks = JSON.stringify({
+      tasks: [{ content: "Call", status: "pending", activeForm: "Calling" }],
+    });
+    mock().llm.on(
+      { userMessage: /look up c1/i, hasToolResult: false },
+      { toolCalls: [{ id: "pause-q1", name: "query_data", arguments: read }] },
+    );
+    mock().llm.on(
+      { toolCallId: "pause-q1" },
+      { toolCalls: [{ id: "pause-p1", name: "plain", arguments: "{}" }] },
+    );
+    mock().llm.on(
+      { toolCallId: "pause-p1" },
+      { toolCalls: [{ id: "pause-t1", name: "task_write", arguments: tasks }] },
+    );
+    mock().llm.on({ toolCallId: "pause-t1" }, { content: "Done." });
+
+    const controller = await createLocusController({
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      locationId: "loc-A",
+      session: async () => clientA,
+      storage: new LibSQLStore({ id: "client", url: ":memory:" }),
+      fetch: createFakeGhl({
+        "*": { body: { contact: { id: "c1", email: "PAUSE-SECRET@example.com" } } },
+      }).fetch,
+      modes: [{ id: "build", name: "Build" }],
+      tools: { plain },
+    });
+    const session = await openClientSession(controller, { memberId: "m1" });
+    await session.mode.switch({ modeId: "build" });
+    const seen = await send(session, "Look up c1");
+
+    expect(seen).toEqual(["approval:pause-p1"]);
+    const bodies = mock()
+      .llm.getRequests()
+      .map((r) => JSON.stringify(r.body));
+    expect(bodies[1]).toContain("PAUSE-SECRET");
+    // Every call after the first pause works from the stub.
+    for (const body of bodies.slice(2)) expect(body).not.toContain("PAUSE-SECRET");
+  });
+});
