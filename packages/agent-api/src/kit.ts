@@ -57,7 +57,8 @@ const KIT_ROUTES: Record<string, (tail: string[]) => boolean> = {
     (tail.length === 3 &&
       tail[0] === "threads" &&
       ["messages", "pending"].includes(tail[2] as string)),
-  POST: (tail) => tail.length === 1 && ["stream", "approve", "answer"].includes(tail[0] as string),
+  POST: (tail) =>
+    tail.length === 1 && ["stream", "approve", "answer", "abort"].includes(tail[0] as string),
   PATCH: (tail) => tail.length === 2 && tail[0] === "threads" && tail[1] !== "search",
   DELETE: (tail) => tail.length === 2 && tail[0] === "threads" && tail[1] !== "search",
 };
@@ -124,6 +125,7 @@ export function kitRoutes(controller: AgentController) {
     "POST /agent-controller/stream",
     "POST /agent-controller/approve",
     "POST /agent-controller/answer",
+    "POST /agent-controller/abort",
     "GET /agent-controller/goal",
     "GET /agent-controller/om",
   ]);
