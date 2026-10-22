@@ -1061,6 +1061,33 @@ describe("turning the site builder off for clients", () => {
   });
 });
 
+describe("a site linked from an existing Vercel project", () => {
+  it("can't be chosen, built or copied", async () => {
+    const owner = await authorized("owner", clientA);
+    const siteId = "linked-1";
+    await db.insert(site).values({
+      id: siteId,
+      locationId: clientA,
+      host: "vercel",
+      hostProjectId: "prj_linked",
+      status: "deployed",
+      origin: "linked",
+    });
+    await expect(chooseActiveSite(db, ctx("owner"), owner, siteId)).rejects.toThrow(
+      /linked from an existing Vercel project/,
+    );
+    const builder = createSiteBuilder(deps(), { client: owner });
+    await expect(
+      builder.resolve(context({ [SITE_ID_KEY]: siteId, [CLIENT_KEY]: owner })),
+    ).rejects.toThrow(/linked from an existing Vercel project/);
+    await expect(
+      copyClientSite(deps(), ctx("owner"), owner, siteId, await authorized("owner", clientB), {
+        name: "Copy",
+      }),
+    ).rejects.toThrow(/linked from an existing Vercel project/);
+  });
+});
+
 describe("view-only access to a site", () => {
   async function siteWithStaff() {
     const owner = await authorized("owner", clientA);

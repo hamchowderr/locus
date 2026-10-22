@@ -340,6 +340,24 @@ describe("giving a site a repository", () => {
     expect(gh.of("POST", "/orgs/acme/repos")).toHaveLength(1);
   });
 
+  it("never gives a site linked from an existing Vercel project a repository", async () => {
+    await addSite("site-1", "client-1", {
+      origin: "linked",
+      host: "vercel",
+      hostProjectId: "prj_1",
+    });
+    const gh = fakeFetch(orgRoutes("Organization"));
+    const client = await authorizeClient(db, ctx("owner"), "client-1");
+    await expect(
+      ensureSiteRepo(deps({ github: gh.fetch }), ctx("owner"), client, {
+        siteId: "site-1",
+        name: "acme-dental",
+      }),
+    ).rejects.toThrow(/linked from an existing Vercel project/);
+    expect(gh.calls).toHaveLength(0);
+    expect((await siteRow("site-1"))?.repoFullName).toBeNull();
+  });
+
   it("explains that a personal account needs an empty repository linked instead", async () => {
     await addSite("site-1");
     const gh = fakeFetch(orgRoutes("User"));
