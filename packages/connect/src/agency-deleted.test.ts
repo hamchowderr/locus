@@ -8,7 +8,14 @@ import {
   openControlDb,
   provisionLocation,
 } from "@locus/db";
-import { agencyGhlConnection, hostConnection, location, organization } from "@locus/db/control";
+import {
+  agencyGhlConnection,
+  hostConnection,
+  location,
+  organization,
+  site,
+  siteBackend,
+} from "@locus/db/control";
 import { MemorySecretStore } from "@locus/secrets";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ghlSecretRef } from "./agency.ts";
@@ -94,6 +101,15 @@ describe("removing a deleted agency's clients", () => {
       ghlLocationId: "loc-ab",
       name: "AB",
     });
+    // An app-style site's database: its row restricts the client's deletion until it's gone.
+    const backend = await provisioner.createDatabase("site-a");
+    await db.insert(site).values({ id: "site-a", locationId: mine.id });
+    await db.insert(siteBackend).values({
+      siteId: "site-a",
+      locationId: mine.id,
+      tursoDbName: backend.dbName,
+      tursoDbHostname: backend.hostname,
+    });
     const disconnected: string[] = [];
     const destroyed: string[] = [];
     const watched = Object.assign(Object.create(provisioner), {
@@ -104,12 +120,13 @@ describe("removing a deleted agency's clients", () => {
     }) as LocalProvisioner;
 
     await offboardAgencyClients(
-      { db, provisioner: watched, disconnectApps: async (id) => void disconnected.push(id) },
+      { db, provisioner: () => watched, disconnectApps: async (id) => void disconnected.push(id) },
       "agency-a",
     );
 
     expect(disconnected).toEqual([mine.id]);
-    expect(destroyed).toEqual([mine.dbName]);
+    expect(destroyed).toEqual([backend.dbName, mine.dbName]);
+    expect(await db.select().from(site)).toEqual([]);
     expect((await db.select().from(location)).map((row) => row.id)).toEqual([theirs.id]);
   });
 
@@ -124,11 +141,26 @@ describe("removing a deleted agency's clients", () => {
     };
 
     await expect(
-      offboardAgencyClients({ db, provisioner, disconnectApps: failing }, "agency-a"),
+      offboardAgencyClients(
+        { db, provisioner: () => provisioner, disconnectApps: failing },
+        "agency-a",
+      ),
     ).rejects.toThrow("Composio is down");
     expect(await db.select().from(location)).toHaveLength(1);
 
-    await offboardAgencyClients({ db, provisioner }, "agency-a");
+    await offboardAgencyClients({ db, provisioner: () => provisioner }, "agency-a");
     expect(await db.select().from(location)).toEqual([]);
+  });
+
+  it("needs no database service for an agency with no clients", async () => {
+    await offboardAgencyClients(
+      {
+        db,
+        provisioner: () => {
+          throw new Error("not configured");
+        },
+      },
+      "agency-a",
+    );
   });
 });

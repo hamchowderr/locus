@@ -52,13 +52,14 @@ function build() {
     secret: setting("BETTER_AUTH_SECRET", "local-development-only-secret-not-for-production"),
     sendEmail: emailFromEnv(),
     billing: billingFromEnv(),
-    // An agency's sealed tokens have no foreign key to it, so they go first, and once more after
-    // for one a renewal saved meanwhile. The agency is gone by then, so a failure there is logged
-    // rather than reported as a failed deletion. Its clients' databases and connected apps live
-    // outside the control database, so they go before it too.
+    // An agency's clients' databases and connected apps, and its sealed tokens, have no foreign
+    // key to it, so they go first. The clients go before the tokens: removing them can fail, and
+    // an agency whose deletion stopped there keeps working. The tokens go once more after, for
+    // one a renewal saved meanwhile; the agency is gone by then, so a failure there is logged
+    // rather than reported as a failed deletion.
     beforeAgencyDeleted: async (organizationId) => {
-      await removeAgencySecrets(db, organizationId);
       await offboardClients(db, organizationId);
+      await removeAgencySecrets(db, organizationId);
     },
     afterAgencyDeleted: (organizationId) =>
       removeAgencySecrets(db, organizationId).catch((error: unknown) => {
@@ -87,7 +88,7 @@ async function offboardClients(db: ControlDb, organizationId: string): Promise<v
   await offboardAgencyClients(
     {
       db,
-      provisioner: configured(() => provisionerFromEnv(".data/tenants")),
+      provisioner: () => configured(() => provisionerFromEnv(".data/tenants")),
       ...(apps ? { disconnectApps: (clientId: string) => apps.disconnectAll(clientId) } : {}),
     },
     organizationId,
