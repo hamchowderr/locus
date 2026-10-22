@@ -37,6 +37,17 @@ export const TAINT_MARK = "locus:untrusted";
 /** The request-context key a tainted run carries. */
 export const TAINT_KEY = "locus.tainted";
 
+/**
+ * Present in the result of a `suggest_threads` call refused for a tainted run: its briefs, kept
+ * in the chat's history, were written after reading outside text. A later run that reads it
+ * carries `REFUSED_BRIEF_KEY`, so starting a thread asks first, showing the brief, without
+ * tainting the run (`hasRefusedBrief`).
+ */
+export const REFUSED_BRIEF_MARK = "locus:refused-brief";
+
+/** The request-context key a run carries when its history holds a refused brief. */
+export const REFUSED_BRIEF_KEY = "locus.refusedBrief";
+
 interface ContextLike {
   get?(key: string): unknown;
   set?(key: string, value: unknown): void;
@@ -52,12 +63,25 @@ export function isTainted(requestContext: unknown): boolean {
   return (typeof ctx.get === "function" ? ctx.get(TAINT_KEY) : ctx[TAINT_KEY]) === true;
 }
 
+/** Whether a run's history holds a refused suggestion's brief (`REFUSED_BRIEF_MARK`). */
+export function hasRefusedBrief(requestContext: unknown): boolean {
+  if (!requestContext || typeof requestContext !== "object") return false;
+  const ctx = requestContext as ContextLike & Record<string, unknown>;
+  return (
+    (typeof ctx.get === "function" ? ctx.get(REFUSED_BRIEF_KEY) : ctx[REFUSED_BRIEF_KEY]) === true
+  );
+}
+
 function taint(requestContext: ContextLike | undefined): void {
-  // Without a context the run cannot be marked; refuse rather than run untainted.
+  mark(requestContext, TAINT_KEY);
+}
+
+function mark(requestContext: ContextLike | undefined, key: string): void {
+  // Without a context the run cannot be marked; refuse rather than run unmarked.
   if (typeof requestContext?.set !== "function") {
     throw new Error("untrusted-content screen needs the run's request context");
   }
-  requestContext.set(TAINT_KEY, true);
+  requestContext.set(key, true);
 }
 
 /** Our own tools, named inside data: they have no business being there. */
@@ -191,13 +215,13 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
   }
 
   processInputStep({ messages, requestContext }: ProcessInputStepArgs) {
-    if (isTainted(requestContext)) return;
     for (const message of messages) {
       for (const part of message.content.parts ?? []) {
         if (part.type !== "tool-invocation" || part.toolInvocation.state !== "result") continue;
-        if (JSON.stringify(part.toolInvocation.result ?? null).includes(TAINT_MARK)) {
-          taint(requestContext);
-          return;
+        const result = JSON.stringify(part.toolInvocation.result ?? null);
+        if (result.includes(TAINT_MARK) && !isTainted(requestContext)) taint(requestContext);
+        if (result.includes(REFUSED_BRIEF_MARK) && !hasRefusedBrief(requestContext)) {
+          mark(requestContext, REFUSED_BRIEF_KEY);
         }
       }
     }
