@@ -11,7 +11,16 @@ import { useConnectPopup } from "./use-connect-popup";
  * returns. Without JavaScript, or when the browser blocks the window, the form falls back to
  * signing in on this page.
  */
-export function ConnectButton({ toolkit, name }: { toolkit: string; name?: string }) {
+export function ConnectButton({
+  toolkit,
+  name,
+  label = "Connect",
+}: {
+  toolkit: string;
+  name?: string;
+  /** The button's word: "Reconnect" for an app whose sign-in expired. */
+  label?: string;
+}) {
   const router = useRouter();
   const { connect, busy } = useConnectPopup({
     onDone: (message) => {
@@ -35,9 +44,9 @@ export function ConnectButton({ toolkit, name }: { toolkit: string; name?: strin
         type="submit"
         size="sm"
         disabled={busy !== null}
-        aria-label={name ? `Connect ${name}` : undefined}
+        aria-label={name ? `${label} ${name}` : undefined}
       >
-        {busy ? "Connecting…" : "Connect"}
+        {busy ? "Connecting…" : label}
       </Button>
     </form>
   );

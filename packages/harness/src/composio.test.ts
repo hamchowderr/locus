@@ -548,8 +548,22 @@ describe("Composio connections", () => {
       ["oldapp", true],
     ]);
     expect(listed[0]).toMatchObject({ name: "Gmail", logo: "https://logos.test/gmail.png" });
+    // Slack's sign-in expired: shown as needing a reconnect, the others not.
+    expect(listed.filter((app) => app.expired).map((app) => app.toolkit)).toEqual(["slack"]);
     const [list] = seen.filter((s) => s.path === ACCOUNTS);
     expect(list?.query.getAll("user_ids").join(",")).toBe(appUserId("client-1"));
+  });
+
+  test("a revoked sign-in needs a reconnect too, unless another sign-in still works", async () => {
+    routes[`GET ${ACCOUNTS}`] = () =>
+      accountsBody([
+        ["ca_slack", "REVOKED", "slack"],
+        ["ca_gmail_old", "EXPIRED", "gmail"],
+        ["ca_gmail", "ACTIVE", "gmail"],
+      ]);
+    const listed = await connections().list("client-1");
+    expect(listed.filter((app) => app.expired).map((app) => app.toolkit)).toEqual(["slack"]);
+    expect(listed.find((app) => app.toolkit === "gmail")).toMatchObject({ connected: true });
   });
 
   test("connecting gives the app's sign-in link, coming back to Locus", async () => {
