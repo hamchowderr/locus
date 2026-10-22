@@ -55,7 +55,10 @@ export function SitePreview({
    * against), the page's full address and its route. Null until a preview has started.
    */
   onPageChange?: (page: { origin: string; url: string; route: string } | null) => void;
-  /** Bump to load the page in the frame again (after the site builder changed files). */
+  /**
+   * Bump to show the site's latest files (after the site builder changed them): the preview
+   * starts again, which syncs them into the sandbox and lists the pages, then the frame reloads.
+   */
   reloadSignal?: number;
 }) {
   const [preview, setPreview] = useState<Started | null>(null);
@@ -70,17 +73,40 @@ export function SitePreview({
   const startRef = useRef(start);
   startRef.current = start;
 
-  const run = useCallback(() => {
+  // Starts can overlap (a reload while the first start installs, or a version picked during a
+  // reload). Only the newest start's answer is shown, and a reload asked for while a start runs
+  // waits for it, so two installs never run in the same sandbox.
+  const latest = useRef(0);
+  const running = useRef(false);
+  const queued = useRef(false);
+  const run = useCallback(function go(reload = false) {
+    if (reload && running.current) {
+      queued.current = true;
+      return;
+    }
+    const mine = ++latest.current;
+    running.current = true;
     setProblem(null);
     startTransition(async () => {
-      const result = await startRef.current();
-      if ("problem" in result) {
-        setProblem(result.problem);
-        return;
+      try {
+        const result = await startRef.current();
+        if (mine !== latest.current) return;
+        if ("problem" in result) {
+          setProblem(result.problem);
+          return;
+        }
+        setPreview(result);
+        setRoute((r) => (result.pages.some((p) => p.route === r) ? r : "/"));
+        setReloads((n) => n + 1);
+      } finally {
+        if (mine === latest.current) {
+          running.current = false;
+          if (queued.current) {
+            queued.current = false;
+            go(true);
+          }
+        }
       }
-      setPreview(result);
-      setRoute((r) => (result.pages.some((p) => p.route === r) ? r : "/"));
-      setReloads((n) => n + 1);
     });
   }, []);
 
@@ -91,12 +117,18 @@ export function SitePreview({
     run();
   }, [run, version]);
 
+  // A reload starts the preview again rather than only loading the frame again: that puts the
+  // draft's latest files into the sandbox first, and lists the pages again (a new page shows in
+  // the page picker). Both are quick once the preview runs.
+  // A saved version's files never change, so only the draft's preview reloads.
+  const shown = useRef(version);
+  shown.current = version;
   const lastReload = useRef(reloadSignal);
   useEffect(() => {
     if (lastReload.current === reloadSignal) return;
     lastReload.current = reloadSignal;
-    setReloads((n) => n + 1);
-  }, [reloadSignal]);
+    if (shown.current === null) run(true);
+  }, [run, reloadSignal]);
 
   const src = preview ? pageUrl(preview.url, route) : null;
   const pageChanged = useRef(onPageChange);
@@ -144,7 +176,7 @@ export function SitePreview({
           type="button"
           size="icon-sm"
           variant="ghost"
-          onClick={run}
+          onClick={() => run()}
           disabled={starting}
           aria-label={starting ? "Starting the preview" : "Refresh the preview"}
           title={starting ? "Starting" : "Refresh"}
