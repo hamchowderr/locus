@@ -30,7 +30,12 @@ import type { AgentController, Session } from "@mastra/core/agent-controller";
 import { RequestContext } from "@mastra/core/request-context";
 import { registerApiRoute } from "@mastra/core/server";
 import type { Context } from "hono";
-import { SITE_TAG, SITE_THREAD_KEY, workThreadOf } from "./mastra/lib/work-thread-info.ts";
+import {
+  SITE_TAG,
+  SITE_THREAD_KEY,
+  WORK_THREAD_KEY,
+  workThreadOf,
+} from "./mastra/lib/work-thread-info.ts";
 import { createControllerRoutes } from "./mastra/routes/controller.ts";
 import { createThreadRoutes, ownsThread } from "./mastra/routes/threads.ts";
 import type { ChatServerDeps } from "./mastra/routes/types.ts";
@@ -149,7 +154,10 @@ async function memoryOf(controller: AgentController) {
   return store;
 }
 
-/** Renames one of the member's own conversations (`{ title }`), or tags it (`{ site }`). */
+/**
+ * Renames one of the member's own conversations (`{ title }`), tags it (`{ site }`), or files a
+ * work thread under Resolved and back (`{ resolved }`).
+ */
 function patchThreadRoute(controller: AgentController, getSession: () => Promise<Session>) {
   const tag = siteTag(controller, getSession);
   return registerApiRoute("/agent-controller/threads/:id", {
@@ -158,8 +166,12 @@ function patchThreadRoute(controller: AgentController, getSession: () => Promise
       const body = (await c.req.json().catch(() => null)) as {
         site?: unknown;
         title?: unknown;
+        resolved?: unknown;
       } | null;
       if (body?.site !== undefined) return tag(c, c.req.param("id"), body.site);
+      if (typeof body?.resolved === "boolean") {
+        return resolve(controller, getSession, c.req.param("id"), body.resolved, c);
+      }
       const title = typeof body?.title === "string" ? body.title.trim() : "";
       if (!title || title.length > TITLE_MAX) {
         return c.json({ error: `send { title } of 1 to ${TITLE_MAX} characters` }, 400);
@@ -173,6 +185,38 @@ function patchThreadRoute(controller: AgentController, getSession: () => Promise
       return c.json({ ok: true });
     },
   });
+}
+
+/** Files one of the member's own work threads under Resolved, or takes it back out. */
+async function resolve(
+  controller: AgentController,
+  getSession: () => Promise<Session>,
+  id: string,
+  resolved: boolean,
+  c: Context,
+) {
+  if (!(await ownsThread(await getSession(), id))) return c.json({ error: "not found" }, 404);
+  const store = await memoryOf(controller);
+  let refused: string | undefined = "only a thread can be resolved";
+  await store.updateThreadMetadata({
+    id,
+    update: (thread) => {
+      const info = workThreadOf(thread);
+      if (!info) return undefined;
+      if (resolved && (info.status === "working" || info.status === "needs_you")) {
+        refused = "a thread that is working or waiting on you can't be resolved";
+        return undefined;
+      }
+      refused = undefined;
+      // Merged into what is stored, so keys this route doesn't know survive.
+      const raw = { ...((thread.metadata as Record<string, unknown>)[WORK_THREAD_KEY] as object) };
+      const next: Record<string, unknown> = { ...raw, resolved: true };
+      if (!resolved) delete next.resolved;
+      return { [WORK_THREAD_KEY]: next };
+    },
+  });
+  if (refused) return c.json({ error: refused }, 409);
+  return c.json({ ok: true });
 }
 
 /**
