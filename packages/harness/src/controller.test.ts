@@ -434,4 +434,60 @@ describe("results of tools added by a feature", () => {
     expect(next).not.toContain("FILE-BODY-123");
     expect(next).toContain("Not kept: this tool really ran");
   });
+
+  test("a tool the controller asks about still makes GHL data forgotten at its pause", async () => {
+    // A boolean `false` doesn't stop the controller asking; neither does the task list.
+    const plain = createTool({
+      id: "plain",
+      description: "A host tool with a boolean flag.",
+      requireApproval: false,
+      inputSchema: z.object({}),
+      execute: async () => ({ ok: true }),
+    });
+    const read = JSON.stringify({
+      sources: [
+        { as: "t", operation: "contacts.get-contact", params: { path: { contactId: "c1" } } },
+      ],
+      sql: "select * from t",
+    });
+    const tasks = JSON.stringify({
+      tasks: [{ content: "Call", status: "pending", activeForm: "Calling" }],
+    });
+    mock().llm.on(
+      { userMessage: /look up c1/i, hasToolResult: false },
+      { toolCalls: [{ id: "pause-q1", name: "query_data", arguments: read }] },
+    );
+    mock().llm.on(
+      { toolCallId: "pause-q1" },
+      { toolCalls: [{ id: "pause-p1", name: "plain", arguments: "{}" }] },
+    );
+    mock().llm.on(
+      { toolCallId: "pause-p1" },
+      { toolCalls: [{ id: "pause-t1", name: "task_write", arguments: tasks }] },
+    );
+    mock().llm.on({ toolCallId: "pause-t1" }, { content: "Done." });
+
+    const controller = await createLocusController({
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      locationId: "loc-A",
+      session: async () => clientA,
+      storage: new LibSQLStore({ id: "client", url: ":memory:" }),
+      fetch: createFakeGhl({
+        "*": { body: { contact: { id: "c1", email: "PAUSE-SECRET@example.com" } } },
+      }).fetch,
+      modes: [{ id: "build", name: "Build" }],
+      tools: { plain },
+    });
+    const session = await openClientSession(controller, { memberId: "m1" });
+    await session.mode.switch({ modeId: "build" });
+    const seen = await send(session, "Look up c1");
+
+    expect(seen).toEqual(["approval:pause-p1", "approval:pause-t1"]);
+    const bodies = mock()
+      .llm.getRequests()
+      .map((r) => JSON.stringify(r.body));
+    expect(bodies[1]).toContain("PAUSE-SECRET");
+    // Every call after the first pause works from the stub.
+    for (const body of bodies.slice(2)) expect(body).not.toContain("PAUSE-SECRET");
+  });
 });

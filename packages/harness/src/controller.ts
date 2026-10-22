@@ -87,14 +87,6 @@ const CONTROLLER_BUILTINS: BuiltinToolId[] = [
   "subagent",
 ];
 
-const noApproval = { requireApproval: false };
-const NEVER_PAUSES = {
-  task_write: noApproval,
-  task_update: noApproval,
-  task_complete: noApproval,
-  task_check: noApproval,
-};
-
 export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   model: MastraModelConfig;
   /** The client this controller serves. */
@@ -152,8 +144,7 @@ export async function createLocusController({
     ...(keepResults ? { keepResults } : {}),
     ...(ownTextTools ? { ownTextTools } : {}),
     ...(apps ? { apps } : {}),
-    // The controller's task list never pauses a run; ask_user (left unknown) does.
-    runTools: { ...NEVER_PAUSES, ...tools },
+    ...(tools ? { runTools: tools } : {}),
   });
   const controller = new AgentController({
     id: CONTROLLER_ID,
