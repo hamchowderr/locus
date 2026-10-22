@@ -6,6 +6,7 @@ import { type ComponentProps, useState } from "react";
 import { SitePreview } from "@/components/site-preview/site-preview";
 import { Button } from "@/components/ui/button";
 import { VisualEditor } from "@/components/visual-edits/visual-editor";
+import { lastCheckFailure } from "@/lib/builder-steps";
 import { cn } from "@/lib/utils";
 import { type ChatVersions, SiteChat, useSiteChat } from "./site-chat";
 
@@ -55,6 +56,9 @@ export function SiteWorkspace({
   });
   // Changing the site needs the right to build it, and the current version in the preview.
   const canChange = mode !== null && refusal === null;
+  // A build that failed stays in view over the preview until a later check passes, so the
+  // preview is never taken for a site that builds.
+  const brokenBuild = lastCheckFailure(chat.controller.transcript.messages);
 
   return (
     <div className={cn("flex min-h-0 flex-col lg:flex-row", className)}>
@@ -62,6 +66,19 @@ export function SiteWorkspace({
         {...preview}
         className="min-h-[60vh] min-w-0 flex-1 p-3 lg:min-h-0"
         reloadSignal={reloads}
+        notice={
+          <>
+            {preview.notice}
+            {brokenBuild && (
+              <p
+                role="status"
+                className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-800 text-sm"
+              >
+                The last build check failed: <span className="break-words">{brokenBuild}</span>
+              </p>
+            )}
+          </>
+        }
         onFrameLoad={setFrame}
         onPageChange={(page) => {
           setUrl(page?.url ?? null);

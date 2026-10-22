@@ -197,6 +197,27 @@ describe("the site preview", () => {
     tenant.$client.close();
   });
 
+  it("starting it again, as a reload after the builder's turn does, shows the new files and pages", async () => {
+    await db.insert(agencyComp).values({ organizationId: "agency-a", compedByUserId: "ops" });
+    const { client, siteId, tenant, workspace } = await siteWithTwoVersions();
+    await startSitePreview(deps(), ctx("staff"), client, siteId);
+    const runtime = runtimes.runtimes.get(siteRuntimeKey(client, siteId));
+    runtime?.calls.splice(0);
+
+    // The builder writes to the draft only; the sandbox still has the old files.
+    await workspace.writeFile("app/page.tsx", "export default () => 'Three';");
+    await workspace.writeFile("app/team/page.tsx", "export default () => 'Team';");
+    expect(runtime?.readText("app/page.tsx")).not.toContain("Three");
+
+    const preview = await startSitePreview(deps(), ctx("staff"), client, siteId);
+    expect(runtime?.readText("app/page.tsx")).toContain("Three");
+    expect(preview.pages.map((p) => p.route)).toContain("/team");
+    // Quick on a running preview: nothing to install, and the dev server keeps running.
+    expect(runtime?.calls).toContainEqual({ method: "install", skipped: true });
+    expect(runtime?.calls).toContainEqual({ method: "startPreview", alreadyRunning: true });
+    tenant.$client.close();
+  });
+
   it("previews one saved version's files", async () => {
     await db.insert(agencyComp).values({ organizationId: "agency-a", compedByUserId: "ops" });
     const { client, siteId, tenant } = await siteWithTwoVersions();
