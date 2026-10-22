@@ -9,7 +9,11 @@
  * a person), and never fall back to Composio-owned "Instant" accounts, which Composio charges for.
  */
 
-import { Composio } from "@composio/core";
+import {
+  Composio,
+  ComposioConnectedAccountNotRevokableError,
+  ComposioConnectedAccountRevocationNotSupportedError,
+} from "@composio/core";
 import { type AppConnector, AppServiceError, type AppTool } from "./apps.ts";
 
 /** The Composio user a Locus client's connections belong to. */
@@ -203,7 +207,14 @@ export function createComposioConnector({
   let session: ReturnType<typeof open> | undefined;
   // Not limited to a list of toolkits: the catalog is long and changes. Locus checks every tool
   // against the catalog itself (`offers`), and only accounts the client connected can run.
-  const open = () => composio.create(userId, { manageConnections: false, instant: false });
+  // Composio's code sandbox is off: Locus never offers its tools, and it isn't covered by
+  // Composio's zero data retention.
+  const open = () =>
+    composio.create(userId, {
+      manageConnections: false,
+      instant: false,
+      sandbox: { enable: false },
+    });
   const current = () => {
     session ??= open().catch((error) => {
       // A failed start isn't kept: the next call tries again.
@@ -353,6 +364,24 @@ export function createComposioConnections({
     } while (cursor);
     return found;
   };
+  /**
+   * Revokes the account's access at the app (Google, Slack...), then deletes it. Deleting alone
+   * leaves the app's grant live. An app that can't be revoked from outside, or an account that
+   * never finished signing in, is only deleted.
+   */
+  const remove = async (id: string) => {
+    try {
+      await composio.connectedAccounts.revoke(id);
+    } catch (error) {
+      if (
+        !(error instanceof ComposioConnectedAccountRevocationNotSupportedError) &&
+        !(error instanceof ComposioConnectedAccountNotRevokableError)
+      ) {
+        throw error;
+      }
+    }
+    await composio.connectedAccounts.delete(id);
+  };
   const offered = async (toolkit: string) => {
     const slug = toolkit.toLowerCase();
     if (!(await catalog.offers(slug))) throw new AppServiceError(`Locus doesn't offer ${toolkit}`);
@@ -399,12 +428,13 @@ export function createComposioConnections({
     async connect(clientId: string, toolkit: string, callbackUrl: string): Promise<string> {
       const slug = await offered(toolkit);
       for (const account of await accounts(clientId, slug)) {
-        if (account.status !== "ACTIVE") await composio.connectedAccounts.delete(account.id);
+        if (account.status !== "ACTIVE") await remove(account.id);
       }
       const session = await composio.create(appUserId(clientId), {
         toolkits: [slug],
         manageConnections: false,
         instant: false,
+        sandbox: { enable: false },
       });
       const request = await session.authorize(slug, { callbackUrl });
       if (!request.redirectUrl)
@@ -420,14 +450,14 @@ export function createComposioConnections({
       const slug = toolkit.toLowerCase();
       if (!/^[a-z0-9_-]+$/.test(slug)) throw new AppServiceError(`No app named ${toolkit}`);
       for (const account of await accounts(clientId, slug)) {
-        await composio.connectedAccounts.delete(account.id);
+        await remove(account.id);
       }
     },
 
     /** Removes every account the client has, for any app, when the client itself goes. */
     async disconnectAll(clientId: string): Promise<void> {
       for (const account of await accounts(clientId)) {
-        await composio.connectedAccounts.delete(account.id);
+        await remove(account.id);
       }
     },
   };
