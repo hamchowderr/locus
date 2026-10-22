@@ -58,6 +58,11 @@ export interface LocusAgentConfig extends ToolDeps {
    * tool that reads GHL or outside data.
    */
   ownTextTools?: readonly string[];
+  /**
+   * Tools whose results are another agent's words (the main chat reading its work threads):
+   * screened and always treated as outside text, so a change after reading them waits.
+   */
+  threadTextTools?: readonly string[];
   /** The client's connected apps (see `apps.ts`). Without it the agent has GHL tools only. */
   apps?: Parameters<typeof createAppTools>[0];
 }
@@ -86,12 +91,13 @@ export function createLocusAgent({
   processors = {},
   keepResults = [],
   ownTextTools = [],
+  threadTextTools = [],
   apps,
   ...deps
 }: LocusAgentConfig): Agent {
   const tools = { ...createLocusTools(deps), ...(apps ? createAppTools(apps) : {}) };
   refuseOwnTextCollisions(ownTextTools, [...Object.keys(tools), ...APP_TOOL_NAMES]);
-  const untrusted = new UntrustedContentProcessor(ownTextTools);
+  const untrusted = new UntrustedContentProcessor(ownTextTools, threadTextTools);
   const agent = new Agent({
     id: "locus",
     name: "Locus",

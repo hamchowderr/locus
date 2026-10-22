@@ -47,8 +47,9 @@ function apiFor(
         fetch: ghl.fetch,
         ...(work
           ? {
-              tools: { [work.tool.id]: work.tool },
-              ownTextTools: [work.tool.id],
+              tools: { [work.tool.id]: work.tool, ...work.steering },
+              ownTextTools: [work.tool.id, work.steering.message_thread.id],
+              threadTextTools: work.threadTextTools,
               modes: [work.supervisor],
             }
           : {}),
@@ -738,6 +739,56 @@ describe("work threads, through the chat kit's routes", () => {
     );
     await steer.until((e) => e.type === "__done__");
     expect(offered(/Check the winter tags/)).toContain("perform_action");
+  });
+
+  test("the supervisor reads its threads as untrusted, so a message after reading waits", async () => {
+    mock().llm.on(
+      { userMessage: /summer tag tidy-up/i, hasToolResult: false },
+      startThread("w5-start", "Summer tags", "Retire the summer tags."),
+    );
+    mock().llm.on({ toolCallId: "w5-start" }, { content: "Started it." });
+    mock().llm.on({ userMessage: /^Retire the summer tags\.$/ }, { content: "Retired them." });
+    const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
+    const started = kitEvents(
+      await kit(api, "stream", { text: "Do the summer tag tidy-up", mode: "supervisor" }),
+    );
+    await started.until((e) => e.type === "__done__");
+    const work = await workThreadReaching(api, "done");
+
+    mock().llm.on(
+      { userMessage: /also the autumn ones/i, hasToolResult: false },
+      {
+        toolCalls: [
+          { id: "w5-read", name: "read_thread", arguments: JSON.stringify({ threadId: work.id }) },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "w5-read" },
+      {
+        toolCalls: [
+          {
+            id: "w5-msg",
+            name: "message_thread",
+            arguments: JSON.stringify({
+              threadId: work.id,
+              message: "Retire the autumn tags too.",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w5-msg" }, { content: "Passed it on." });
+    const main = kitEvents(
+      await kit(api, "stream", {
+        text: "Check the summer tags, and also the autumn ones",
+        threadId: work.parentThreadId,
+        mode: "supervisor",
+      }),
+    );
+    // What the thread said came back as data, so passing work on waits for the member.
+    const asked = await main.until((e) => e.type === "tool_approval_required");
+    expect(asked.toolCallId).toBe("w5-msg");
   });
 
   test("a deletion in a work thread waits for the member there, and goes through on a yes", async () => {
