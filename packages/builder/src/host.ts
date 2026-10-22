@@ -204,6 +204,8 @@ export const SITE_BUILDER_OFF =
   "The site builder is turned off for this client. An owner or admin can turn it on on the Clients page.";
 export const SITE_VIEW_ONLY =
   "You can view this site but not change it. An owner or admin can change that on the Sites page.";
+export const SITE_LINKED =
+  "This site was linked from an existing Vercel project, so it can't be built in Locus.";
 
 /**
  * Why the member behind `client` may not build `siteId` (a site of the client), or null: the
@@ -226,6 +228,7 @@ export async function buildRefusal(
  */
 export async function clientSite(db: ControlDb, client: AuthorizedClient, siteId: string) {
   const row = await siteOfClient(db, client, siteId);
+  if (row.origin === "linked") throw new ClientAccessDenied(SITE_LINKED);
   const refusal = await buildRefusal(db, client, row.id);
   if (refusal) throw new ClientAccessDenied(refusal);
   return row;
@@ -772,11 +775,9 @@ export function createSiteBuilder(
       throw new ClientAccessDenied("request is for another client");
     }
     const { client, userId } = await reauthorize(deps.db, requester);
-    const refusal = await buildRefusal(
-      deps.db,
-      client,
-      (await siteOfClient(deps.db, client, siteId)).id,
-    );
+    const row = await siteOfClient(deps.db, client, siteId);
+    if (row.origin === "linked") throw new BuilderError(SITE_LINKED);
+    const refusal = await buildRefusal(deps.db, client, row.id);
     if (refusal) throw new BuilderError(refusal);
     const lease = await leaseClientDb(deps.openClientDb, client);
     const onVersionSaved = deps.publish
@@ -861,6 +862,7 @@ export async function chooseActiveSite(
   siteId: string,
 ): Promise<string> {
   const row = await siteOfClient(db, client, siteId);
+  if (row.origin === "linked") throw new SiteInputError(SITE_LINKED);
   const refusal = await buildRefusal(db, client, row.id);
   if (refusal) throw new SiteInputError(refusal);
   await db.update(session).set({ activeSiteId: row.id }).where(eq(session.id, ctx.id));
@@ -1064,6 +1066,7 @@ export async function copyClientSite(
     throw new SiteInputError("Give the copy a name of up to 120 characters.");
   }
   const source = await siteOfClient(deps.db, from, siteId);
+  if (source.origin === "linked") throw new SiteInputError(SITE_LINKED);
   const refusal = await buildRefusal(deps.db, from, source.id);
   if (refusal) throw new SiteInputError(refusal);
   if (!to.location.siteBuilder) throw new SiteInputError(SITE_BUILDER_OFF);
