@@ -1,3 +1,12 @@
+export type { DaytonaSandboxConfig } from "./daytona.ts";
+export { DaytonaRuntimeProvider, daytonaFromEnv, daytonaOptions } from "./daytona.ts";
+export type { SandboxProviderName } from "./env.ts";
+export {
+  missingSandboxSettings,
+  SANDBOX_PROVIDERS,
+  sandboxProviderFromEnv,
+  sandboxProviderName,
+} from "./env.ts";
 export type { FakeCall, FakeCommandHandler, FakeFiles, FakeRuntimeOptions } from "./fake.ts";
 export { FakeRuntime, FakeRuntimeProvider } from "./fake.ts";
 export type { SandboxHandlerOptions } from "./handler.ts";

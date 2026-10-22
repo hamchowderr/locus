@@ -20,7 +20,7 @@ The interface (`SiteRuntime`, `RuntimeProvider`) is in `src/runtime.ts`.
 
 Generated site code and its dependencies are untrusted. **No credential enters the sandbox**:
 the Vercel token is used by the Locus backend only, to create and drive the sandbox through
-Vercel's API. Commands get a fixed environment (`NEXT_TELEMETRY_DISABLED`, plus `CI` for
+Vercel's API (on Daytona, the same holds for `DAYTONA_API_KEY`). Commands get a fixed environment (`NEXT_TELEMETRY_DISABLED`, plus `CI` for
 installs) and nothing from the backend's own. A test asserts the token appears in no command,
 environment or file.
 
@@ -40,6 +40,24 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   `startPreview` calls share one start.
   `install` runs `pnpm install` (or `npm install` with only a `package-lock.json`) when the hash
   of `package.json` and lockfiles differs from the last successful install.
+- **`DaytonaRuntimeProvider`** (`@mastra/daytona`, Mastra's workspace sandbox on Daytona): the
+  same contract on a named, private Daytona sandbox per site (`locus-site-<hash of key>`,
+  `public: false`). Daytona stops an idle sandbox (`autoStopMinutes`, default 30) and keeps its
+  files; Mastra starts it again on the next call, including one that stopped under a running
+  call (`retryOnDead`). Seeding (`onCreate`, the same `.locus/seeded` marker) runs in Mastra's
+  `onStart` hook, so it also covers a sandbox recreated mid-call, and every other call waits for
+  it. `install` shares one in-flight install per runtime and takes a `flock` in the sandbox, so
+  the web app and the agent server never install at once; the dev server holds a lock for its
+  life, so a second `startPreview` from another process leaves it running. `next dev` is spawned
+  in the background through Mastra's process manager with no timeout or abort signal, its output
+  in a log file (`previewLogs`).
+  The preview URL is Daytona's **signed preview URL** for the port (expires after
+  `previewUrlTtlSeconds`, default 6 h; asked for again on every `startPreview`). It carries no
+  API key, but the browser does hold a short-lived preview token. `previewUrl` is the seam for a
+  Locus proxy that keeps the token server-side instead (not built yet).
+  Files reach the sandbox only through `writeFiles` (the draft in Locus stays the source of
+  truth); Mastra's workspace tools are never handed to an agent.
+  Tests run the real `DaytonaSandbox` on a fake Daytona client (`createSandbox`).
 - **`FakeRuntimeProvider`** (`@locus/sandbox/fake`, also exported from the index): in-memory
   files, a scriptable `(cmd, args, files) => Partial<CommandResult>` handler (exit 0 by default),
   every call in `runtime.calls`, preview URL `https://preview.fake/<key>`, `setPreviewLogs()`.
@@ -51,7 +69,19 @@ output and the preview log are cut to a bounded tail (64k characters by default)
 
 ## Configuration
 
-`sandboxFromEnv()` picks credentials in this order:
+`sandboxProviderFromEnv()` picks the service with `LOCUS_SANDBOX_PROVIDER`: `vercel` (the
+default, so nothing changes until it is set) or `daytona`. `LOCUS_SANDBOX=off` turns either off;
+any other value is refused by name. `missingSandboxSettings()` names what the chosen one still
+needs.
+
+**Daytona** (`daytonaFromEnv()`) needs `DAYTONA_API_KEY` (Otaku's, in Infisical `/locus`; read
+server-side only and given to Daytona's client, never to a sandbox). Optional: `DAYTONA_API_URL`,
+`DAYTONA_TARGET` (region), `DAYTONA_SNAPSHOT` (a prepared image), and `LOCUS_SANDBOX_EGRESS`, a
+comma-separated domain allowlist for sandboxes created after it is set (unset: open egress, as on
+Vercel). Daytona needs no OIDC token, so the agent server opens its sandboxes itself instead of
+going through the web app's sandbox route.
+
+**Vercel Sandbox**: `sandboxFromEnv()` picks credentials in this order:
 
 1. `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`, when all three
    are set (an Otaku team-scoped token; needed when Locus runs off Vercel, e.g. on Coolify).
@@ -119,6 +149,8 @@ at the web app, and the Vercel credentials never leave it.
 
 ## Not here yet
 
-- A network policy for the sandbox (today it has open egress, which `pnpm install` needs).
+- A network policy for the Vercel sandbox (today it has open egress, which `pnpm install`
+  needs). Daytona's is `LOCUS_SANDBOX_EGRESS`, off by default.
+- A Locus proxy for Daytona previews, so the preview token never reaches the browser.
 - Syncing the project to and from the site's GitHub repository.
 - Reading files back out of the sandbox.

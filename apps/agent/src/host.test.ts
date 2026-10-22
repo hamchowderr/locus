@@ -30,14 +30,14 @@ import {
   user,
 } from "@locus/db/control";
 import type { AppConnector } from "@locus/harness";
-import { FakeRuntimeProvider, handleSandboxRequest } from "@locus/sandbox";
+import { DaytonaRuntimeProvider, FakeRuntimeProvider, handleSandboxRequest } from "@locus/sandbox";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createHost, PREFIX, reportFailure, sessionFromKitToken } from "./host.ts";
+import { createHost, PREFIX, reportFailure, sessionFromKitToken, siteSandboxes } from "./host.ts";
 import {
   ASK_ME,
   ASK_ME_REPLY,
@@ -1138,5 +1138,23 @@ describe("connected apps", () => {
     // The staff check failed closed: the app read stopped for a person instead of running
     // unasked, and approving it would hit the same check (see `apps` in host.ts).
     expect(stoppedOn).toBe("tool_approval_required");
+  });
+});
+
+describe("the site builder's sandboxes", () => {
+  const webApp = { url: "https://web.example", authSecret: "secret" };
+
+  test("go through the web app on Vercel Sandbox, the default", async () => {
+    const sandboxes = siteSandboxes({ DAYTONA_API_KEY: "k" }, webApp);
+    expect(sandboxes.openRuntime).toBeTypeOf("function");
+    await expect(sandboxes.runtimes().open("x")).rejects.toThrow(/only through the web app/);
+  });
+
+  test("open here on Daytona when LOCUS_SANDBOX_PROVIDER says so", () => {
+    const env = { LOCUS_SANDBOX_PROVIDER: "daytona", DAYTONA_API_KEY: "k" };
+    const sandboxes = siteSandboxes(env, webApp);
+    expect(sandboxes.openRuntime).toBeUndefined();
+    expect(sandboxes.runtimes()).toBeInstanceOf(DaytonaRuntimeProvider);
+    expect(sandboxes.runtimes()).toBe(sandboxes.runtimes());
   });
 });
