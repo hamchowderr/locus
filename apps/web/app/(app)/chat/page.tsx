@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Notice } from "@/app/ui";
 import { LibraryTab } from "@/components/library-tab";
 import { MainChat } from "@/components/main-chat";
+import { appConnectionsFromEnv } from "@/lib/apps";
 import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 
@@ -34,6 +35,7 @@ export default async function ChatPage() {
           className="min-h-0 flex-1"
           modes={CHAT_MODES}
           library={<LibraryTab client={client} />}
+          connectorScope={appConnectionsFromEnv() ? client.location.id : undefined}
         />
       ) : (
         <div className="mx-auto mt-6 w-full max-w-4xl px-4">
