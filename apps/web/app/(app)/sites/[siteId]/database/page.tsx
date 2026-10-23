@@ -17,7 +17,7 @@ import { notFound, redirect } from "next/navigation";
 import { Notice, Page } from "@/app/ui";
 import { configured, connectDeps } from "@/lib/connect";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
-import { siteNames } from "@/lib/site-builder";
+import { siteDraftHasDatabase, siteNames } from "@/lib/site-builder";
 import { siteBuilderDeps } from "@/lib/site-builder-host";
 import { resetDatabaseKey, restoreDatabase, undoDatabaseRestore } from "./actions";
 
@@ -88,6 +88,13 @@ export default async function SiteDatabase({
   if (!names?.has(siteId)) notFound();
 
   const backend = await siteBackendOf(locus().db, client, siteId);
+  // Before the first publish there is no live database, though the draft may already have one.
+  const inDraft =
+    !backend &&
+    (await siteDraftHasDatabase(siteBuilderDeps(), client, siteId).catch((e) => {
+      console.error("Reading a site's draft failed", e);
+      return false;
+    }));
   let problem: string | null = null;
   let overview: SiteBackendOverview | null = null;
   const asked = page && /^\d{1,5}$/.test(page) ? Math.max(Number(page), 1) : 1;
@@ -154,12 +161,20 @@ export default async function SiteDatabase({
 
   return (
     <Page title="Database" width="wide">
-      {!backend && (
-        <p className="text-neutral-600">
-          This site has no database. The site builder adds one when the site needs member logins or
-          keeps its own records, such as bookings. It is made the first time the site is published.
-        </p>
-      )}
+      {!backend &&
+        (inDraft ? (
+          <p className="text-neutral-600">
+            This site has a database, but it isn't live yet: Locus makes it the first time the site
+            is published, and it shows here from then on. Until then, sign-ups and records made in
+            the preview go into a test copy that only the preview uses.
+          </p>
+        ) : (
+          <p className="text-neutral-600">
+            This site has no database. The site builder adds one when the site needs member logins
+            or keeps its own records, such as bookings. It is made the first time the site is
+            published.
+          </p>
+        ))}
       {problem && <Notice tone="error">{problem}</Notice>}
       {actionError && <Notice tone="error">{actionError}</Notice>}
       {(restored || undone) && (
