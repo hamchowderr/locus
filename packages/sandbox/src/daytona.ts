@@ -36,7 +36,11 @@ export interface DaytonaSandboxConfig {
   apiUrl?: string;
   /** Daytona region (`DAYTONA_TARGET`). */
   target?: string;
-  /** A Daytona snapshot to create sandboxes from, instead of Daytona's default. */
+  /**
+   * The Daytona snapshot new sandboxes are made from. Default `daytona-medium`, Daytona's own
+   * 2 CPU / 4 GiB / 8 GiB snapshot: its default (`daytona-small`, 1 CPU / 1 GiB) is too small to
+   * install a Next site, and the install is killed.
+   */
   snapshot?: string;
   /**
    * Domains the sandbox may reach (Daytona's egress allowlist), e.g.
@@ -74,6 +78,13 @@ export interface DaytonaSandboxConfig {
   /** Prefix of sandbox names. Default `locus-site-`. */
   namePrefix?: string;
   /**
+   * The least CPU (cores) and memory (GiB) a site's sandbox may run with. Default 2 and 4, as on
+   * Vercel Sandbox. A smaller one (made before `snapshot` was bigger) is refused with a plain
+   * error rather than left to fail its install. Deleting it makes it again from `snapshot`, without
+   * the preview's own data (`.data`: its database and members' uploads).
+   */
+  resources?: { cpu: number; memory: number };
+  /**
    * Called after a site's sandbox was created empty (or an earlier seeding didn't finish),
    * before the call that triggered it continues.
    */
@@ -100,6 +111,8 @@ const DEFAULTS = {
   previewReadyTimeoutMs: 90_000,
   previewUrlTtlSeconds: 6 * 60 * 60,
   namePrefix: "locus-site-",
+  snapshot: "daytona-medium",
+  resources: { cpu: 2, memory: 4 },
 };
 
 /** The only environment commands get. Never add credentials here. */
@@ -269,7 +282,7 @@ export function daytonaOptions(
     apiKey: config.apiKey,
     ...(config.apiUrl ? { apiUrl: config.apiUrl } : {}),
     ...(config.target ? { target: config.target } : {}),
-    ...(config.snapshot ? { snapshot: config.snapshot } : {}),
+    snapshot: config.snapshot ?? DEFAULTS.snapshot,
     ...(config.domainAllowList ? { domainAllowList: config.domainAllowList } : {}),
     language: "typescript",
     // Private: a preview needs Daytona's token, which stays with Locus or in a signed URL.
@@ -416,6 +429,7 @@ class DaytonaSiteRuntime implements SiteRuntime {
       { cwd: "/", env: commandEnv(COMMAND_ENV), timeout: 60_000 },
     );
     if (!check) throw new Error("This Daytona sandbox can't run commands.");
+    this.checkSize(sandbox);
     if (check.exitCode === 0) return;
     if (check.exitCode !== 1) {
       throw new Error(`Preparing the sandbox failed (exit ${check.exitCode}): ${check.stderr}`);
@@ -426,6 +440,20 @@ class DaytonaSiteRuntime implements SiteRuntime {
     }
     if (this.destroyed) throw new Error("This site was deleted.");
     await sandbox.writeFiles?.([{ path: marker, content: new Date().toISOString() }]);
+  }
+
+  /** Refuses a sandbox smaller than `resources`: its install would be killed. */
+  private checkSize(sandbox: DaytonaSandbox): void {
+    const want = this.config.resources ?? DEFAULTS.resources;
+    const { cpu, memory } = sandbox.daytona;
+    if (cpu >= want.cpu && memory >= want.memory) return;
+    // The details are for Otaku; the error reaches the site builder and the agency.
+    console.error(
+      `Daytona sandbox ${this.id} has ${cpu} CPUs and ${memory} GB of memory, under ${want.cpu} and ${want.memory}: made before sandboxes came from a big enough snapshot, or DAYTONA_SNAPSHOT is too small. Deleting it makes it again, without the preview's own data (.data).`,
+    );
+    throw new Error(
+      `This site's preview sandbox is too small to install the site (it has ${cpu} CPUs and ${memory} GB of memory; a site needs at least ${want.cpu} and ${want.memory}). Otaku needs to replace it; trying again won't help.`,
+    );
   }
 
   /** Runs `fn` on the started sandbox, once more if the sandbox stopped or died under it. */

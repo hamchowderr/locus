@@ -49,6 +49,8 @@ interface FakeVm {
   fs: { uploadFiles: (files: { source: Buffer; destination: string }[]) => Promise<void> };
   getSignedPreviewUrl: (port: number, ttl?: number) => Promise<{ url: string; token: string }>;
   getPreviewLink: (port: number) => Promise<{ url: string; token: string }>;
+  cpu: number;
+  memory: number;
 }
 
 /** Daytona's API client, with a tiny shell: commands go to `handler` (exit 0 by default). */
@@ -86,7 +88,14 @@ function fakeDaytona(handler: Handler = () => undefined) {
     }
   };
 
-  function makeVm(name: string): FakeVm {
+  /** CPU and memory of Daytona's default snapshots; any other is the default's size. */
+  const SNAPSHOT_SIZES: Record<string, { cpu: number; memory: number }> = {
+    "daytona-small": { cpu: 1, memory: 1 },
+    "daytona-medium": { cpu: 2, memory: 4 },
+    "daytona-large": { cpu: 4, memory: 8 },
+  };
+
+  function makeVm(name: string, snapshot?: unknown): FakeVm {
     counter += 1;
     const results = new Map<string, { exitCode: number; done: Promise<void> }>();
     const vm: FakeVm = {
@@ -164,6 +173,7 @@ function fakeDaytona(handler: Handler = () => undefined) {
         url: `https://${port}-${vm.id}.proxy.daytona.fake`,
         token: "preview-token",
       }),
+      ...(SNAPSHOT_SIZES[String(snapshot)] ?? { cpu: 1, memory: 1 }),
     };
     return vm;
   }
@@ -184,7 +194,7 @@ function fakeDaytona(handler: Handler = () => undefined) {
     },
     create: async (params: Record<string, unknown>) => {
       calls.created.push(params);
-      const vm = makeVm(String(params.name));
+      const vm = makeVm(String(params.name), params.snapshot);
       vms.set(vm.name, vm);
       return vm;
     },
@@ -278,6 +288,42 @@ describe("DaytonaRuntimeProvider", () => {
     for (const command of vm?.commands ?? []) {
       expect(command).not.toMatch(/DAYTONA|API_KEY/);
     }
+  });
+
+  it("makes sandboxes from Daytona's 2 CPU / 4 GB snapshot, not its 1 GB default", async () => {
+    const fake = fakeDaytona();
+    await (await provider(fake).open("site")).install();
+    expect(fake.calls.created).toEqual([expect.objectContaining({ snapshot: "daytona-medium" })]);
+    expect(vmOf(fake, "site")).toMatchObject({ cpu: 2, memory: 4 });
+
+    const own = fakeDaytona();
+    await (await provider(own, { snapshot: "daytona-large" }).open("site")).run("ls");
+    expect(own.calls.created).toEqual([expect.objectContaining({ snapshot: "daytona-large" })]);
+  });
+
+  it("says plainly when a site's sandbox is too small, instead of letting its install be killed", async () => {
+    const tooSmall =
+      "This site's preview sandbox is too small to install the site (it has 1 CPUs and 1 GB of memory; a site needs at least 2 and 4). Otaku needs to replace it; trying again won't help.";
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // A snapshot that's too small.
+    const fake = fakeDaytona();
+    await expect(provider(fake, { snapshot: "daytona-small" }).open("site")).rejects.toThrow(
+      tooSmall,
+    );
+    expect(callerCommands(vmOf(fake, "site"))).toEqual([]);
+
+    // One made before sandboxes came from the bigger snapshot: refused, and nothing deleted.
+    const old = fakeDaytona();
+    await (await provider(old).open("site")).run("ls");
+    const vm = vmOf(old, "site");
+    if (!vm) throw new Error("no sandbox");
+    Object.assign(vm, { cpu: 1, memory: 1, state: SandboxState.STOPPED });
+    await expect(provider(old).open("site")).rejects.toThrow(tooSmall);
+    expect(old.calls.deleted).toEqual([]);
+    // Otaku's log names the sandbox and the setting; the error the builder sees doesn't.
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(vm.name));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("DAYTONA_SNAPSHOT"));
+    error.mockRestore();
   });
 
   it("gives commands only Locus's fixed environment", async () => {

@@ -20,6 +20,7 @@ export const AGENT_SETTINGS = [
   "LOCUS_AGENT_MODEL",
   "LOCUS_WEB_VERCEL_BYPASS",
   "COMPOSIO_API_KEY",
+  "COMPOSIO_AUTH_CONFIGS",
   "LOCUS_SANDBOX_PROVIDER",
   "DAYTONA_API_KEY",
   "LOCUS_PROVISIONER",
@@ -64,18 +65,20 @@ export function modelProblems(env: Env): string[] {
   return [];
 }
 
+/** The key the agent needs to open sandboxes itself, by provider. */
+const DIRECT_KEYS: Record<string, string> = { daytona: "DAYTONA_API_KEY", e2b: "E2B_API_KEY" };
+
 /**
- * What stops the site builder opening sandboxes here: on Daytona the agent opens them itself and
- * needs `DAYTONA_API_KEY`; on Vercel Sandbox (the default) it goes through the web app and needs
- * nothing of its own.
+ * What stops the site builder opening sandboxes here: on Daytona or E2B the agent opens them
+ * itself and needs that service's API key; on Vercel Sandbox (the default) it goes through the
+ * web app and needs nothing of its own.
  */
 export function sandboxProblems(env: Env): string[] {
   const provider = env.LOCUS_SANDBOX_PROVIDER;
   if (!provider || provider === "vercel") return [];
-  if (provider !== "daytona") return ["LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona"];
-  return env.DAYTONA_API_KEY
-    ? []
-    : ["LOCUS_SANDBOX_PROVIDER is daytona, but DAYTONA_API_KEY is not set"];
+  const key = DIRECT_KEYS[provider];
+  if (!key) return ["LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona, e2b"];
+  return env[key] ? [] : [`LOCUS_SANDBOX_PROVIDER is ${provider}, but ${key} is not set`];
 }
 
 const MAX_CAUSE = 200;

@@ -8,6 +8,7 @@ import {
   createComposioCatalog,
   createComposioConnections,
   createComposioConnector,
+  parseAuthConfigs,
 } from "./composio.ts";
 
 // A pretend Composio API: the real SDK runs against it, so this proves what Locus asks Composio
@@ -307,6 +308,26 @@ describe("Composio connector", () => {
     ]);
   });
 
+  test("an app with Otaku's own sign-in app uses the accounts connected through it", async () => {
+    routes[`POST ${SESSION}/trs_1/execute`] = () => ({
+      data: {},
+      error: null,
+      log_id: "log_1",
+      result_type: "completed",
+    });
+    const apps = createComposioConnector({
+      apiKey: "test-key",
+      clientId: "client-1",
+      baseURL,
+      catalog: catalog(),
+      authConfigs: { gmail: "ac_own" },
+    });
+    await apps.execute("GMAIL_FETCH_EMAILS", {});
+    expect(seen.find((s) => s.path === SESSION)?.body).toMatchObject({
+      auth_configs: { gmail: "ac_own" },
+    });
+  });
+
   test("search lists the connected apps' tools, and offered apps that aren't connected", async () => {
     routes[`POST ${SESSION}/trs_1/search`] = (body) => {
       expect(body).toMatchObject({ queries: [{ use_case: "read my email" }] });
@@ -498,10 +519,10 @@ describe("Composio connections", () => {
 
   /** The client's accounts as Composio lists them, `next` naming a further page. */
   const accountsBody = (
-    accounts: [id: string, status: string, toolkit?: string][],
+    accounts: [id: string, status: string, toolkit?: string, authConfig?: string][],
     next: string | null = null,
   ) => ({
-    items: accounts.map(([id, status, toolkit = "gmail"]) => ({
+    items: accounts.map(([id, status, toolkit = "gmail", authConfig = "ac_1"]) => ({
       id,
       status,
       status_reason: null,
@@ -510,7 +531,7 @@ describe("Composio connections", () => {
       updated_at: "2026-10-20T00:00:00Z",
       toolkit: { slug: toolkit },
       auth_config: {
-        id: "ac_1",
+        id: authConfig,
         auth_scheme: "OAUTH2",
         is_composio_managed: true,
         is_disabled: false,
@@ -580,6 +601,61 @@ describe("Composio connections", () => {
       toolkits: { enable: ["gmail"] },
       manage_connections: { enable: false },
       instant: false,
+    });
+  });
+
+  describe("with Otaku's own sign-in app for Gmail", () => {
+    const own = () =>
+      createComposioConnections({
+        apiKey: "test-key",
+        baseURL,
+        catalog: catalog(),
+        authConfigs: { gmail: "ac_own" },
+      });
+
+    test("a Gmail connected through Composio's sign-in needs connecting again", async () => {
+      routes[`GET ${ACCOUNTS}`] = () =>
+        accountsBody([
+          ["ca_gmail_old", "ACTIVE", "gmail", "ac_1"],
+          ["ca_slack", "ACTIVE", "slack", "ac_2"],
+        ]);
+      const listed = await own().list("client-1");
+      expect(listed.find((app) => app.toolkit === "gmail")).toMatchObject({
+        connected: false,
+        expired: true,
+      });
+      // Apps without Otaku's own sign-in app are as before.
+      expect(listed.find((app) => app.toolkit === "slack")).toMatchObject({ connected: true });
+      expect(listed.find((app) => app.toolkit === "slack")?.expired).toBeUndefined();
+
+      routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_gmail", "ACTIVE", "gmail", "ac_own"]]);
+      const again = await own().list("client-1");
+      expect(again.find((app) => app.toolkit === "gmail")).toMatchObject({ connected: true });
+    });
+
+    test("an app Locus no longer offers is still listed, so it can be disconnected", async () => {
+      routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_old", "ACTIVE", "oldapp", "ac_1"]]);
+      const listed = await createComposioConnections({
+        apiKey: "test-key",
+        baseURL,
+        catalog: catalog(),
+        authConfigs: { oldapp: "ac_own" },
+      }).list("client-1");
+      expect(listed.find((app) => app.toolkit === "oldapp")).toMatchObject({ connected: true });
+    });
+
+    test("connecting signs in through it, after removing the old sign-in", async () => {
+      routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_gmail_old", "ACTIVE", "gmail", "ac_1"]]);
+      routes[`DELETE ${ACCOUNTS}/ca_gmail_old`] = () => ({ success: true });
+      routes[`POST ${SESSION}/trs_1/link`] = () => ({
+        connected_account_id: "ca_new",
+        redirect_url: "https://accounts.google.test/o",
+      });
+      await own().connect("client-1", "gmail", "https://locus.test/apps");
+      expect(changes()).toEqual(["revoke ca_gmail_old", "delete ca_gmail_old"]);
+      expect(seen.find((s) => s.path === SESSION)?.body).toMatchObject({
+        auth_configs: { gmail: "ac_own" },
+      });
     });
   });
 
@@ -703,5 +779,22 @@ describe("Composio connections", () => {
     });
     await connections().connect("client-1", "gmail", "https://locus.test/apps");
     expect(deleted()).toEqual(["ca_expired", "ca_abandoned"]);
+  });
+});
+
+describe("parseAuthConfigs", () => {
+  test("reads toolkit=auth config pairs", () => {
+    expect(parseAuthConfigs("gmail=ac_1, GoogleCalendar = ac_2,")).toEqual({
+      gmail: "ac_1",
+      googlecalendar: "ac_2",
+    });
+    expect(parseAuthConfigs(undefined)).toEqual({});
+    expect(parseAuthConfigs(" ")).toEqual({});
+  });
+
+  test("refuses anything else, rather than signing in the wrong way", () => {
+    for (const text of ["gmail", "gmail=", "gmail=123", "=ac_1", "g mail=ac_1", "gmail=ac_1=x"]) {
+      expect(() => parseAuthConfigs(text)).toThrow(/COMPOSIO_AUTH_CONFIGS/);
+    }
   });
 });
