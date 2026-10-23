@@ -74,6 +74,12 @@ export interface DaytonaSandboxConfig {
   /** Prefix of sandbox names. Default `locus-site-`. */
   namePrefix?: string;
   /**
+   * The least CPU (cores) and memory (GiB) a site's sandbox runs with; a smaller one is grown on
+   * start. Default 2 and 4, as on Vercel Sandbox: Daytona's default sandbox is too small to
+   * install a Next site, and the install is killed.
+   */
+  resources?: { cpu: number; memory: number };
+  /**
    * Called after a site's sandbox was created empty (or an earlier seeding didn't finish),
    * before the call that triggered it continues.
    */
@@ -100,6 +106,7 @@ const DEFAULTS = {
   previewReadyTimeoutMs: 90_000,
   previewUrlTtlSeconds: 6 * 60 * 60,
   namePrefix: "locus-site-",
+  resources: { cpu: 2, memory: 4 },
 };
 
 /** The only environment commands get. Never add credentials here. */
@@ -416,6 +423,9 @@ class DaytonaSiteRuntime implements SiteRuntime {
       { cwd: "/", env: commandEnv(COMMAND_ENV), timeout: 60_000 },
     );
     if (!check) throw new Error("This Daytona sandbox can't run commands.");
+    // A seeded sandbox already ran its site at whatever size it has, so a refused resize (an
+    // account limit) doesn't stop it; a new one stops here rather than failing its install later.
+    await this.fit(sandbox, check.exitCode !== 0);
     if (check.exitCode === 0) return;
     if (check.exitCode !== 1) {
       throw new Error(`Preparing the sandbox failed (exit ${check.exitCode}): ${check.stderr}`);
@@ -426,6 +436,28 @@ class DaytonaSiteRuntime implements SiteRuntime {
     }
     if (this.destroyed) throw new Error("This site was deleted.");
     await sandbox.writeFiles?.([{ path: marker, content: new Date().toISOString() }]);
+  }
+
+  /**
+   * Grows a sandbox smaller than `resources` (Daytona resizes a running one in place, increases
+   * only, so only what's short is sent). A refused resize throws when `strict`, else is logged.
+   */
+  private async fit(sandbox: DaytonaSandbox, strict: boolean): Promise<void> {
+    const want = this.config.resources ?? DEFAULTS.resources;
+    const vm = sandbox.daytona;
+    const size = {
+      ...(vm.cpu < want.cpu ? { cpu: want.cpu } : {}),
+      ...(vm.memory < want.memory ? { memory: want.memory } : {}),
+    };
+    if (Object.keys(size).length === 0) return;
+    try {
+      await vm.resize(size);
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      const message = `Daytona couldn't give the sandbox ${want.cpu} CPUs and ${want.memory} GB of memory: ${reason}`;
+      if (strict) throw new Error(message);
+      console.warn(`${message} (going on at its current size)`);
+    }
   }
 
   /** Runs `fn` on the started sandbox, once more if the sandbox stopped or died under it. */
