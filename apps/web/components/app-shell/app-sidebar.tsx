@@ -56,6 +56,7 @@ export function AppSidebar({
   subAccount,
   subAccounts,
   operator,
+  manager,
   email,
   chooseClient,
   signOut,
@@ -63,15 +64,17 @@ export function AppSidebar({
   subAccount: SubAccountOption | null;
   subAccounts: readonly SubAccountOption[];
   operator: boolean;
+  /** One of the agency's owners or admins: the agency's pages and Billing are theirs. */
+  manager: boolean;
   email: string;
   chooseClient: (form: FormData) => Promise<void>;
   signOut: () => Promise<void>;
 }) {
   const pathname = usePathname();
-  const sections = menuSections({ hasSubAccount: Boolean(subAccount), operator });
+  const sections = menuSections({ hasSubAccount: Boolean(subAccount), operator, manager });
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
@@ -168,12 +171,14 @@ export function AppSidebar({
                     Settings
                   </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <Link href="/billing">
-                    <CreditCard />
-                    Billing
-                  </Link>
-                </DropdownMenuItem>
+                {manager && (
+                  <DropdownMenuItem asChild>
+                    <Link href="/billing">
+                      <CreditCard />
+                      Billing
+                    </Link>
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <form action={signOut}>
                   <DropdownMenuItem asChild>

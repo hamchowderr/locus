@@ -1,11 +1,13 @@
 "use client";
 
 import { Library } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback } from "react";
 import type { ToolViews } from "@/components/chat/tool-steps";
 import { ProjectChat } from "@/components/chat-project/project-chat";
 import type { ThreadOutput } from "@/components/chat-project/thread-groups";
+import { ConnectorsMenu } from "@/components/connectors-menu";
 import type { ThreadItem } from "@/lib/agent-controller/use-threads";
+import { readConnectorsOff } from "@/lib/chat-connectors";
 import { chatShowsInFull, chatStep } from "@/lib/chat-steps";
 
 /** The main chat's tools as plain step rows. Made once, so the chat's views stay put. */
@@ -29,22 +31,33 @@ const outputsOf = (t: ThreadItem): ThreadOutput[] =>
 /**
  * The sub-account's chat: the chat kit's project chat, with Locus's tools told in plain words
  * and sites' conversations kept out of it. Its panel has the sub-account's Library beside
- * Threads. The model is the server's own, so the composer offers no picker.
+ * Threads. The model is the server's own, so the composer offers no picker. Where connectors
+ * are set up, the composer's + menu lists them with a switch each for this chat.
  */
 export function MainChat({
   className,
   modes,
   library,
+  connectorScope,
 }: {
   className?: string | undefined;
   modes: ReadonlyArray<{ id: string; name: string }>;
   /** The Library tab's content, read on the server. */
   library: ReactNode;
+  /** The sub-account the connector switches belong to; unset where connectors aren't set up. */
+  connectorScope?: string | undefined;
 }) {
+  // Read at send time, so a switch flipped mid-chat counts from the next message.
+  const turnExtra = useCallback(() => {
+    const off = connectorScope ? readConnectorsOff(connectorScope) : [];
+    return off.length > 0 ? { connectorsOff: off } : undefined;
+  }, [connectorScope]);
   return (
     <ProjectChat
       {...(className ? { className } : {})}
       modes={modes}
+      composerMenu={connectorScope ? <ConnectorsMenu scope={connectorScope} /> : undefined}
+      turnExtra={turnExtra}
       toolViews={TOOL_VIEWS}
       isChat={isChat}
       outputsOf={outputsOf}
