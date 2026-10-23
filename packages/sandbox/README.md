@@ -45,7 +45,8 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   `public: false`), made from Daytona's `daytona-medium` snapshot (2 CPUs, 4 GiB, 8 GiB disk, as
   on Vercel; Daytona's default `daytona-small` is too small to install a Next site). A sandbox
   smaller than `resources` (2 and 4) fails with a plain error instead of a killed install;
-  deleting it makes it again from the snapshot. Daytona stops an idle sandbox (`autoStopMinutes`, default 30) and keeps its
+  deleting it makes it again from the snapshot, without the preview's `.data` (its database and
+  members' uploads). Daytona stops an idle sandbox (`autoStopMinutes`, default 30) and keeps its
   files; Mastra starts it again on the next call, including one that stopped under a running
   call (`retryOnDead`). Seeding (`onCreate`, the same `.locus/seeded` marker) runs in Mastra's
   `onStart` hook, so it also covers a sandbox recreated mid-call, and every other call waits for
