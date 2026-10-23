@@ -6,20 +6,27 @@ const names = (sections: ReturnType<typeof menuSections>) =>
 
 describe("menuSections", () => {
   it("shows the sub-account's pages first once one is chosen", () => {
-    expect(names(menuSections({ hasSubAccount: true, operator: false }))).toEqual([
+    expect(names(menuSections({ hasSubAccount: true, operator: false, manager: true }))).toEqual([
       ["Sub-account", ["Chat", "Connectors"]],
       ["Agency", ["Sub-accounts", "Team", "Integrations"]],
     ]);
   });
 
   it("leaves out the sub-account's pages until one is chosen", () => {
-    expect(names(menuSections({ hasSubAccount: false, operator: false }))).toEqual([
+    expect(names(menuSections({ hasSubAccount: false, operator: false, manager: true }))).toEqual([
       ["Agency", ["Sub-accounts", "Team", "Integrations"]],
     ]);
   });
 
+  it("shows a member only the agency pages they can use", () => {
+    expect(names(menuSections({ hasSubAccount: true, operator: false, manager: false }))).toEqual([
+      ["Sub-account", ["Chat", "Connectors"]],
+      ["Agency", ["Sub-accounts"]],
+    ]);
+  });
+
   it("shows Operator only to operators", () => {
-    const agency = menuSections({ hasSubAccount: false, operator: true })[0];
+    const agency = menuSections({ hasSubAccount: false, operator: true, manager: true })[0];
     expect(agency?.pages.map((p) => p.name)).toContain("Operator");
   });
 });

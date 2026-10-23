@@ -10,6 +10,8 @@ export type AppPage = {
   icon: "chat" | "connectors" | "sub-accounts" | "team" | "integrations" | "operator";
   /** Shown only to operators (Otaku staff). */
   operatorOnly?: true;
+  /** Shown only to the agency's owners and admins: a member can't use it. */
+  managerOnly?: true;
   /** Other addresses that count as this page in the menu (a site opened from the chat). */
   also?: readonly string[];
 };
@@ -33,23 +35,31 @@ export const AGENCY_PAGES: AppSection = {
   name: "Agency",
   pages: [
     { href: "/clients", name: "Sub-accounts", icon: "sub-accounts" },
-    { href: "/team", name: "Team", icon: "team" },
-    { href: "/connect", name: "Integrations", icon: "integrations" },
+    { href: "/team", name: "Team", icon: "team", managerOnly: true },
+    { href: "/connect", name: "Integrations", icon: "integrations", managerOnly: true },
     { href: "/operator", name: "Operator", icon: "operator", operatorOnly: true },
   ],
 };
 
-/** The menu's sections for this person: Sub-account only once one is chosen. */
+/**
+ * The menu's sections for this person: Sub-account only once one is chosen, and the agency's
+ * own pages only for those who can use them.
+ */
 export function menuSections({
   hasSubAccount,
   operator,
+  manager,
 }: {
   hasSubAccount: boolean;
   operator: boolean;
+  /** One of the agency's owners or admins. */
+  manager: boolean;
 }): AppSection[] {
   const agency = {
     ...AGENCY_PAGES,
-    pages: AGENCY_PAGES.pages.filter((page) => operator || !page.operatorOnly),
+    pages: AGENCY_PAGES.pages.filter(
+      (page) => (operator || !page.operatorOnly) && (manager || !page.managerOnly),
+    ),
   };
   return hasSubAccount ? [SUB_ACCOUNT_PAGES, agency] : [agency];
 }
