@@ -414,7 +414,6 @@ class DaytonaSiteRuntime implements SiteRuntime {
   }
 
   private async seed(sandbox: DaytonaSandbox): Promise<void> {
-    await this.fit(sandbox);
     const marker = posix.join(this.root, SEED_MARKER);
     // The marker's folder too: Daytona's upload isn't documented to make parent folders.
     const folders = `${shellQuote(this.root)} ${shellQuote(posix.dirname(marker))}`;
@@ -424,6 +423,9 @@ class DaytonaSiteRuntime implements SiteRuntime {
       { cwd: "/", env: commandEnv(COMMAND_ENV), timeout: 60_000 },
     );
     if (!check) throw new Error("This Daytona sandbox can't run commands.");
+    // A seeded sandbox already ran its site at whatever size it has, so a refused resize (an
+    // account limit) doesn't stop it; a new one stops here rather than failing its install later.
+    await this.fit(sandbox, check.exitCode !== 0);
     if (check.exitCode === 0) return;
     if (check.exitCode !== 1) {
       throw new Error(`Preparing the sandbox failed (exit ${check.exitCode}): ${check.stderr}`);
@@ -436,19 +438,25 @@ class DaytonaSiteRuntime implements SiteRuntime {
     await sandbox.writeFiles?.([{ path: marker, content: new Date().toISOString() }]);
   }
 
-  /** Grows a sandbox smaller than `resources` (Daytona resizes a running one in place). */
-  private async fit(sandbox: DaytonaSandbox): Promise<void> {
+  /**
+   * Grows a sandbox smaller than `resources` (Daytona resizes a running one in place, increases
+   * only, so only what's short is sent). A refused resize throws when `strict`, else is logged.
+   */
+  private async fit(sandbox: DaytonaSandbox, strict: boolean): Promise<void> {
     const want = this.config.resources ?? DEFAULTS.resources;
     const vm = sandbox.daytona;
-    if (vm.cpu >= want.cpu && vm.memory >= want.memory) return;
-    const size = { cpu: Math.max(vm.cpu, want.cpu), memory: Math.max(vm.memory, want.memory) };
+    const size = {
+      ...(vm.cpu < want.cpu ? { cpu: want.cpu } : {}),
+      ...(vm.memory < want.memory ? { memory: want.memory } : {}),
+    };
+    if (Object.keys(size).length === 0) return;
     try {
       await vm.resize(size);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Daytona couldn't give the sandbox ${size.cpu} CPUs and ${size.memory} GB of memory: ${reason}`,
-      );
+      const message = `Daytona couldn't give the sandbox ${want.cpu} CPUs and ${want.memory} GB of memory: ${reason}`;
+      if (strict) throw new Error(message);
+      console.warn(`${message} (going on at its current size)`);
     }
   }
 
