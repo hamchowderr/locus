@@ -18,7 +18,8 @@ import { ConnectButton } from "../connect-button";
  */
 export default async function AppPage({ params }: { params: Promise<{ toolkit: string }> }) {
   const { toolkit } = await params;
-  const slug = decodeURIComponent(toolkit).toLowerCase();
+  // Next has already decoded the segment.
+  const slug = toolkit.toLowerCase();
   const current = await currentSession();
   if (!current) redirect(`/sign-in?next=${encodeURIComponent(`/apps/${slug}`)}`);
   if (!current.session.activeOrganizationId) redirect("/onboarding");

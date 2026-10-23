@@ -139,7 +139,10 @@ function Tabs({ tab, query }: { tab: DirectoryTab; query: Query }) {
 /** The client's connected apps as a list: name, how the chat may use it, and its status. */
 function Yours({ apps, manager, query }: { apps: ClientApp[]; manager: boolean; query: Query }) {
   // An app whose sign-in expired stays here, so it's seen and reconnected.
-  const yours = filterApps(apps, query).filter((app) => app.connected || app.expired);
+  // Yours has no category filter, so a category left in the address doesn't hide apps here.
+  const yours = filterApps(apps, { q: query.q, category: "" }).filter(
+    (app) => app.connected || app.expired,
+  );
   if (yours.length === 0) {
     return (
       <div className="rounded-xl border border-dashed px-6 py-10 text-center">
