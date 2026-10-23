@@ -31,7 +31,12 @@ import {
   user,
 } from "@locus/db/control";
 import type { AppConnector } from "@locus/harness";
-import { DaytonaRuntimeProvider, FakeRuntimeProvider, handleSandboxRequest } from "@locus/sandbox";
+import {
+  DaytonaRuntimeProvider,
+  E2BRuntimeProvider,
+  FakeRuntimeProvider,
+  handleSandboxRequest,
+} from "@locus/sandbox";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
@@ -1209,6 +1214,12 @@ describe("the site builder's sandboxes", () => {
     expect(sandboxes.openRuntime).toBeUndefined();
     expect(sandboxes.runtimes()).toBeInstanceOf(DaytonaRuntimeProvider);
     expect(sandboxes.runtimes()).toBe(sandboxes.runtimes());
+  });
+
+  test("open here on E2B when LOCUS_SANDBOX_PROVIDER says so", () => {
+    const sandboxes = siteSandboxes({ LOCUS_SANDBOX_PROVIDER: "e2b", E2B_API_KEY: "k" }, webApp);
+    expect(sandboxes.openRuntime).toBeUndefined();
+    expect(sandboxes.runtimes()).toBeInstanceOf(E2BRuntimeProvider);
   });
 
   test("an unknown provider is no crash: it stays on the web app, and the settings check says so", () => {

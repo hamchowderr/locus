@@ -20,8 +20,9 @@ const config: NextConfig = {
     "@locus/skills",
     "@locus/studio",
   ],
-  // libSQL loads a native binding; keep it out of the server bundle.
-  serverExternalPackages: ["@libsql/client", "libsql"],
+  // libSQL loads a native binding, and so does esbuild (which `@mastra/e2b` imports); keep them
+  // out of the server bundle.
+  serverExternalPackages: ["@libsql/client", "libsql", "esbuild"],
   // The chat's API runs in the agent server (`apps/agent`), a long-running process. Forwarding
   // it from here keeps it on this origin, so the browser's sign-in cookie reaches it.
   async rewrites() {

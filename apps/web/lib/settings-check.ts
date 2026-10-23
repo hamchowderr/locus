@@ -23,7 +23,8 @@ export const PRODUCTION_SETTINGS: Record<string, readonly string[]> = {
     "VERCEL_INTEGRATION_CLIENT_SECRET",
   ],
   // Vercel Sandbox, the default; only off Vercel, where the deployment's own OIDC token isn't
-  // there. With `LOCUS_SANDBOX_PROVIDER=daytona`, `DAYTONA_API_KEY` instead (`missingFor`).
+  // there. With `LOCUS_SANDBOX_PROVIDER=daytona` or `e2b`, that service's API key instead
+  // (`missingFor`).
   "site builder": ["LOCUS_SANDBOX_TOKEN", "LOCUS_SANDBOX_TEAM_ID", "LOCUS_SANDBOX_PROJECT_ID"],
 };
 
