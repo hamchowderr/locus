@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CONNECTORS_OFF_KEY } from "@locus/agent-api";
 import {
   type AgentToWebClaims,
   agentToWebKey,
@@ -30,14 +31,26 @@ import {
   user,
 } from "@locus/db/control";
 import type { AppConnector } from "@locus/harness";
-import { DaytonaRuntimeProvider, FakeRuntimeProvider, handleSandboxRequest } from "@locus/sandbox";
+import {
+  DaytonaRuntimeProvider,
+  E2BRuntimeProvider,
+  FakeRuntimeProvider,
+  handleSandboxRequest,
+} from "@locus/sandbox";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
 import { MastraClient } from "@mastra/client-js";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createHost, PREFIX, reportFailure, sessionFromKitToken, siteSandboxes } from "./host.ts";
+import {
+  connectorsOffIn,
+  createHost,
+  PREFIX,
+  reportFailure,
+  sessionFromKitToken,
+  siteSandboxes,
+} from "./host.ts";
 import {
   ASK_ME,
   ASK_ME_REPLY,
@@ -1113,6 +1126,17 @@ describe("connected apps", () => {
     expect(executed).toEqual(["GMAIL_FETCH_EMAILS"]);
   });
 
+  test("connectors turned off for a chat read as off, and nothing else does", () => {
+    const context = (value: unknown) => ({
+      get: (key: string) => (key === CONNECTORS_OFF_KEY ? value : undefined),
+    });
+    expect(connectorsOffIn(context(["gmail", "slack"]))).toEqual({ gmail: "off", slack: "off" });
+    // Only "off": a turn can never loosen what the Connectors page set.
+    expect(connectorsOffIn(context("gmail"))).toEqual({});
+    expect(connectorsOffIn(context([1, "gmail"]))).toEqual({ gmail: "off" });
+    expect(connectorsOffIn(undefined)).toEqual({});
+  });
+
   test("an app set to ask every time makes even a read wait", async () => {
     mock().llm.on({ userMessage: /peek at my inbox/i, hasToolResult: false }, readEmail("ap4"));
     mock().llm.on({ toolCallId: "ap4" }, { content: "Done." });
@@ -1190,6 +1214,12 @@ describe("the site builder's sandboxes", () => {
     expect(sandboxes.openRuntime).toBeUndefined();
     expect(sandboxes.runtimes()).toBeInstanceOf(DaytonaRuntimeProvider);
     expect(sandboxes.runtimes()).toBe(sandboxes.runtimes());
+  });
+
+  test("open here on E2B when LOCUS_SANDBOX_PROVIDER says so", () => {
+    const sandboxes = siteSandboxes({ LOCUS_SANDBOX_PROVIDER: "e2b", E2B_API_KEY: "k" }, webApp);
+    expect(sandboxes.openRuntime).toBeUndefined();
+    expect(sandboxes.runtimes()).toBeInstanceOf(E2BRuntimeProvider);
   });
 
   test("an unknown provider is no crash: it stays on the web app, and the settings check says so", () => {

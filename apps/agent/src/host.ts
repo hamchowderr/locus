@@ -7,6 +7,7 @@
 
 import { createClient } from "@libsql/client";
 import {
+  CONNECTORS_OFF_KEY,
   clientSiteThreads,
   clientWorkThreads,
   createAgentApi,
@@ -28,7 +29,7 @@ import { imagesFromEnv, SITE_BUILDER_AGENT } from "@locus/builder";
 import {
   activeSiteIdForSession,
   createSiteBuilder,
-  daytonaSandboxes,
+  directSandboxes,
   openClientDb,
   remotePublish,
   remoteSiteRuntimes,
@@ -47,7 +48,12 @@ import {
 } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
-import { type AppConnector, createComposioConnector, createLocusController } from "@locus/harness";
+import {
+  type AppConnector,
+  createComposioConnector,
+  createLocusController,
+  parseAuthConfigs,
+} from "@locus/harness";
 import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { LibSQLStore } from "@mastra/libsql";
@@ -123,7 +129,7 @@ export interface HostDeps {
   /**
    * The site builder's mode and tools, added to every client's controller. Its sandboxes are
    * driven through the web app (`remoteSiteRuntimes`), which can reach Vercel Sandbox, or, with
-   * `LOCUS_SANDBOX_PROVIDER=daytona`, opened here on Daytona (`siteSandboxes`). Its saved
+   * `LOCUS_SANDBOX_PROVIDER=daytona` or `e2b`, opened here (`siteSandboxes`). Its saved
    * versions are published through the web app (`remotePublish`). Null leaves the builder out.
    */
   siteBuilder?: Omit<SiteBuilderDeps, "db"> | null;
@@ -148,18 +154,18 @@ const NO_LOCAL_SANDBOXES: SiteBuilderDeps["runtimes"] = () => ({
 
 /**
  * Where the site builder's sandboxes come from. Vercel Sandbox (the default) only answers the web
- * app's own OIDC token, so the agent drives it through the web app. Daytona takes Otaku's API
- * key, which the agent then holds itself (server-side, never passed into a sandbox), and opens
- * sandboxes directly, after the same staff check: the tools only open a runtime for an
+ * app's own OIDC token, so the agent drives it through the web app. Daytona and E2B take Otaku's
+ * API key, which the agent then holds itself (server-side, never passed into a sandbox), and
+ * opens sandboxes directly, after the same staff check: the tools only open a runtime for an
  * `AuthorizedClient`.
  */
 export function siteSandboxes(
   env: Env,
   webApp: Parameters<typeof remoteSiteRuntimes>[0],
-  /** The local provider when on Daytona; tests pass a fake. */
+  /** The local provider when on Daytona or E2B; tests pass a fake. */
   local: () => ReturnType<typeof runtimesFromEnv> = () => runtimesFromEnv(env),
 ): Pick<SiteBuilderDeps, "runtimes" | "openRuntime"> {
-  if (daytonaSandboxes(env)) {
+  if (directSandboxes(env)) {
     let runtimes: ReturnType<typeof runtimesFromEnv> | undefined;
     return {
       runtimes: () => {
@@ -243,9 +249,7 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
         }
       : null,
     // Connected apps are on once Otaku's Composio key is set.
-    apps: env.COMPOSIO_API_KEY
-      ? (clientId) => createComposioConnector({ apiKey: env.COMPOSIO_API_KEY as string, clientId })
-      : null,
+    apps: env.COMPOSIO_API_KEY ? appsFromEnv(env.COMPOSIO_API_KEY, env) : null,
   };
 }
 
@@ -283,6 +287,17 @@ const KIT_STREAM_PATH = `${PREFIX}/kit/agent-controller/stream`;
 
 /** The run request-context key naming the session a run acts for. Set here, never by the browser. */
 export const RUN_SESSION_KEY = "locus.session";
+
+/** The connectors the person turned off for this chat, as app settings of "off". */
+export function connectorsOffIn(requestContext?: {
+  get: (key: string) => unknown;
+}): Record<string, "off"> {
+  const names = requestContext?.get(CONNECTORS_OFF_KEY);
+  if (!Array.isArray(names)) return {};
+  return Object.fromEntries(
+    names.filter((n): n is string => typeof n === "string").map((n) => [n, "off" as const]),
+  );
+}
 
 /** An open event stream re-checks access at least this often, and before events after a gap. */
 const STREAM_CHECK_MS = 5_000;
@@ -449,8 +464,14 @@ export function createHost({
               apps: async (requestContext) => {
                 await runClient(requestContext);
                 // How the client's owners let the chat use each app, read on every call, so
-                // turning an app off on the Apps page takes effect on the chat's next step.
-                return { ...clientApps, access: () => readAppAccess(appSettings) };
+                // turning an app off on the Connectors page takes effect on the chat's next
+                // step. The person can also turn connectors off for this chat (the composer's
+                // + menu); that can only take an app away.
+                const offHere = connectorsOffIn(requestContext);
+                return {
+                  ...clientApps,
+                  access: async () => ({ ...(await readAppAccess(appSettings)), ...offHere }),
+                };
               },
             }
           : {}),
@@ -678,4 +699,10 @@ async function readCapped(stream: ReadableStream<Uint8Array>, max: number) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+/** Each client's connected apps, signing in through Otaku's own sign-in apps where set. */
+function appsFromEnv(apiKey: string, env: Env) {
+  const authConfigs = parseAuthConfigs(env.COMPOSIO_AUTH_CONFIGS);
+  return (clientId: string) => createComposioConnector({ apiKey, clientId, authConfigs });
 }

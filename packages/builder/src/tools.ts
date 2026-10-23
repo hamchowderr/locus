@@ -1,6 +1,6 @@
 import { amountText, CrmMediaError, type MediaFormat } from "@locus/connect";
 import { SiteMigrationError, siteMigrationsIn } from "@locus/db";
-import { InvalidPathError, type SiteRuntime } from "@locus/sandbox";
+import { type CommandResult, InvalidPathError, type SiteRuntime } from "@locus/sandbox";
 import {
   bookingComponentFile,
   briefForAgent,
@@ -83,6 +83,29 @@ const BUILD_SECONDS = 300;
 
 const tail = (text: string, max = MAX_OUTPUT_CHARS) =>
   text.length > max ? `…(earlier output cut)\n${text.slice(-max)}` : text;
+
+/**
+ * A command the system killed (SIGKILL), almost always for running out of memory: exit 137, a
+ * negative code (Vercel Sandbox's for death by a signal), or the shell's "Killed" line, alone or as
+ * bash writes it (`bash: line 1: 123 Killed   next build`).
+ */
+const KILLED_EXIT = 137;
+const KILLED_LINE = /^(?:.*\s)?Killed(?:\s|$)/m;
+
+/**
+ * What a failed command printed, never blank: a command killed for memory or time often prints
+ * nothing, and an empty result reads to the model like nothing went wrong.
+ */
+export const failedOutput = (result: CommandResult, text = result.stderr || result.stdout) => {
+  const printed = text.trim();
+  const why = result.timedOut
+    ? "It ran out of time."
+    : result.exitCode === KILLED_EXIT || result.exitCode < 0 || KILLED_LINE.test(printed)
+      ? "The sandbox killed it, usually because it ran out of memory. That is a Locus problem, not the site's: changing the site or trying again won't fix it."
+      : "";
+  if (!printed) return `(It printed nothing; exit code ${result.exitCode}.)${why ? ` ${why}` : ""}`;
+  return why ? `${tail(printed)}\n(${why})` : tail(printed);
+};
 
 const BriefChanges = DesignBrief.partial();
 
@@ -273,7 +296,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
     return {
       added,
       installed: installed.exitCode === 0,
-      output: installed.exitCode === 0 ? undefined : tail(installed.stderr || installed.stdout),
+      output: installed.exitCode === 0 ? undefined : failedOutput(installed),
     };
   };
 
@@ -620,7 +643,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         const runtime = await ready(session);
         const installed = await runtime.install();
         if (installed.exitCode !== 0) {
-          return { ok: false, step: "install", output: tail(installed.stderr || installed.stdout) };
+          return { ok: false, step: "install", output: failedOutput(installed) };
         }
         const built = await runtime.run("npx", ["next", "build"], {
           timeoutMs: BUILD_SECONDS * 1000,
@@ -633,7 +656,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         return {
           ok: false,
           step: built.timedOut ? "build (timed out)" : "build",
-          output: tail(`${built.stdout}\n${built.stderr}`.trim()),
+          output: failedOutput(built, `${built.stdout}\n${built.stderr}`),
         };
       }),
     ),
@@ -663,7 +686,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
             return {
               ok: false,
               step: "install",
-              output: tail(installed.stderr || installed.stdout),
+              output: failedOutput(installed),
             };
           }
           const { url } = await runtime.startPreview();
@@ -745,7 +768,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
         const runtime = await ready(session);
         const installed = await runtime.install();
         if (installed.exitCode !== 0) {
-          return { ok: false, step: "install", output: tail(installed.stderr || installed.stdout) };
+          return { ok: false, step: "install", output: failedOutput(installed) };
         }
         await runtime.startPreview();
         return migratePreview(runtime);

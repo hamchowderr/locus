@@ -3,6 +3,7 @@ import {
   isOperator,
   listAccessibleClients,
   operatorsFromEnv,
+  requireAgencyManager,
   resolveActiveClient,
 } from "@locus/auth";
 import { headers } from "next/headers";
@@ -32,10 +33,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       if (e instanceof ClientAccessDenied) return fallback;
       throw e;
     };
-  const [client, clients, operator, agencies] = await Promise.all([
+  const [client, clients, operator, manager, agencies] = await Promise.all([
     resolveActiveClient(db, ctx).catch(denied(null)),
     listAccessibleClients(db, ctx).catch(denied([])),
     isOperator(db, ctx, operatorsFromEnv()),
+    requireAgencyManager(db, ctx).then(() => true, denied(false)),
     // Only the agencies this user is a member of.
     locus().auth.api.listOrganizations({ headers: await headers() }),
   ]);
@@ -50,13 +52,14 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           agency={agency ? { id: agency.id, name: agency.name } : null}
           agencies={agencies.map((a) => ({ id: a.id, name: a.name }))}
           operator={operator}
+          manager={manager}
           email={current.user.email}
           chooseClient={chooseClient}
           switchAgency={switchAgency}
           signOut={signOut}
         />
         <SidebarInset className="min-h-0 overflow-hidden">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+          <header className="flex h-12 shrink-0 items-center gap-2 px-3">
             <SidebarTrigger />
             <span className="truncate text-sm text-muted-foreground">
               {client ? client.location.name : "No sub-account chosen"}
