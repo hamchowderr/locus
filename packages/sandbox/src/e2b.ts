@@ -190,7 +190,7 @@ export class E2BRuntimeProvider implements RuntimeProvider {
       await held.destroy();
       return;
     }
-    await destroyDetached(key, this.config);
+    await killAll(key, this.config);
   }
 }
 
@@ -261,10 +261,22 @@ function refuseCreateWhen(sandbox: E2BSandbox, refused: () => boolean): E2BSandb
   return sandbox;
 }
 
-/** Looks the site's sandbox up by name without resuming it, and deletes it if it exists. */
-async function destroyDetached(key: string, config: E2BSandboxConfig): Promise<void> {
-  const sandbox = await buildSandbox(key, config, async () => {});
-  await sandbox.destroy();
+/**
+ * Kills every sandbox tagged with the site's name, without resuming any. Mastra's own lookup
+ * keeps only the first match and treats a failed lookup as "none", and E2B doesn't keep the tag
+ * unique (two processes opening a new site at once can each make one), so this lists them all
+ * itself and lets any failure through: a deleted client's files are never left behind quietly.
+ */
+async function killAll(key: string, config: E2BSandboxConfig): Promise<void> {
+  const { Sandbox } = await import("e2b");
+  const connection = { apiKey: config.apiKey, ...(config.domain ? { domain: config.domain } : {}) };
+  const found = Sandbox.list({
+    ...connection,
+    query: { metadata: { "mastra-sandbox-id": sandboxName(key) }, state: ["running", "paused"] },
+  });
+  const ids: string[] = [];
+  while (found.hasNext) for (const info of await found.nextItems()) ids.push(info.sandboxId);
+  for (const id of ids) await Sandbox.kill(id, connection);
 }
 
 class E2BSiteRuntime implements SiteRuntime {
@@ -610,14 +622,13 @@ class E2BSiteRuntime implements SiteRuntime {
     this.destroyed = true;
     const sandbox = await this.sandbox?.catch(() => null);
     this.sandbox = null;
-    if (!sandbox) {
-      await destroyDetached(this.key, this.config);
-      return;
+    if (sandbox) {
+      // Mastra's own delete of the one held here, then marked destroyed so its lazy start
+      // refuses; a restart under a call in flight still meets the `create` guard and the start
+      // hook.
+      await sandbox.destroy();
+      sandbox.status = "destroyed";
     }
-    // Mastra's own delete (found by name even if this process never started it), then marked
-    // destroyed so its lazy start refuses; a restart under a call in flight still meets the
-    // `create` guard and the start hook.
-    await sandbox.destroy();
-    sandbox.status = "destroyed";
+    await killAll(this.key, this.config);
   }
 }

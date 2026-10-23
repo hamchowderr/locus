@@ -52,6 +52,7 @@ interface FakeVm {
 /** E2B's API, with a tiny shell: commands go to `handler` (exit 0 by default). */
 function fakeE2B(handler: Handler = () => undefined) {
   const vms = new Map<string, FakeVm>();
+  let failList = false;
   const calls = {
     created: [] as { template: string; opts: Record<string, unknown> }[],
     connected: [] as string[],
@@ -247,12 +248,16 @@ function fakeE2B(handler: Handler = () => undefined) {
       return info(vm);
     }) as never,
     "Sandbox.list": ((opts: { query?: { metadata?: Record<string, string> } }) => ({
-      nextItems: async () =>
-        [...vms.values()]
+      hasNext: true,
+      async nextItems() {
+        if (failList) throw new Error("E2B is down");
+        this.hasNext = false;
+        return [...vms.values()]
           .filter((vm) =>
             Object.entries(opts.query?.metadata ?? {}).every(([k, v]) => vm.metadata[k] === v),
           )
-          .map(info),
+          .map(info);
+      },
     })) as never,
     "Sandbox.kill": (async (sandboxId: string) => {
       const vm = vms.get(sandboxId);
@@ -272,7 +277,12 @@ function fakeE2B(handler: Handler = () => undefined) {
   const vmOf = (key: string) =>
     [...vms.values()].find((vm) => vm.metadata["mastra-sandbox-id"] === sandboxName(key));
 
-  return { vms, calls, createSandbox, options, holdUploads, api, vmOf };
+  /** Makes listing sandboxes fail, as on a network error. */
+  const failListing = () => {
+    failList = true;
+  };
+
+  return { vms, calls, createSandbox, options, holdUploads, api, vmOf, failListing };
 }
 type Fake = ReturnType<typeof fakeE2B>;
 
@@ -650,6 +660,22 @@ describe("E2BRuntimeProvider", () => {
     expect(fake.calls.killed).toEqual([first.sandboxId, other.sandboxId]);
     // Nothing there: fine.
     await provider(fake).destroy("never-made");
+  });
+
+  it("deletes every sandbox tagged with the site, and says so when it can't look", async () => {
+    const fake = e2b();
+    await provider(fake).open("site");
+    const first = fake.vmOf("site") as FakeVm;
+    // A second process made one too, with the same tag.
+    const twin = { ...first, sandboxId: "twin", files: new Map(), commands: [], timeouts: [] };
+    fake.vms.set(twin.sandboxId, twin);
+    await provider(fake).destroy("site");
+    expect(fake.calls.killed.sort()).toEqual([first.sandboxId, "twin"].sort());
+    expect(fake.vms.size).toBe(0);
+
+    await provider(fake).open("other");
+    fake.failListing();
+    await expect(provider(fake).destroy("other")).rejects.toThrow(/E2B is down/);
   });
 
   it("never recreates a deleted site's sandbox for a call that was under way", async () => {
