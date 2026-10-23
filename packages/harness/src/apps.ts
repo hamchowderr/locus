@@ -125,8 +125,9 @@ export function createAppTools(
             ? {
                 turnedOff: [...turnedOff],
                 turnedOffNote:
-                  "These apps are connected but turned off for the chat on the Apps page, so their " +
-                  "tools can't be used. An owner or admin can turn them back on there.",
+                  "These apps are connected but turned off: on the Connectors page by an owner or " +
+                  "admin, or for this chat in the composer's + menu. Their tools can't be used " +
+                  "until they're turned back on.",
               }
             : {}),
           ...(notConnected.length > 0
@@ -184,8 +185,8 @@ export function createAppTools(
         }
         if (accessOf((await apps.access?.()) ?? {}, toolkit) === "off") {
           throw new AppError(
-            `${toolkit} is turned off for the chat on the Apps page, so its tools can't run. ` +
-              "An owner or admin can turn it back on there.",
+            `${toolkit} is turned off, on the Connectors page or for this chat, so its tools ` +
+              "can't run until it's turned back on.",
           );
         }
         const result = await apps.execute(tool, args ?? {});

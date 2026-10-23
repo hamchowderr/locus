@@ -58,6 +58,8 @@ import {
 import { Hono } from "hono";
 import { asCaller, isKitRoute, type KitCaller, kitRoutes } from "./kit.ts";
 
+/** Where a turn carries the connectors the person turned off for this chat. */
+export { CONNECTORS_OFF_KEY } from "./mastra/lib/connectors-off.ts";
 /** The Mastra routes the chat needs. Anything else answers 404. */
 /** The largest body the chat kit's stream route takes (a message with its attachments). */
 export { STREAM_BODY_LIMIT as KIT_STREAM_BODY_LIMIT } from "./mastra/routes/stream-body.ts";
