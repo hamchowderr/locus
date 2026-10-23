@@ -415,6 +415,24 @@ export async function memberSignedUp(
 `,
 });
 
+/**
+ * lib/auth.ts as the preview runs it. A site made before the preview's login cookie worked
+ * inside Locus's editor still has its earlier, unchanged file until the agent next adds the
+ * database, so a member who signed in there was signed out again on the next page. The preview
+ * gets the current file instead; the draft keeps its own (that setting only applies to the
+ * preview), and a file the agent changed is left as it is.
+ */
+export function withPreviewAuth(files: SiteFile[]): SiteFile[] {
+  return files.map((file) => {
+    const current = typeof file.content === "string" && BEFORE_PREVIEW_COOKIES.get(file.content);
+    return file.path === "lib/auth.ts" && current ? { path: file.path, content: current } : file;
+  });
+}
+
+const BEFORE_PREVIEW_COOKIES = new Map(
+  [false, true].map((withMembers) => [authContent(withMembers, false), authContent(withMembers)]),
+);
+
 /** lib/auth.ts as sites got it in earlier versions: replaced when unchanged. */
 const EARLIER_AUTH = new Set([
   // before sign-ups went to HighLevel
