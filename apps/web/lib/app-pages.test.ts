@@ -25,6 +25,11 @@ describe("menuSections", () => {
     ]);
   });
 
+  it("shows an operator who isn't one of the agency's managers Operator, not the managers' pages", () => {
+    const agency = menuSections({ hasSubAccount: false, operator: true, manager: false })[0];
+    expect(agency?.pages.map((p) => p.name)).toEqual(["Sub-accounts", "Operator"]);
+  });
+
   it("shows Operator only to operators", () => {
     const agency = menuSections({ hasSubAccount: false, operator: true, manager: true })[0];
     expect(agency?.pages.map((p) => p.name)).toContain("Operator");
