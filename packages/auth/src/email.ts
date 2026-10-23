@@ -35,10 +35,14 @@ export function resendEmail(
   config: { apiKey: string; from: string },
   fetchImpl: typeof fetch = fetch,
 ): SendEmail {
-  return async ({ to, subject, text }) => {
+  return async ({ to, subject, text, idempotencyKey }) => {
     const res = await fetchImpl("https://api.resend.com/emails", {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      },
       body: JSON.stringify({ from: config.from, to: [to], subject, text }),
     });
     if (!res.ok) throw new Error(`Resend refused the email: ${res.status} ${await res.text()}`);
