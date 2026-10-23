@@ -8,6 +8,7 @@ import {
   NotOperator,
   OVERAGE_CENTS_PER_CREDIT,
   operatorsFromEnv,
+  rememberAgency,
   requireAgencyManager,
   resolveActiveClient,
   selectClient,
@@ -171,10 +172,35 @@ export async function createAgency(form: FormData) {
       body: { organizationId: agency.id },
       headers: requestHeaders,
     });
+    const current = await currentSession();
+    if (current) await rememberAgency(locus().db, current.user.id, agency.id);
   } catch (error) {
     back("/onboarding", error);
   }
   redirect("/");
+}
+
+/**
+ * Makes another of the user's agencies the active one. Better Auth refuses an agency the user
+ * isn't a member of; the session's sub-account and site belong to the old agency and are
+ * dropped (the session update hook), so the member picks a sub-account again.
+ */
+export async function switchAgency(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in");
+  const organizationId = text(form, "organizationId");
+  if (organizationId === current.session.activeOrganizationId) redirect("/");
+  try {
+    await locus().auth.api.setActiveOrganization({
+      body: { organizationId },
+      headers: await headers(),
+    });
+    await rememberAgency(locus().db, current.user.id, organizationId);
+  } catch (error) {
+    back("/clients", error);
+  }
+  revalidatePath("/", "layout");
+  redirect("/clients");
 }
 
 /**
@@ -225,6 +251,8 @@ export async function acceptInvite(form: FormData) {
       body: { organizationId },
       headers: requestHeaders,
     });
+    const current = await currentSession();
+    if (current) await rememberAgency(locus().db, current.user.id, organizationId);
   } catch (error) {
     back(`/invite/${encodeURIComponent(invitationId)}`, error);
   }

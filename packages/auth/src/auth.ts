@@ -70,15 +70,36 @@ export function createAuth(config: LocusAuthConfig) {
         activeSiteId: { type: "string", required: false, input: false },
       },
     },
-    // A new session starts in the agency the user joined first, so signing in (again, or after
-    // a password reset) never sends an existing member to create their agency a second time.
-    // Someone with no agency yet still gets onboarding.
+    user: {
+      additionalFields: {
+        // The agency the user last made active (`rememberAgency`), so signing in reopens it.
+        // Every use re-checks the user is still a member there.
+        lastActiveOrganizationId: { type: "string", required: false, input: false },
+      },
+    },
+    // A new session starts in the agency the user last used, or else the one they joined first,
+    // so signing in (again, or after a password reset) never sends an existing member to create
+    // their agency a second time. Someone with no agency yet still gets onboarding.
     databaseHooks: {
       session: {
         create: {
           before: async (session) => {
             if (session.activeOrganizationId) return;
             const context = await auth.$context;
+            const owner = (await context.internalAdapter.findUserById(session.userId)) as {
+              lastActiveOrganizationId?: string | null;
+            } | null;
+            const last = owner?.lastActiveOrganizationId;
+            if (last) {
+              const stillMember = await context.adapter.findOne({
+                model: "member",
+                where: [
+                  { field: "userId", value: session.userId },
+                  { field: "organizationId", value: last },
+                ],
+              });
+              if (stillMember) return { data: { ...session, activeOrganizationId: last } };
+            }
             const [first] = (await context.adapter.findMany({
               model: "member",
               where: [{ field: "userId", value: session.userId }],
@@ -87,6 +108,14 @@ export function createAuth(config: LocusAuthConfig) {
             })) as { organizationId: string }[];
             if (!first) return;
             return { data: { ...session, activeOrganizationId: first.organizationId } };
+          },
+        },
+        update: {
+          // The client and site a session works on belong to its agency, so changing agency
+          // (switching, a new agency, an accepted invitation, being removed) drops both.
+          before: async (data) => {
+            if (!("activeOrganizationId" in data)) return;
+            return { data: { ...data, activeLocationId: null, activeSiteId: null } };
           },
         },
       },
