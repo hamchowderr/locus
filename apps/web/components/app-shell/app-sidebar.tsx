@@ -46,28 +46,37 @@ const ICONS: Record<AppPage["icon"], typeof MessagesSquare> = {
 };
 
 export type SubAccountOption = { id: string; name: string };
+export type AgencyOption = { id: string; name: string };
 
 /**
- * Locus's menu: the sub-account switcher, the sub-account's pages, the agency's pages, and the
- * account menu at the bottom (Settings, Billing, Sign out), as in the Claude app. The server actions come from the layout, so this file holds no access
- * checks of its own; switching goes through `chooseClient`, which checks access first.
+ * Locus's menu: the sub-account and agency switcher, the sub-account's pages, the agency's
+ * pages, and the account menu at the bottom (Settings, Billing, Sign out), as in the Claude
+ * app. The server actions come from the layout, so this file holds no access checks of its
+ * own; switching goes through `chooseClient` and `switchAgency`, which check access first.
+ * The agency list shows only for members of more than one.
  */
 export function AppSidebar({
   subAccount,
   subAccounts,
+  agency,
+  agencies,
   operator,
   manager,
   email,
   chooseClient,
+  switchAgency,
   signOut,
 }: {
   subAccount: SubAccountOption | null;
   subAccounts: readonly SubAccountOption[];
+  agency: AgencyOption | null;
+  agencies: readonly AgencyOption[];
   operator: boolean;
   /** One of the agency's owners or admins: the agency's pages and Billing are theirs. */
   manager: boolean;
   email: string;
   chooseClient: (form: FormData) => Promise<void>;
+  switchAgency: (form: FormData) => Promise<void>;
   signOut: () => Promise<void>;
 }) {
   const pathname = usePathname();
@@ -88,7 +97,9 @@ export function AppSidebar({
                     <span className="truncate font-medium">
                       {subAccount?.name ?? "Choose a sub-account"}
                     </span>
-                    <span className="truncate text-xs text-sidebar-foreground/70">Locus</span>
+                    <span className="truncate text-xs text-sidebar-foreground/70">
+                      {agency?.name ?? "Locus"}
+                    </span>
                   </div>
                   <ChevronsUpDown className="ml-auto size-4" />
                 </SidebarMenuButton>
@@ -116,6 +127,25 @@ export function AppSidebar({
                 <DropdownMenuItem asChild>
                   <Link href="/clients">All sub-accounts</Link>
                 </DropdownMenuItem>
+                {agencies.length > 1 && (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Agencies</DropdownMenuLabel>
+                    {agencies.map((option) => (
+                      <form key={option.id} action={switchAgency}>
+                        <input type="hidden" name="organizationId" value={option.id} />
+                        <DropdownMenuItem asChild>
+                          <button type="submit" className="w-full">
+                            <span className="truncate">{option.name}</span>
+                            {option.id === agency?.id && (
+                              <span className="ml-auto text-xs text-muted-foreground">Current</span>
+                            )}
+                          </button>
+                        </DropdownMenuItem>
+                      </form>
+                    ))}
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarMenuItem>
