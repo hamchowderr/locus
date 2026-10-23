@@ -52,6 +52,14 @@ describe("emailFromEnv", () => {
       subject: "Hi",
       text: message.text,
     });
+    expect(new Headers(init.headers).has("idempotency-key")).toBe(false);
+
+    // A message sent "once" carries its key, so Resend drops a repeat.
+    await send({ ...message, idempotencyKey: "app-expired/msg_1/a@agency.test" });
+    const [, keyed] = fetchImpl.mock.calls[1] as unknown as [string, RequestInit];
+    expect(new Headers(keyed.headers).get("idempotency-key")).toBe(
+      "app-expired/msg_1/a@agency.test",
+    );
 
     fetchImpl.mockResolvedValueOnce(new Response("bad sender", { status: 422 }));
     await expect(send(message)).rejects.toThrow(/422 bad sender/);

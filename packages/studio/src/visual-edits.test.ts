@@ -571,6 +571,7 @@ describe("previewFiles", () => {
 
     // Both forms of a site's config get the hosts added to their own.
     const dir = await mkdtemp(join(tmpdir(), "locus-next-config-"));
+    const origins = process.env.BETTER_AUTH_TRUSTED_ORIGINS;
     try {
       const site = (body: string) => [
         { path: "next.config.ts", content: `export default ${body};\n` },
@@ -586,8 +587,13 @@ describe("previewFiles", () => {
         const loaded = (await import(join(sub, "next.config.ts"))).default;
         const config = typeof loaded === "function" ? await loaded("phase", {}) : loaded;
         expect(config).toEqual({ poweredByHeader: false, allowedDevOrigins: expected });
+        // The site's logins trust a sign-up sent from the preview's address.
+        expect(process.env.BETTER_AUTH_TRUSTED_ORIGINS).toBe("https://*.p.test");
+        delete process.env.BETTER_AUTH_TRUSTED_ORIGINS;
       }
     } finally {
+      if (origins === undefined) delete process.env.BETTER_AUTH_TRUSTED_ORIGINS;
+      else process.env.BETTER_AUTH_TRUSTED_ORIGINS = origins;
       await rm(dir, { recursive: true, force: true });
     }
   });

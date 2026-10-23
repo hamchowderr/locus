@@ -16,10 +16,20 @@ import {
 } from "@composio/core";
 import { type AppConnector, AppServiceError, type AppTool } from "./apps.ts";
 
+const CLIENT_USER_PREFIX = "locus-client:";
+
 /** The Composio user a Locus client's connections belong to. */
 export function appUserId(clientId: string): string {
   if (!clientId) throw new Error("connected apps need a client");
-  return `locus-client:${clientId}`;
+  return `${CLIENT_USER_PREFIX}${clientId}`;
+}
+
+/** The Locus client a Composio user stands for (`appUserId` undone); undefined for any other. */
+export function clientOfAppUser(userId: string): string | undefined {
+  const clientId = userId.startsWith(CLIENT_USER_PREFIX)
+    ? userId.slice(CLIENT_USER_PREFIX.length)
+    : "";
+  return clientId === "" ? undefined : clientId;
 }
 
 function composioClient(apiKey: string, baseURL: string | undefined) {

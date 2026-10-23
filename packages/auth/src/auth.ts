@@ -12,7 +12,13 @@ import { PLANS } from "./plans.ts";
 import { ATTEMPT_LIMITS, checkAttemptLimits } from "./rate-limit.ts";
 
 /** Sends one email. `EMAIL_MODE=console` logs it; `resend` sends it. */
-export type SendEmail = (message: { to: string; subject: string; text: string }) => Promise<void>;
+export type SendEmail = (message: {
+  to: string;
+  subject: string;
+  text: string;
+  /** Sent once however often it's asked for, within a day (Resend's `Idempotency-Key`). */
+  idempotencyKey?: string;
+}) => Promise<void>;
 
 export interface LocusAuthConfig {
   /** The control database. */
