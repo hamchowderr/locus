@@ -20,7 +20,7 @@ The interface (`SiteRuntime`, `RuntimeProvider`) is in `src/runtime.ts`.
 
 Generated site code and its dependencies are untrusted. **No credential enters the sandbox**:
 the Vercel token is used by the Locus backend only, to create and drive the sandbox through
-Vercel's API (on Daytona, the same holds for `DAYTONA_API_KEY`). Commands get a fixed environment (`NEXT_TELEMETRY_DISABLED`, plus `CI` for
+Vercel's API (on Daytona and E2B, the same holds for `DAYTONA_API_KEY` and `E2B_API_KEY`). Commands get a fixed environment (`NEXT_TELEMETRY_DISABLED`, plus `CI` for
 installs) and nothing from the backend's own. A test asserts the token appears in no command,
 environment or file.
 
@@ -68,6 +68,15 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   truth); Mastra's workspace tools are never handed to an agent.
   Tests run the real `DaytonaSandbox` on a fake Daytona client (`createSandbox`), and the install
   and preview scripts for real under `sh` (`installScript`, `previewLaunchScript`).
+- **`E2BRuntimeProvider`** (`@mastra/e2b`, Mastra's workspace sandbox on E2B): the same
+  contract as Daytona's (the same seeding marker, install and preview scripts, locks, size check
+  and delete guard) on one E2B sandbox per site, found again by its `mastra-sandbox-id` metadata
+  (`locus-site-<hash of key>`). It starts from a Locus template (`locus-site-v1`, 2 CPUs, 4 GiB,
+  Node and pnpm; built once by E2B on first use, or `E2B_TEMPLATE` names a prepared one). An
+  idle sandbox pauses with its files after `idleMinutes` (default 15; each call renews the
+  timer) and resumes on the next call or when its preview is opened (`autoResume`). The preview
+  URL is E2B's public host for the port (`<port>-<sandbox id>.e2b.app`), with no token. Tests run the real `E2BSandbox` against
+  a fake E2B API.
 - **`FakeRuntimeProvider`** (`@locus/sandbox/fake`, also exported from the index): in-memory
   files, a scriptable `(cmd, args, files) => Partial<CommandResult>` handler (exit 0 by default),
   every call in `runtime.calls`, preview URL `https://preview.fake/<key>`, `setPreviewLogs()`.
@@ -80,7 +89,7 @@ output and the preview log are cut to a bounded tail (64k characters by default)
 ## Configuration
 
 `sandboxProviderFromEnv()` picks the service with `LOCUS_SANDBOX_PROVIDER`: `vercel` (the
-default, so nothing changes until it is set) or `daytona`. `LOCUS_SANDBOX=off` turns either off;
+default, so nothing changes until it is set), `daytona` or `e2b`. `LOCUS_SANDBOX=off` turns either off;
 any other value is refused by name. `missingSandboxSettings()` names what the chosen one still
 needs.
 
@@ -91,6 +100,11 @@ at least 2 CPUs and 4 GiB), and `LOCUS_SANDBOX_EGRESS`, a
 comma-separated domain allowlist for sandboxes created after it is set (unset: open egress, as on
 Vercel). Daytona needs no OIDC token, so the agent server opens its sandboxes itself instead of
 going through the web app's sandbox route.
+
+**E2B** (`e2bFromEnv()`) needs `E2B_API_KEY` (Otaku's; read server-side only, never given to a
+sandbox). Optional: `E2B_DOMAIN` and `E2B_TEMPLATE` (default `locus-site-v1`). Like Daytona,
+the agent server opens E2B sandboxes itself. E2B's free plan allows 1 hour of continuous
+runtime per sandbox (pausing resets it) and 20 at once.
 
 **Vercel Sandbox**: `sandboxFromEnv()` picks credentials in this order:
 
