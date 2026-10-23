@@ -34,8 +34,18 @@ describe("Composio webhooks", () => {
   test("an expired sign-in names the Locus client and the app", async () => {
     expect(await read(...delivery(expired("locus-client:c1")))).toEqual({
       type: "expired",
+      deliveryId: "msg_1",
       clientId: "c1",
+      account: "ca_1",
       toolkit: "slack",
+    });
+  });
+
+  test("a signed delivery the SDK can't read, or an expiry missing its user, is unreadable", async () => {
+    expect(await read(...delivery({ foo: 1 }))).toMatchObject({ type: "unreadable" });
+    const { user_id: _, ...data } = expired("locus-client:c1").data;
+    expect(await read(...delivery({ ...expired("x"), data }))).toMatchObject({
+      type: "unreadable",
     });
   });
 

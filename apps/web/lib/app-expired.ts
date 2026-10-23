@@ -16,14 +16,23 @@ export interface ExpiredAppDeps {
   baseUrl: string;
   /** The app's name as the Connectors page shows it; its slug without one. */
   appName?: (toolkit: string) => Promise<string | undefined>;
+  /** Whether the client has the app connected again (a late or repeated delivery). */
+  reconnected?: (clientId: string, toolkit: string) => Promise<boolean>;
 }
 
-/** Whom it told; `unknown client` for a client this deployment doesn't have. */
-export type ExpiredAppOutcome = { told: number } | "unknown client";
+/**
+ * Whom it told; `unknown client` for a client this deployment doesn't have, `reconnected` when
+ * someone has signed in again since.
+ */
+export type ExpiredAppOutcome = { told: number } | "unknown client" | "reconnected";
 
+/**
+ * Composio delivers at least once, so each email carries a key made of the delivery's id and
+ * the address: a retry, after one email of several failed, sends only the ones still owed.
+ */
 export async function tellExpiredApp(
   deps: ExpiredAppDeps,
-  event: { clientId: string; toolkit: string },
+  event: { deliveryId: string; clientId: string; toolkit: string },
 ): Promise<ExpiredAppOutcome> {
   const [client] = await deps.db
     .select({
@@ -35,6 +44,7 @@ export async function tellExpiredApp(
     .innerJoin(organization, eq(organization.id, location.organizationId))
     .where(and(eq(location.id, event.clientId), eq(location.status, "active")));
   if (!client) return "unknown client";
+  if (await deps.reconnected?.(event.clientId, event.toolkit)) return "reconnected";
   const managers = await deps.db
     .select({ email: user.email, role: member.role })
     .from(member)
@@ -55,6 +65,22 @@ export async function tellExpiredApp(
     `To fix it, open Locus, pick ${client.name}, go to Connectors and press Reconnect on ${app}:`,
     `${deps.baseUrl}/apps`,
   ].join("\n");
-  for (const address of to) await deps.sendEmail({ to: address, subject, text });
+  const sent = await Promise.allSettled(
+    to.map((address) =>
+      deps.sendEmail({
+        to: address,
+        subject,
+        text,
+        idempotencyKey: `app-expired/${event.deliveryId}/${address}`,
+      }),
+    ),
+  );
+  const failed = sent.filter((r) => r.status === "rejected");
+  // Thrown, the delivery is answered with an error and Composio sends it again.
+  if (failed.length > 0) {
+    throw new Error(`${failed.length} of ${to.length} expired-app emails failed`, {
+      cause: failed[0]?.reason,
+    });
+  }
   return { told: to.length };
 }
