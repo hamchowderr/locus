@@ -49,7 +49,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           signOut={signOut}
         />
         <SidebarInset className="min-h-0 overflow-hidden">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+          <header className="flex h-12 shrink-0 items-center gap-2 px-3">
             <SidebarTrigger />
             <span className="truncate text-sm text-muted-foreground">
               {client ? client.location.name : "No sub-account chosen"}

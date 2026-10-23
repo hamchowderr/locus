@@ -71,7 +71,7 @@ export function AppSidebar({
   const sections = menuSections({ hasSubAccount: Boolean(subAccount), operator });
 
   return (
-    <Sidebar collapsible="icon">
+    <Sidebar variant="inset" collapsible="icon">
       <SidebarHeader>
         <SidebarMenu>
           <SidebarMenuItem>
