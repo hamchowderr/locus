@@ -477,7 +477,9 @@ export function createComposioConnections({
         ...(lapsed.has(app.toolkit) ? { expired: true } : {}),
       }));
       const offeredSlugs = new Set(apps.map((app) => app.toolkit));
-      for (const toolkit of active) {
+      // Any working account, whichever sign-in it came through: the chat can't use any of them.
+      const working = new Set(held.filter((a) => a.status === "ACTIVE").map((a) => a.toolkit));
+      for (const toolkit of working) {
         if (toolkit && !offeredSlugs.has(toolkit)) {
           listed.push({
             toolkit,
