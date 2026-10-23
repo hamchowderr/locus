@@ -2,8 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { chooseSiteForChat } from "@/app/(app)/sites/[siteId]/visual-edits-actions";
+import { Composer, type ComposerSubmit } from "@/components/chat/composer";
 import type { ToolViews } from "@/components/chat/tool-steps";
-import { ChatView, Composer } from "@/components/chat-project/project-chat";
+import { UsageContext } from "@/components/chat/turn-extras";
+import { ChatView } from "@/components/chat-project/chat-view";
 import { useAgentControllerChat } from "@/lib/agent-controller/use-agent-controller-chat";
 import type { ThreadItem } from "@/lib/agent-controller/use-threads";
 import { builderStep, callsChangedFiles, savedVersion } from "@/lib/builder-steps";
@@ -141,7 +143,7 @@ export function useSiteChat({
 
   const { sendMessage } = controller;
   const send = useCallback(
-    async (text: string): Promise<boolean> => {
+    async (text: string, files?: ComposerSubmit["files"]): Promise<boolean> => {
       if (!mode || !ready || working) return false;
       setProblem(null);
       // The builder works on the member's chosen site; this page's site is the one meant.
@@ -150,7 +152,18 @@ export function useSiteChat({
         setProblem(chosen.problem);
         return false;
       }
-      return sendMessage(text, { mode });
+      return sendMessage(text, {
+        mode,
+        ...(files?.length
+          ? {
+              files: files.map((f) => ({
+                url: f.url,
+                mediaType: f.mediaType,
+                ...(f.filename ? { filename: f.filename } : {}),
+              })),
+            }
+          : {}),
+      });
     },
     [mode, ready, working, siteId, sendMessage],
   );
@@ -238,13 +251,21 @@ export function SiteChat({
       {refusal ? (
         <p className="border-t px-3 py-3 text-muted-foreground text-sm">{refusal}</p>
       ) : (
-        <Composer
-          placeholder="Describe a change to this site…"
-          busy={chat.busy}
-          onSend={(text) => chat.send(text)}
-          // Only a turn streaming here can be stopped, not the page still opening the chat.
-          onStop={chat.controller.status === "streaming" ? chat.controller.stop : undefined}
-        />
+        <div className="px-3 pb-3">
+          <Composer
+            className="m-0"
+            placeholder="Describe a change to this site…"
+            // The model is the server's own, and the builder does not search the web.
+            models={false}
+            webSearch={false}
+            // While the page opens the chat, or a thread works on the site, nothing sends.
+            disabled={chat.busy && chat.controller.status !== "streaming"}
+            footerExtra={<UsageContext usage={chat.controller.transcript.usage} />}
+            status={chat.controller.status === "streaming" ? "streaming" : "ready"}
+            onSend={(submit) => chat.send(submit.text, submit.files)}
+            onStop={chat.controller.stop}
+          />
+        </div>
       )}
     </aside>
   );
