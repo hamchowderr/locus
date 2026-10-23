@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { parse } from "@babel/parser";
 import { PREVIEW_DEV_HOSTS, withPreviewDevHosts } from "./preview-config.ts";
+import { withPreviewAuth } from "./templates/backend.ts";
 import { annotateSource, isAnnotatable } from "./visual-edits.ts";
 import { SOURCE_ATTR, VISUAL_EDITS_MESSAGE } from "./visual-edits-protocol.ts";
 import type { SiteFile } from "./workspace.ts";
@@ -66,7 +67,7 @@ export function previewFiles(
       content: visualEditsScript(options.editorOrigins ?? [], draftFingerprint(files)),
     });
   }
-  return withPreviewDevHosts(out, options.devHosts ?? PREVIEW_DEV_HOSTS);
+  return withPreviewDevHosts(withPreviewAuth(out), options.devHosts ?? PREVIEW_DEV_HOSTS);
 }
 
 /** The layout with `<script src="/__locus/visual-edits.js" async />` at the end of `<body>`. */
