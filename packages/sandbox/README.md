@@ -42,8 +42,11 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   of `package.json` and lockfiles differs from the last successful install.
 - **`DaytonaRuntimeProvider`** (`@mastra/daytona`, Mastra's workspace sandbox on Daytona): the
   same contract on a named, private Daytona sandbox per site (`locus-site-<hash of key>`,
-  `public: false`), at least 2 CPUs and 4 GB of memory as on Vercel (`resources`; Daytona's
-  default sandbox is too small to install a Next site, so a smaller one is grown on start). Daytona stops an idle sandbox (`autoStopMinutes`, default 30) and keeps its
+  `public: false`), made from Daytona's `daytona-medium` snapshot (2 CPUs, 4 GiB, 8 GiB disk, as
+  on Vercel; Daytona's default `daytona-small` is too small to install a Next site). A sandbox
+  smaller than `resources` (2 and 4) fails with a plain error instead of a killed install;
+  deleting it makes it again from the snapshot, without the preview's `.data` (its database and
+  members' uploads). Daytona stops an idle sandbox (`autoStopMinutes`, default 30) and keeps its
   files; Mastra starts it again on the next call, including one that stopped under a running
   call (`retryOnDead`). Seeding (`onCreate`, the same `.locus/seeded` marker) runs in Mastra's
   `onStart` hook, so it also covers a sandbox recreated mid-call, and every other call waits for
@@ -83,7 +86,8 @@ needs.
 
 **Daytona** (`daytonaFromEnv()`) needs `DAYTONA_API_KEY` (Otaku's, in Infisical `/locus`; read
 server-side only and given to Daytona's client, never to a sandbox). Optional: `DAYTONA_API_URL`,
-`DAYTONA_TARGET` (region), `DAYTONA_SNAPSHOT` (a prepared image), and `LOCUS_SANDBOX_EGRESS`, a
+`DAYTONA_TARGET` (region), `DAYTONA_SNAPSHOT` (default `daytona-medium`; a prepared snapshot of
+at least 2 CPUs and 4 GiB), and `LOCUS_SANDBOX_EGRESS`, a
 comma-separated domain allowlist for sandboxes created after it is set (unset: open egress, as on
 Vercel). Daytona needs no OIDC token, so the agent server opens its sandboxes itself instead of
 going through the web app's sandbox route.
