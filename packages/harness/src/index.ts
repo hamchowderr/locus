@@ -35,6 +35,11 @@ export {
   createComposioConnector,
 } from "./composio.ts";
 export {
+  type ComposioWebhookEvent,
+  ComposioWebhookRejected,
+  readComposioWebhook,
+} from "./composio-webhook.ts";
+export {
   ASK_TOOLS,
   CONTROLLER_ID,
   controllerStorage,
