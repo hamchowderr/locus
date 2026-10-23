@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DaytonaRuntimeProvider } from "./daytona.ts";
+import { E2BRuntimeProvider } from "./e2b.ts";
 import { missingSandboxSettings, sandboxProviderFromEnv, sandboxProviderName } from "./env.ts";
 import { VercelRuntimeProvider } from "./vercel.ts";
 
@@ -29,6 +30,12 @@ describe("sandboxProviderFromEnv", () => {
     );
   });
 
+  it("uses E2B when chosen, and only with its key", () => {
+    const env = { ...VERCEL, VERCEL: "1", LOCUS_SANDBOX_PROVIDER: "e2b", DAYTONA_API_KEY: "k" };
+    expect(sandboxProviderFromEnv(env)).toBeNull();
+    expect(sandboxProviderFromEnv({ ...env, E2B_API_KEY: "k" })).toBeInstanceOf(E2BRuntimeProvider);
+  });
+
   it("is off with LOCUS_SANDBOX=off, whatever the provider", () => {
     expect(sandboxProviderFromEnv({ ...VERCEL, LOCUS_SANDBOX: "off" })).toBeNull();
     expect(
@@ -42,7 +49,7 @@ describe("sandboxProviderFromEnv", () => {
 
   it("refuses an unknown provider without echoing it", () => {
     expect(() => sandboxProviderFromEnv({ LOCUS_SANDBOX_PROVIDER: "s3cr3t" })).toThrow(
-      /^LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona$/,
+      /^LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona, e2b$/,
     );
   });
 });
@@ -62,5 +69,9 @@ describe("missingSandboxSettings", () => {
     expect(
       missingSandboxSettings({ LOCUS_SANDBOX_PROVIDER: "daytona", DAYTONA_API_KEY: "k" }),
     ).toEqual([]);
+    expect(missingSandboxSettings({ LOCUS_SANDBOX_PROVIDER: "e2b", VERCEL: "1" })).toEqual([
+      "E2B_API_KEY",
+    ]);
+    expect(missingSandboxSettings({ LOCUS_SANDBOX_PROVIDER: "e2b", E2B_API_KEY: "k" })).toEqual([]);
   });
 });

@@ -29,7 +29,7 @@ import { imagesFromEnv, SITE_BUILDER_AGENT } from "@locus/builder";
 import {
   activeSiteIdForSession,
   createSiteBuilder,
-  daytonaSandboxes,
+  directSandboxes,
   openClientDb,
   remotePublish,
   remoteSiteRuntimes,
@@ -124,7 +124,7 @@ export interface HostDeps {
   /**
    * The site builder's mode and tools, added to every client's controller. Its sandboxes are
    * driven through the web app (`remoteSiteRuntimes`), which can reach Vercel Sandbox, or, with
-   * `LOCUS_SANDBOX_PROVIDER=daytona`, opened here on Daytona (`siteSandboxes`). Its saved
+   * `LOCUS_SANDBOX_PROVIDER=daytona` or `e2b`, opened here (`siteSandboxes`). Its saved
    * versions are published through the web app (`remotePublish`). Null leaves the builder out.
    */
   siteBuilder?: Omit<SiteBuilderDeps, "db"> | null;
@@ -149,18 +149,18 @@ const NO_LOCAL_SANDBOXES: SiteBuilderDeps["runtimes"] = () => ({
 
 /**
  * Where the site builder's sandboxes come from. Vercel Sandbox (the default) only answers the web
- * app's own OIDC token, so the agent drives it through the web app. Daytona takes Otaku's API
- * key, which the agent then holds itself (server-side, never passed into a sandbox), and opens
- * sandboxes directly, after the same staff check: the tools only open a runtime for an
+ * app's own OIDC token, so the agent drives it through the web app. Daytona and E2B take Otaku's
+ * API key, which the agent then holds itself (server-side, never passed into a sandbox), and
+ * opens sandboxes directly, after the same staff check: the tools only open a runtime for an
  * `AuthorizedClient`.
  */
 export function siteSandboxes(
   env: Env,
   webApp: Parameters<typeof remoteSiteRuntimes>[0],
-  /** The local provider when on Daytona; tests pass a fake. */
+  /** The local provider when on Daytona or E2B; tests pass a fake. */
   local: () => ReturnType<typeof runtimesFromEnv> = () => runtimesFromEnv(env),
 ): Pick<SiteBuilderDeps, "runtimes" | "openRuntime"> {
-  if (daytonaSandboxes(env)) {
+  if (directSandboxes(env)) {
     let runtimes: ReturnType<typeof runtimesFromEnv> | undefined;
     return {
       runtimes: () => {

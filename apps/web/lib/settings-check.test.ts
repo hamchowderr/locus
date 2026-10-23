@@ -57,7 +57,7 @@ describe("settingsProblems", () => {
     expect(settingsProblems(env)).toEqual(["site builder: DAYTONA_API_KEY not set"]);
     expect(settingsProblems({ ...env, DAYTONA_API_KEY: "k" })).toEqual([]);
     expect(settingsProblems({ ...env, LOCUS_SANDBOX_PROVIDER: "elsewhere" })).toEqual([
-      "site builder: LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona",
+      "site builder: LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona, e2b",
     ]);
   });
 });
