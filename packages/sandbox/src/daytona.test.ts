@@ -301,6 +301,12 @@ describe("DaytonaRuntimeProvider", () => {
     expect(fake.calls.resized).toEqual([{ cpu: 2, memory: 4 }]);
     expect(vmOf(fake, "site")).toMatchObject({ cpu: 2, memory: 4 });
 
+    // A sandbox made before sandboxes were grown is grown when it is next started.
+    const vm = vmOf(fake, "site");
+    if (vm) Object.assign(vm, { cpu: 1, memory: 8, state: SandboxState.STOPPED });
+    await (await provider(fake).open("site")).run("ls");
+    expect(fake.calls.resized).toEqual([{ cpu: 2, memory: 4 }, { cpu: 2 }]);
+
     // Big enough already: left as it is.
     const small = fakeDaytona();
     await (await provider(small, { resources: { cpu: 1, memory: 1 } }).open("site")).run("ls");
@@ -321,6 +327,25 @@ describe("DaytonaRuntimeProvider", () => {
       "Daytona couldn't give the sandbox 2 CPUs and 4 GB of memory: Total memory limit exceeded",
     );
     expect(callerCommands(vmOf(fake, "site"))).toEqual([]);
+  });
+
+  it("keeps a seeded site working at its size when Daytona refuses to grow it", async () => {
+    const fake = fakeDaytona();
+    await (await provider(fake).open("site")).run("ls");
+    const vm = vmOf(fake, "site");
+    if (!vm) throw new Error("no sandbox");
+    Object.assign(vm, { cpu: 1, memory: 1, state: SandboxState.STOPPED });
+    vm.resize = async () => {
+      throw new Error("Total memory limit exceeded");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await (await provider(fake).open("site")).run("ls");
+      expect(result.exitCode).toBe(0);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Total memory limit exceeded"));
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("gives commands only Locus's fixed environment", async () => {
