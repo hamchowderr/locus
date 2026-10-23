@@ -508,7 +508,9 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "put back to match on the next sync, so change source with the files tool. Never " +
       "install or remove packages or components here: use add_dependency. The sandbox's copy " +
       "of pages carries data-locus-src attributes for the preview's visual editing; they are " +
-      "not in the site's files, so never write them into source.",
+      "not in the site's files, so never write them into source. Its next.config.ts is " +
+      "Locus's own and loads the site's next.config.ts from next.config.site.ts: errors " +
+      "there are in the site's next.config.ts, so fix that file.",
     requireApproval: noApproval,
     inputSchema: z.object({
       command: z.string().min(1).describe("The program, e.g. npm"),

@@ -28,9 +28,11 @@ import { imagesFromEnv, SITE_BUILDER_AGENT } from "@locus/builder";
 import {
   activeSiteIdForSession,
   createSiteBuilder,
+  daytonaSandboxes,
   openClientDb,
   remotePublish,
   remoteSiteRuntimes,
+  runtimesFromEnv,
   SITE_ID_KEY,
   type SiteBuilderDeps,
 } from "@locus/builder/host";
@@ -120,8 +122,9 @@ export interface HostDeps {
   logError?: (message: string, error?: unknown) => void;
   /**
    * The site builder's mode and tools, added to every client's controller. Its sandboxes are
-   * driven through the web app (`remoteSiteRuntimes`), which can reach Vercel Sandbox, and its
-   * saved versions are published through it too (`remotePublish`). Null leaves the builder out.
+   * driven through the web app (`remoteSiteRuntimes`), which can reach Vercel Sandbox, or, with
+   * `LOCUS_SANDBOX_PROVIDER=daytona`, opened here on Daytona (`siteSandboxes`). Its saved
+   * versions are published through the web app (`remotePublish`). Null leaves the builder out.
    */
   siteBuilder?: Omit<SiteBuilderDeps, "db"> | null;
   /**
@@ -136,12 +139,37 @@ export interface HostDeps {
   siteUploads?: SiteUploadDeps | null;
 }
 
-/** The agent holds no sandbox credentials: every sandbox goes through the web app. */
+/** On Vercel Sandbox the agent holds no sandbox credentials: every sandbox goes through the web app. */
 const NO_LOCAL_SANDBOXES: SiteBuilderDeps["runtimes"] = () => ({
   open: async () => {
     throw new Error("the agent server opens sandboxes only through the web app");
   },
 });
+
+/**
+ * Where the site builder's sandboxes come from. Vercel Sandbox (the default) only answers the web
+ * app's own OIDC token, so the agent drives it through the web app. Daytona takes Otaku's API
+ * key, which the agent then holds itself (server-side, never passed into a sandbox), and opens
+ * sandboxes directly, after the same staff check: the tools only open a runtime for an
+ * `AuthorizedClient`.
+ */
+export function siteSandboxes(
+  env: Env,
+  webApp: Parameters<typeof remoteSiteRuntimes>[0],
+  /** The local provider when on Daytona; tests pass a fake. */
+  local: () => ReturnType<typeof runtimesFromEnv> = () => runtimesFromEnv(env),
+): Pick<SiteBuilderDeps, "runtimes" | "openRuntime"> {
+  if (daytonaSandboxes(env)) {
+    let runtimes: ReturnType<typeof runtimesFromEnv> | undefined;
+    return {
+      runtimes: () => {
+        runtimes ??= local();
+        return runtimes;
+      },
+    };
+  }
+  return { runtimes: NO_LOCAL_SANDBOXES, openRuntime: remoteSiteRuntimes(webApp) };
+}
 
 export function hostDepsFromEnv(env: Env = process.env): HostDeps {
   const config = configFromEnv(env);
@@ -195,8 +223,7 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
     origin: new URL(config.authUrl).origin,
     siteBuilder: {
       openClientDb: (client) => openClientDb(provisioner, client),
-      runtimes: NO_LOCAL_SANDBOXES,
-      openRuntime: remoteSiteRuntimes(webApp),
+      ...siteSandboxes(env, webApp),
       images: imagesFromEnv(env),
       // Publishing needs the GitHub App, which only the web app holds: versions saved here
       // are published through it.
@@ -427,8 +454,19 @@ export function createHost({
               },
             }
           : {}),
-        tools: { ...builder?.tools, [workThreads.tool.id]: workThreads.tool },
-        ownTextTools: [...(builder?.ownTextTools ?? []), workThreads.tool.id],
+        tools: {
+          ...builder?.tools,
+          [workThreads.tool.id]: workThreads.tool,
+          ...workThreads.steering,
+        },
+        ownTextTools: [
+          ...(builder?.ownTextTools ?? []),
+          workThreads.tool.id,
+          workThreads.steering.message_thread.id,
+          workThreads.steering.suggest_threads.id,
+        ],
+        // A thread's words can quote what it read, so reading them taints the run.
+        threadTextTools: workThreads.threadTextTools,
         // The chat page names the supervisor on every turn, and the server saves it on the chat;
         // work threads keep their agent's mode whatever a turn names.
         modes: [workThreads.supervisor, ...(builder?.modes ?? [])],

@@ -39,14 +39,26 @@ beforeAll(async () => {
     const path = url.pathname;
     const body = await read(req);
     seen.push({ method: req.method ?? "", path, query: url.searchParams, body });
-    const route = routes[`${req.method} ${path}`];
+    const revoke = /^\/api\/v3\.1\/connected_accounts\/([^/]+)\/revoke$/.exec(path);
+    // Revoking succeeds unless a test says otherwise, as it does at Composio.
+    const route =
+      routes[`${req.method} ${path}`] ??
+      (req.method === "POST" && revoke
+        ? () => ({
+            revoked_tokens: ["access_token"],
+            connected_account: { id: revoke[1], status: "REVOKED" },
+          })
+        : undefined);
     res.setHeader("content-type", "application/json");
     if (!route) {
       res.statusCode = 404;
       res.end(JSON.stringify({ error: { message: `no route ${req.method} ${path}` } }));
       return;
     }
-    res.end(JSON.stringify(route(body, url.searchParams)));
+    const answer = route(body, url.searchParams) as { status?: number } | undefined;
+    // A route answers with an error status by returning `{ status, error }`.
+    if (typeof answer?.status === "number") res.statusCode = answer.status;
+    res.end(JSON.stringify(answer));
   });
   await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
   baseURL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -286,6 +298,8 @@ describe("Composio connector", () => {
       manage_connections: { enable: false },
       // Never a Composio-owned account, which Composio bills for.
       instant: false,
+      // Composio's code sandbox stays off (sent under its old name).
+      workbench: { enable: false },
     });
     expect(seen.filter((s) => s.path.endsWith("/execute")).map((s) => s.body)).toEqual([
       expect.objectContaining({ tool_slug: "GMAIL_FETCH_EMAILS", arguments: { max_results: 1 } }),
@@ -509,6 +523,14 @@ describe("Composio connections", () => {
   });
   const deleted = () =>
     seen.filter((s) => s.method === "DELETE").map((s) => s.path.slice(ACCOUNTS.length + 1));
+  /** Every account change in order, as `revoke ca_x` and `delete ca_x`. */
+  const changes = () =>
+    seen.flatMap((s) => {
+      const id = s.path.slice(ACCOUNTS.length + 1).replace(/\/revoke$/, "");
+      if (s.method === "DELETE") return [`delete ${id}`];
+      if (s.method === "POST" && s.path.endsWith("/revoke")) return [`revoke ${id}`];
+      return [];
+    });
 
   test("lists every app Locus offers for the client, with the ones it connected", async () => {
     routes[`GET ${ACCOUNTS}`] = () =>
@@ -526,8 +548,22 @@ describe("Composio connections", () => {
       ["oldapp", true],
     ]);
     expect(listed[0]).toMatchObject({ name: "Gmail", logo: "https://logos.test/gmail.png" });
+    // Slack's sign-in expired: shown as needing a reconnect, the others not.
+    expect(listed.filter((app) => app.expired).map((app) => app.toolkit)).toEqual(["slack"]);
     const [list] = seen.filter((s) => s.path === ACCOUNTS);
     expect(list?.query.getAll("user_ids").join(",")).toBe(appUserId("client-1"));
+  });
+
+  test("a revoked sign-in needs a reconnect too, unless another sign-in still works", async () => {
+    routes[`GET ${ACCOUNTS}`] = () =>
+      accountsBody([
+        ["ca_slack", "REVOKED", "slack"],
+        ["ca_gmail_old", "EXPIRED", "gmail"],
+        ["ca_gmail", "ACTIVE", "gmail"],
+      ]);
+    const listed = await connections().list("client-1");
+    expect(listed.filter((app) => app.expired).map((app) => app.toolkit)).toEqual(["slack"]);
+    expect(listed.find((app) => app.toolkit === "gmail")).toMatchObject({ connected: true });
   });
 
   test("connecting gives the app's sign-in link, coming back to Locus", async () => {
@@ -576,6 +612,21 @@ describe("Composio connections", () => {
     expect(deleted()).toEqual(["ca_gmail", "ca_second"]);
   });
 
+  test("a client that goes loses every app it connected, in any state", async () => {
+    routes[`GET ${ACCOUNTS}`] = () =>
+      accountsBody([
+        ["ca_gmail", "ACTIVE"],
+        ["ca_slack", "EXPIRED", "slack"],
+      ]);
+    routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
+    routes[`DELETE ${ACCOUNTS}/ca_slack`] = () => ({ success: true });
+    await connections().disconnectAll("client-1");
+    const [list] = seen.filter((s) => s.path === ACCOUNTS);
+    expect(list?.query.getAll("user_ids").join(",")).toContain(appUserId("client-1"));
+    expect(list?.query.getAll("toolkit_slugs")).toEqual([]);
+    expect(deleted()).toEqual(["ca_gmail", "ca_slack"]);
+  });
+
   test("an app that left the catalog can still be disconnected; a strange name can't", async () => {
     routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_old", "ACTIVE", "oldapp"]]);
     routes[`DELETE ${ACCOUNTS}/ca_old`] = () => ({ success: true });
@@ -584,6 +635,51 @@ describe("Composio connections", () => {
     seen = [];
     await expect(connections().disconnect("client-1", "a&b")).rejects.toThrow(AppServiceError);
     expect(seen).toEqual([]);
+  });
+
+  test("disconnecting revokes the app's access before deleting the account", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_gmail", "ACTIVE"]]);
+    routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
+    await connections().disconnect("client-1", "gmail");
+    expect(changes()).toEqual(["revoke ca_gmail", "delete ca_gmail"]);
+  });
+
+  test("an app that can't be revoked from outside, or a half-finished sign-in, is only deleted", async () => {
+    routes[`GET ${ACCOUNTS}`] = () =>
+      accountsBody([
+        ["ca_gmail", "ACTIVE"],
+        ["ca_tried", "INITIATED"],
+      ]);
+    routes[`POST ${ACCOUNTS}/ca_gmail/revoke`] = () => ({
+      status: 400,
+      error: { message: "not supported" },
+    });
+    routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
+    routes[`DELETE ${ACCOUNTS}/ca_tried`] = () => ({ success: true });
+    await connections().disconnect("client-1", "gmail");
+    // Only a working account is revoked: Composio refuses the others.
+    expect(changes()).toEqual(["revoke ca_gmail", "delete ca_gmail", "delete ca_tried"]);
+  });
+
+  test("a revoke Composio couldn't do keeps the account, so a retry revokes it", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_gmail", "ACTIVE"]]);
+    routes[`POST ${ACCOUNTS}/ca_gmail/revoke`] = () => ({
+      status: 500,
+      error: { message: "provider down" },
+    });
+    await expect(connections().disconnect("client-1", "gmail")).rejects.toThrow();
+    expect(deleted()).toEqual([]);
+  });
+
+  test("a client that goes is removed even while an app can't be revoked", async () => {
+    routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_gmail", "ACTIVE"]]);
+    routes[`POST ${ACCOUNTS}/ca_gmail/revoke`] = () => ({
+      status: 500,
+      error: { message: "provider down" },
+    });
+    routes[`DELETE ${ACCOUNTS}/ca_gmail`] = () => ({ success: true });
+    await connections().disconnectAll("client-1");
+    expect(deleted()).toEqual(["ca_gmail"]);
   });
 
   test("disconnecting an app that isn't connected does nothing", async () => {

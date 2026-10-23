@@ -1,6 +1,7 @@
 /**
  * The main chat's tool calls in a few plain words each, for its step rows. The names and
- * arguments are the harness's tools (packages/harness/src/tools.ts and apps.ts).
+ * arguments are the harness's tools (packages/harness/src/tools.ts and apps.ts) and the
+ * tools that steer threads (packages/agent-api/src/mastra/lib/work-thread-steering.ts).
  */
 
 import { type BuilderStep, callFailed } from "./builder-steps";
@@ -59,6 +60,12 @@ function label(call: Call): string | null {
       return "Looked for the right app";
     case "use_app":
       return appTool(a.tool) ?? "Used a connected app";
+    case "list_threads":
+      return "Checked on the threads";
+    case "read_thread":
+      return "Read a thread";
+    case "message_thread":
+      return "Messaged a thread";
   }
   return null;
 }

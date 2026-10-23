@@ -51,4 +51,13 @@ describe("settingsProblems", () => {
     expect(settingsProblems(env)).toEqual([missing]);
     expect(settingsProblems({ ...env, VERCEL: "1", LOCUS_SANDBOX: "off" })).toEqual([missing]);
   });
+
+  it("needs DAYTONA_API_KEY instead when sandboxes run on Daytona", () => {
+    const env = { ...complete, VERCEL: "1", LOCUS_SANDBOX_PROVIDER: "daytona" };
+    expect(settingsProblems(env)).toEqual(["site builder: DAYTONA_API_KEY not set"]);
+    expect(settingsProblems({ ...env, DAYTONA_API_KEY: "k" })).toEqual([]);
+    expect(settingsProblems({ ...env, LOCUS_SANDBOX_PROVIDER: "elsewhere" })).toEqual([
+      "site builder: LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona",
+    ]);
+  });
 });

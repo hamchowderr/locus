@@ -139,6 +139,25 @@ describe("an app-style site's files", () => {
       .concat("\n");
     expect(before).not.toContain("memberSignedUp");
     expect(text(withBackend(withAuth(before)), "lib/auth.ts")).toBe(text(app, "lib/auth.ts"));
+    // lib/auth.ts as sites got it with the HighLevel hook but before the preview's cookie.
+    const beforeCookies = before
+      .replace(
+        "  telemetry: { enabled: false },\n",
+        "  databaseHooks: { user: { create: { after: memberSignedUp } } },\n  telemetry: { enabled: false },\n",
+      )
+      .replace(
+        'import { db, isPreviewDatabase } from "@/lib/db";\n',
+        'import { db, isPreviewDatabase } from "@/lib/db";\nimport { memberSignedUp } from "@/lib/members";\n',
+      )
+      .replace(
+        "// which is fine because the preview's database is a throwaway file.\n",
+        "// which is fine because the preview's database is a throwaway file.\n// Keep the databaseHooks: each new member becomes a contact in the client's HighLevel.\n",
+      );
+    expect(beforeCookies).not.toContain("partitioned");
+    expect(text(withBackend(withAuth(beforeCookies)), "lib/auth.ts")).toBe(
+      text(app, "lib/auth.ts"),
+    );
+    expect(text(app, "lib/auth.ts")).toContain("partitioned: true");
     const custom = `${before}// magic links\n`;
     expect(text(withBackend(withAuth(custom)), "lib/auth.ts")).toBe(custom);
 
@@ -290,6 +309,50 @@ describe("the generated preview database", () => {
     }
   });
 
+  it("starts the preview's database again when its migrations no longer match the site's", async () => {
+    const { applyLocalMigrations } = await import(join(root, "lib/local-migrations.ts"));
+    const { client } = await import(join(root, "lib/db.ts"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await writeFile(
+        "db/migrations/0001_bookings.sql",
+        "CREATE TABLE `booking` (`id` text PRIMARY KEY NOT NULL);",
+      );
+      await writeFile(
+        "db/migrations/0002_search.sql",
+        "CREATE VIRTUAL TABLE `booking_search` USING fts5(`note`);",
+      );
+      expect((await applyLocalMigrations()).applied).toEqual([
+        "0000_logins",
+        "0001_bookings",
+        "0002_search",
+      ]);
+      await client.execute(`insert into "user" (id, name, email) values ('u1', 'Ann', 'a@x.test')`);
+      // Unchanged migrations keep the rows.
+      expect(await applyLocalMigrations()).toEqual({ applied: [] });
+      expect(warn).not.toHaveBeenCalled();
+
+      // An earlier version is restored (both gone), then bookings come back written differently.
+      await rm("db/migrations/0002_search.sql");
+      await writeFile(
+        "db/migrations/0001_bookings.sql",
+        "CREATE TABLE `booking` (`id` text PRIMARY KEY NOT NULL, `day` text);",
+      );
+      expect((await applyLocalMigrations()).applied).toEqual(["0000_logins", "0001_bookings"]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("started again"));
+      const users = await client.execute(`select count(*) as n from "user"`);
+      expect(Number(users.rows[0]?.n)).toBe(0);
+      const left = await client.execute(
+        "select name from sqlite_master where type = 'table' and name like 'booking%'",
+      );
+      expect(left.rows.map((row: { name: unknown }) => row.name)).toEqual(["booking"]);
+      await client.execute(`insert into booking (id, day) values ('b1', 'mon')`);
+    } finally {
+      warn.mockRestore();
+      client.close();
+    }
+  });
+
   it("applies migrations once when two runs start together, and skips folders", async () => {
     await mkdir("db/migrations/meta", { recursive: true });
     await writeFile("db/migrations/meta/_journal.json", "{}");
@@ -411,6 +474,32 @@ describe("the generated preview database", () => {
     });
   };
   const closeDb = async () => (await import(join(root, "lib/db.ts"))).client.close();
+
+  it("gives the preview a login cookie the browser keeps inside Locus's editor frame", async () => {
+    try {
+      await (await import(join(root, "lib/local-migrations.ts"))).applyLocalMigrations();
+      const { auth } = await import(join(root, "lib/auth.ts"));
+      const response: Response = await auth.handler(
+        new Request("https://sb-preview.test/api/auth/sign-up/email", {
+          method: "POST",
+          headers: { "content-type": "application/json", origin: "https://sb-preview.test" },
+          body: JSON.stringify({
+            name: "Ann",
+            email: "frame@example.test",
+            password: "correct horse battery",
+          }),
+        }),
+      );
+      expect(response.status).toBe(200);
+      const cookie = response.headers.get("set-cookie") ?? "";
+      expect(cookie).toMatch(/session_token=/);
+      expect(cookie).toMatch(/SameSite=None/i);
+      expect(cookie).toMatch(/Secure/);
+      expect(cookie).toMatch(/Partitioned/);
+    } finally {
+      await closeDb();
+    }
+  });
 
   it("sends nothing about the preview's members", async () => {
     const sent: unknown[] = [];

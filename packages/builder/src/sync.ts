@@ -8,8 +8,11 @@ export const hashOf = (content: SiteFile["content"]) =>
     .update(typeof content === "string" ? Buffer.from(content, "utf8") : content)
     .digest("hex");
 
-/** Folders the runtime makes itself, never part of the site's source. */
-export const GENERATED_DIRS = ["node_modules", ".next", ".locus", ".git"];
+/**
+ * Folders the runtime makes itself, never part of the site's source. `.data` holds the
+ * preview's database and the files members upload there, which must survive a sync.
+ */
+export const GENERATED_DIRS = ["node_modules", ".next", ".locus", ".git", ".data"];
 
 /**
  * Files the sandbox makes for itself (an install writes the lockfile, `next build` writes
@@ -78,7 +81,11 @@ export async function syncRuntime(
   draft: SiteFile[],
   options: { editorOrigins?: string[] } = {},
 ): Promise<SyncReport> {
-  const files = previewFiles(draft, options);
+  // Each sandbox service serves previews on its own hosts, which `next dev` must allow.
+  const files = previewFiles(draft, {
+    ...options,
+    ...(runtime.previewHosts ? { devHosts: [...runtime.previewHosts] } : {}),
+  });
   const present = await sandboxHashes(runtime);
   const wanted = new Set(files.map((f) => f.path));
   const toWrite = files.filter((f) => present.get(f.path) !== hashOf(f.content));

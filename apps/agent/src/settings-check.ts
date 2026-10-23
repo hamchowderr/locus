@@ -20,6 +20,8 @@ export const AGENT_SETTINGS = [
   "LOCUS_AGENT_MODEL",
   "LOCUS_WEB_VERCEL_BYPASS",
   "COMPOSIO_API_KEY",
+  "LOCUS_SANDBOX_PROVIDER",
+  "DAYTONA_API_KEY",
   "LOCUS_PROVISIONER",
   "LOCUS_OPERATORS",
   "ANTHROPIC_API_KEY",
@@ -62,6 +64,20 @@ export function modelProblems(env: Env): string[] {
   return [];
 }
 
+/**
+ * What stops the site builder opening sandboxes here: on Daytona the agent opens them itself and
+ * needs `DAYTONA_API_KEY`; on Vercel Sandbox (the default) it goes through the web app and needs
+ * nothing of its own.
+ */
+export function sandboxProblems(env: Env): string[] {
+  const provider = env.LOCUS_SANDBOX_PROVIDER;
+  if (!provider || provider === "vercel") return [];
+  if (provider !== "daytona") return ["LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona"];
+  return env.DAYTONA_API_KEY
+    ? []
+    : ["LOCUS_SANDBOX_PROVIDER is daytona, but DAYTONA_API_KEY is not set"];
+}
+
 const MAX_CAUSE = 200;
 /** A probe that has not answered by then is reported, so the check always logs a verdict. */
 export const PROBE_TIMEOUT_MS = 10_000;
@@ -95,6 +111,7 @@ export async function settingsProblems(deps: {
     (name) => `${name} holds an unfilled reference instead of a value`,
   );
   problems.push(...modelProblems(deps.env));
+  problems.push(...sandboxProblems(deps.env));
   try {
     await probe(() => deps.db.$client.execute("select 1"), timeoutMs);
   } catch (error) {

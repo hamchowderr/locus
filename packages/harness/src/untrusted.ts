@@ -37,6 +37,17 @@ export const TAINT_MARK = "locus:untrusted";
 /** The request-context key a tainted run carries. */
 export const TAINT_KEY = "locus.tainted";
 
+/**
+ * Present in the result of a `suggest_threads` call refused for a tainted run: its briefs, kept
+ * in the chat's history, were written after reading outside text. A later run that reads it
+ * carries `REFUSED_BRIEF_KEY`, so starting a thread asks first, showing the brief, without
+ * tainting the run (`hasRefusedBrief`).
+ */
+export const REFUSED_BRIEF_MARK = "locus:refused-brief";
+
+/** The request-context key a run carries when its history holds a refused brief. */
+export const REFUSED_BRIEF_KEY = "locus.refusedBrief";
+
 interface ContextLike {
   get?(key: string): unknown;
   set?(key: string, value: unknown): void;
@@ -52,12 +63,25 @@ export function isTainted(requestContext: unknown): boolean {
   return (typeof ctx.get === "function" ? ctx.get(TAINT_KEY) : ctx[TAINT_KEY]) === true;
 }
 
+/** Whether a run's history holds a refused suggestion's brief (`REFUSED_BRIEF_MARK`). */
+export function hasRefusedBrief(requestContext: unknown): boolean {
+  if (!requestContext || typeof requestContext !== "object") return false;
+  const ctx = requestContext as ContextLike & Record<string, unknown>;
+  return (
+    (typeof ctx.get === "function" ? ctx.get(REFUSED_BRIEF_KEY) : ctx[REFUSED_BRIEF_KEY]) === true
+  );
+}
+
 function taint(requestContext: ContextLike | undefined): void {
-  // Without a context the run cannot be marked; refuse rather than run untainted.
+  mark(requestContext, TAINT_KEY);
+}
+
+function mark(requestContext: ContextLike | undefined, key: string): void {
+  // Without a context the run cannot be marked; refuse rather than run unmarked.
   if (typeof requestContext?.set !== "function") {
     throw new Error("untrusted-content screen needs the run's request context");
   }
-  requestContext.set(TAINT_KEY, true);
+  requestContext.set(key, true);
 }
 
 /** Our own tools, named inside data: they have no business being there. */
@@ -178,20 +202,26 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
   readonly id = "locus-untrusted-content" as const;
   readonly name = "Withhold instructions in GoHighLevel data";
   readonly #trusted: ReadonlySet<string>;
+  readonly #threadText: ReadonlySet<string>;
 
-  /** `trusted`: further tools whose results are Locus's own text (e.g. skill tools). */
-  constructor(trusted: readonly string[] = []) {
+  /**
+   * `trusted`: further tools whose results are Locus's own text (e.g. skill tools).
+   * `threadText`: tools whose results are another agent's words (a work thread's replies),
+   * which can quote what that agent read: always treated as outside text.
+   */
+  constructor(trusted: readonly string[] = [], threadText: readonly string[] = []) {
     this.#trusted = new Set([...TRUSTED_TOOLS, ...trusted]);
+    this.#threadText = new Set(threadText);
   }
 
   processInputStep({ messages, requestContext }: ProcessInputStepArgs) {
-    if (isTainted(requestContext)) return;
     for (const message of messages) {
       for (const part of message.content.parts ?? []) {
         if (part.type !== "tool-invocation" || part.toolInvocation.state !== "result") continue;
-        if (JSON.stringify(part.toolInvocation.result ?? null).includes(TAINT_MARK)) {
-          taint(requestContext);
-          return;
+        const result = JSON.stringify(part.toolInvocation.result ?? null);
+        if (result.includes(TAINT_MARK) && !isTainted(requestContext)) taint(requestContext);
+        if (result.includes(REFUSED_BRIEF_MARK) && !hasRefusedBrief(requestContext)) {
+          mark(requestContext, REFUSED_BRIEF_KEY);
         }
       }
     }
@@ -207,19 +237,24 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
   }: ProcessToolResultArgs) {
     if (this.#trusted.has(toolName)) return;
     const screened = withholdInstructions(result);
+    const fromThread = this.#threadText.has(toolName);
     const publicText =
-      OUTSIDE_TEXT_TOOLS.has(toolName) || sourceOperations(toolName, args).some(readsPublicText);
+      OUTSIDE_TEXT_TOOLS.has(toolName) ||
+      fromThread ||
+      sourceOperations(toolName, args).some(readsPublicText);
     if (screened.withheld === 0 && !publicText) return;
 
     taint(requestContext);
     const fromApp = OUTSIDE_TEXT_TOOLS.has(toolName);
-    const source = fromApp ? "a connected app" : "GoHighLevel";
+    const source = fromApp ? "a connected app" : fromThread ? "a thread" : "GoHighLevel";
     const why =
       screened.withheld > 0
         ? `${screened.withheld} value(s) from ${source} read like instructions and were withheld.`
         : fromApp
           ? "This result comes from a connected app and holds text written by other people."
-          : "This result holds text written by the public.";
+          : fromThread
+            ? "This result holds a thread's words, which can quote text written by other people."
+            : "This result holds text written by the public.";
     messageList.updateToolInvocation({
       type: "tool-invocation",
       toolInvocation: {
