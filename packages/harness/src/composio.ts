@@ -195,6 +195,35 @@ export interface ComposioConnectorConfig {
   baseURL?: string;
   /** The apps Locus offers; defaults to the process's shared catalog for this key. */
   catalog?: AppCatalog;
+  /**
+   * Otaku's own sign-in apps, as Composio auth config ids by toolkit (`parseAuthConfigs`). An
+   * app named here signs in under Otaku's name instead of Composio's; the others keep the
+   * sign-in Composio manages.
+   */
+  authConfigs?: Record<string, string>;
+}
+
+/**
+ * `COMPOSIO_AUTH_CONFIGS`: `gmail=ac_123,googlecalendar=ac_456`. Each pair names an app by its
+ * toolkit slug and the Composio auth config holding Otaku's own sign-in app for it.
+ */
+export function parseAuthConfigs(text: string | undefined): Record<string, string> {
+  const configs: Record<string, string> = {};
+  for (const pair of (text ?? "").split(",")) {
+    if (pair.trim() === "") continue;
+    const [toolkit = "", id = "", ...rest] = pair.split("=").map((part) => part.trim());
+    const slug = toolkit.toLowerCase();
+    if (rest.length > 0 || !/^[a-z0-9_-]+$/.test(slug) || !/^ac_[A-Za-z0-9_-]+$/.test(id)) {
+      throw new Error(`COMPOSIO_AUTH_CONFIGS: "${pair.trim()}" isn't toolkit=ac_id`);
+    }
+    configs[slug] = id;
+  }
+  return configs;
+}
+
+/** The session settings that make an app sign in through Otaku's own sign-in app. */
+function ownSignIns(authConfigs: Record<string, string>) {
+  return Object.keys(authConfigs).length > 0 ? { authConfigs } : {};
 }
 
 const READ_ONLY_TAG = "readOnlyHint";
@@ -211,6 +240,7 @@ export function createComposioConnector({
   clientId,
   baseURL,
   catalog = composioCatalog(apiKey, baseURL),
+  authConfigs = {},
 }: ComposioConnectorConfig): AppConnector {
   const composio = composioClient(apiKey, baseURL);
   const userId = appUserId(clientId);
@@ -218,12 +248,14 @@ export function createComposioConnector({
   // Not limited to a list of toolkits: the catalog is long and changes. Locus checks every tool
   // against the catalog itself (`offers`), and only accounts the client connected can run.
   // Composio's code sandbox is off: Locus never offers its tools, and it isn't covered by
-  // Composio's zero data retention.
+  // Composio's zero data retention. An app with Otaku's own sign-in app uses only accounts
+  // connected through it, as the Apps page shows.
   const open = () =>
     composio.create(userId, {
       manageConnections: false,
       instant: false,
       sandbox: { enable: false },
+      ...ownSignIns(authConfigs),
     });
   const current = () => {
     session ??= open().catch((error) => {
@@ -353,11 +385,21 @@ export function createComposioConnections({
   apiKey,
   baseURL,
   catalog = composioCatalog(apiKey, baseURL),
+  authConfigs = {},
 }: Omit<ComposioConnectorConfig, "clientId">) {
   const composio = composioClient(apiKey, baseURL);
+  /**
+   * Whether the chat can use the account: it works, and it was connected through the app's own
+   * sign-in app where Otaku has one. One connected before Otaku's sign-in app was set up needs
+   * connecting again, since the chat no longer uses it.
+   */
+  const usable = (account: { status: string; toolkit: string; authConfig: string }) => {
+    const own = authConfigs[account.toolkit];
+    return account.status === "ACTIVE" && (own === undefined || account.authConfig === own);
+  };
   /** Every account the client has, for one app or all, in any state, across Composio's pages. */
   const accounts = async (clientId: string, slug?: string) => {
-    const found: { id: string; status: string; toolkit: string }[] = [];
+    const found: { id: string; status: string; toolkit: string; authConfig: string }[] = [];
     let cursor: string | null | undefined;
     do {
       const page = await composio.connectedAccounts.list({
@@ -370,6 +412,7 @@ export function createComposioConnections({
           id: a.id,
           status: a.status,
           toolkit: (a.toolkit?.slug ?? "").toLowerCase(),
+          authConfig: a.authConfig?.id ?? "",
         })),
       );
       cursor = page.nextCursor;
@@ -415,10 +458,16 @@ export function createComposioConnections({
      */
     async list(clientId: string): Promise<AppConnection[]> {
       const [apps, held] = await Promise.all([catalog.apps(), accounts(clientId)]);
-      const active = new Set(held.filter((a) => a.status === "ACTIVE").map((a) => a.toolkit));
+      const active = new Set(held.filter(usable).map((a) => a.toolkit));
       const lapsed = new Set(
         held
-          .filter((a) => a.status === "EXPIRED" || a.status === "REVOKED")
+          .filter(
+            (a) =>
+              a.status === "EXPIRED" ||
+              a.status === "REVOKED" ||
+              // Connected before Otaku's own sign-in app: works, but not for the chat.
+              (a.status === "ACTIVE" && !usable(a)),
+          )
           .map((a) => a.toolkit)
           .filter((toolkit) => !active.has(toolkit)),
       );
@@ -447,18 +496,21 @@ export function createComposioConnections({
     /**
      * The app's own sign-in page; it comes back to `callbackUrl` when the person is done.
      * Accounts left half-connected or expired by earlier tries are removed first, so they can't
-     * pile up where nobody can see or remove them.
+     * pile up where nobody can see or remove them; so is one connected before Otaku's own
+     * sign-in app was set up, which the chat no longer uses.
      */
     async connect(clientId: string, toolkit: string, callbackUrl: string): Promise<string> {
       const slug = await offered(toolkit);
       for (const account of await accounts(clientId, slug)) {
-        if (account.status !== "ACTIVE") await remove(account);
+        if (!usable(account)) await remove(account);
       }
+      const own = authConfigs[slug];
       const session = await composio.create(appUserId(clientId), {
         toolkits: [slug],
         manageConnections: false,
         instant: false,
         sandbox: { enable: false },
+        ...(own ? { authConfigs: { [slug]: own } } : {}),
       });
       const request = await session.authorize(slug, { callbackUrl });
       if (!request.redirectUrl)
