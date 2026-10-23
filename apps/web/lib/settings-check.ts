@@ -1,3 +1,5 @@
+import { missingSandboxSettings, SANDBOX_PROVIDERS } from "@locus/sandbox";
+
 /**
  * Every setting a production deployment needs, by feature. Checked once when a server instance
  * starts (`instrumentation.ts`) so the deployment's logs name what is missing before anyone
@@ -20,13 +22,19 @@ export const PRODUCTION_SETTINGS: Record<string, readonly string[]> = {
     "VERCEL_INTEGRATION_CLIENT_ID",
     "VERCEL_INTEGRATION_CLIENT_SECRET",
   ],
-  // Only off Vercel: a Vercel deployment's own OIDC token opens sandboxes (`sandboxFromEnv`).
+  // Vercel Sandbox, the default; only off Vercel, where the deployment's own OIDC token isn't
+  // there. With `LOCUS_SANDBOX_PROVIDER=daytona`, `DAYTONA_API_KEY` instead (`missingFor`).
   "site builder": ["LOCUS_SANDBOX_TOKEN", "LOCUS_SANDBOX_TEAM_ID", "LOCUS_SANDBOX_PROJECT_ID"],
 };
 
-/** Features whose settings a Vercel deployment supplies itself. */
-function suppliedByHost(feature: string, env: Record<string, string | undefined>) {
-  return feature === "site builder" && env.VERCEL === "1" && env.LOCUS_SANDBOX !== "off";
+/** The settings a feature still lacks; the site builder's depend on its sandbox provider. */
+function missingFor(
+  feature: string,
+  names: readonly string[],
+  env: Record<string, string | undefined>,
+): string[] {
+  if (feature === "site builder") return missingSandboxSettings(env);
+  return names.filter((name) => !env[name]);
 }
 
 const STUB_SWITCHES = ["GHL_MODE", "GITHUB_MODE", "VERCEL_MODE", "EMAIL_MODE"] as const;
@@ -34,9 +42,16 @@ const STUB_SWITCHES = ["GHL_MODE", "GITHUB_MODE", "VERCEL_MODE", "EMAIL_MODE"] a
 /** Problems with a production environment, one line each, naming settings and never values. */
 export function settingsProblems(env: Record<string, string | undefined>): string[] {
   const problems: string[] = [];
+  const provider = env.LOCUS_SANDBOX_PROVIDER;
+  const knownProvider = !provider || (SANDBOX_PROVIDERS as readonly string[]).includes(provider);
   for (const [feature, names] of Object.entries(PRODUCTION_SETTINGS)) {
-    if (suppliedByHost(feature, env)) continue;
-    const missing = names.filter((name) => !env[name]);
+    if (feature === "site builder" && !knownProvider) {
+      problems.push(
+        `site builder: LOCUS_SANDBOX_PROVIDER must be one of ${SANDBOX_PROVIDERS.join(", ")}`,
+      );
+      continue;
+    }
+    const missing = missingFor(feature, names, env);
     if (missing.length > 0) problems.push(`${feature}: ${missing.join(", ")} not set`);
   }
   // Billing is optional, but a key without the webhook secret records no payment.

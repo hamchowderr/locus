@@ -47,11 +47,12 @@ import {
 } from "@locus/db/tenant";
 import {
   FakeRuntimeProvider,
+  missingSandboxSettings,
   RemoteRuntimeProvider,
   type RuntimeProvider,
   SANDBOX_RPC_PATH,
   type SiteRuntime,
-  sandboxFromEnv,
+  sandboxProviderFromEnv,
 } from "@locus/sandbox";
 import {
   bookingCalendarIds,
@@ -581,27 +582,47 @@ export async function leaseClientDb(
 export const pooledUsers = (locationId: string) => pool.get(locationId)?.users ?? null;
 
 /**
- * Site sandboxes from the environment: Vercel Sandbox with `LOCUS_SANDBOX_TOKEN`,
- * `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID`, or on a Vercel deployment with its own
- * OIDC token (see `sandboxFromEnv`); otherwise the in-memory fake outside
- * production (commands succeed and run nothing, like the other stubs). In production without
- * them, sandbox tools answer that previews aren't set up; the setting names go to the log only.
+ * Site sandboxes from the environment (see `sandboxProviderFromEnv`): Vercel Sandbox by default,
+ * with `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID` or on a Vercel
+ * deployment with its own OIDC token; Daytona with `LOCUS_SANDBOX_PROVIDER=daytona` and
+ * `DAYTONA_API_KEY`. Otherwise the in-memory fake outside production (commands succeed and run
+ * nothing, like the other stubs). In production without them, sandbox tools answer that previews
+ * aren't set up; the setting names go to the log only.
  */
 export function runtimesFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): RuntimeProvider {
-  const vercel = sandboxFromEnv(env);
-  if (vercel) return vercel;
-  if (env.NODE_ENV !== "production") return new FakeRuntimeProvider();
+  // A provider setting that names no provider is reported (here and by the settings checks),
+  // never thrown at whoever first asks for a sandbox, and never quietly replaced by the fake.
+  let misconfigured: string | null = null;
+  try {
+    const real = sandboxProviderFromEnv(env);
+    if (real) return real;
+  } catch (error) {
+    misconfigured = error instanceof Error ? error.message : String(error);
+  }
+  if (!misconfigured && env.NODE_ENV !== "production") return new FakeRuntimeProvider();
   return {
     async open() {
+      const missing = misconfigured ? [] : missingSandboxSettings(env);
       console.error(
-        "Locus is not configured: no Vercel OIDC token, and LOCUS_SANDBOX_TOKEN, LOCUS_SANDBOX_TEAM_ID or LOCUS_SANDBOX_PROJECT_ID is not set",
+        misconfigured
+          ? `Locus is not configured: ${misconfigured}`
+          : missing.length > 0
+            ? `Locus is not configured: site sandboxes need ${missing.join(", ")}`
+            : "Locus is not configured: site sandboxes are off (LOCUS_SANDBOX=off)",
       );
       throw new BuilderError("Site previews aren't set up on this deployment.");
     },
   };
 }
+
+/**
+ * Sandboxes run on Daytona (`LOCUS_SANDBOX_PROVIDER=daytona`), which any host can reach. Any
+ * other value, unknown ones included, is not Daytona; the settings checks report unknown ones.
+ */
+export const daytonaSandboxes = (env: Record<string, string | undefined> = process.env) =>
+  env.LOCUS_SANDBOX_PROVIDER === "daytona";
 
 /** How a Locus backend off Vercel reaches the web app (`remoteSiteRuntimes`, `remotePublish`). */
 export interface WebAppOptions {

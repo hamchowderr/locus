@@ -1,7 +1,12 @@
 import { createClient } from "@libsql/client";
 import { LocalProvisioner, openControlDb, TursoProvisioner } from "@locus/db";
 import { describe, expect, it } from "vitest";
-import { modelProblems, settingsProblems, unresolvedSettings } from "./settings-check.ts";
+import {
+  modelProblems,
+  sandboxProblems,
+  settingsProblems,
+  unresolvedSettings,
+} from "./settings-check.ts";
 
 const TOKEN = "turso-platform-token-never-logged";
 // `${path}` as text: what Coolify passed through unfilled.
@@ -111,6 +116,20 @@ describe("the agent's settings check", () => {
   it("reports a model whose key is missing, by the key's name only", () => {
     expect(modelProblems({ LOCUS_AGENT_MODEL: "vercel/anthropic/claude-sonnet-5.5" })).toEqual([
       "LOCUS_AGENT_MODEL needs AI_GATEWAY_API_KEY, which is not set",
+    ]);
+  });
+
+  it("needs DAYTONA_API_KEY only when sandboxes run on Daytona, and never echoes a value", () => {
+    expect(sandboxProblems({})).toEqual([]);
+    expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "vercel" })).toEqual([]);
+    expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "daytona" })).toEqual([
+      "LOCUS_SANDBOX_PROVIDER is daytona, but DAYTONA_API_KEY is not set",
+    ]);
+    expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "daytona", DAYTONA_API_KEY: "k" })).toEqual(
+      [],
+    );
+    expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "dayt0na-key" })).toEqual([
+      "LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona",
     ]);
   });
 });

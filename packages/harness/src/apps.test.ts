@@ -14,7 +14,7 @@ import {
   createAppTools,
 } from "./apps.ts";
 import { clientResource, NOT_KEPT } from "./conversation.ts";
-import { TAINT_KEY } from "./untrusted.ts";
+import { REFUSED_BRIEF_KEY, TAINT_KEY } from "./untrusted.ts";
 
 const session: GhlSession = { token: "tok", tokenKind: "location", locationId: "loc-A" };
 
@@ -107,6 +107,10 @@ describe("app tools", () => {
     const tainted = context();
     tainted.set(TAINT_KEY, true);
     expect(await asks("GMAIL_FETCH_EMAILS", tainted)).toBe(true);
+    // A refused suggestion's brief in the history: every call asks too.
+    const refused = context();
+    refused.set(REFUSED_BRIEF_KEY, true);
+    expect(await asks("GMAIL_FETCH_EMAILS", refused)).toBe(true);
   });
 
   test("the rule reads the plain record Mastra passes, through the host's resolver", async () => {

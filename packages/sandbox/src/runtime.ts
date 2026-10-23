@@ -21,6 +21,12 @@ export interface CommandResult {
 
 export interface SiteRuntime {
   readonly id: string;
+  /**
+   * Hosts the preview URL is served on (patterns such as `*.example.com`), which `next dev` must
+   * allow as dev origins or its pages never hydrate. Unset: Vercel Sandbox's
+   * (`PREVIEW_DEV_HOSTS` in `@locus/studio`).
+   */
+  readonly previewHosts?: readonly string[];
   /** Writes files (paths relative to the project root, no "..", no absolute paths). */
   writeFiles(files: RuntimeFile[]): Promise<void>;
   deleteFiles(paths: string[]): Promise<void>;
