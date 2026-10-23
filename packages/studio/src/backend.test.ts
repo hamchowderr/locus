@@ -24,6 +24,7 @@ import {
   templateById,
   withBackend,
 } from "./templates/index.ts";
+import { previewFiles } from "./visual-edits-preview.ts";
 import type { SiteFile } from "./workspace.ts";
 
 const brief = DesignBrief.parse({ name: "Members Club", kind: "website" });
@@ -158,8 +159,16 @@ describe("an app-style site's files", () => {
     expect(text(withBackend(withAuth(beforeCookies)), "lib/auth.ts")).toBe(
       text(app, "lib/auth.ts"),
     );
-    expect(text(app, "lib/auth.ts")).toContain("partitioned: true");
     const custom = `${before}// magic links\n`;
+    expect(text(app, "lib/auth.ts")).toContain("partitioned: true");
+    // Until then, the preview runs such a site with the current file; the draft keeps its own.
+    for (const earlier of [before, beforeCookies]) {
+      const draft = withAuth(earlier);
+      expect(text(previewFiles(draft), "lib/auth.ts")).toContain("partitioned: true");
+      expect(text(draft, "lib/auth.ts")).toBe(earlier);
+    }
+    expect(text(previewFiles(withAuth(before)), "lib/auth.ts")).not.toContain("memberSignedUp");
+    expect(text(previewFiles(withAuth(custom)), "lib/auth.ts")).toBe(custom);
     expect(text(withBackend(withAuth(custom)), "lib/auth.ts")).toBe(custom);
 
     const grown = app.map((f) =>

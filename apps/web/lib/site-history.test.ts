@@ -16,7 +16,7 @@ import {
 } from "@locus/db";
 import { agencyComp, member, organization, usageEvent, user } from "@locus/db/control";
 import { FakeRuntimeProvider } from "@locus/sandbox";
-import { SiteWorkspace } from "@locus/studio";
+import { SITE_SCHEMA_PATH, SiteWorkspace } from "@locus/studio";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   bookmarkSiteVersion,
@@ -26,6 +26,7 @@ import {
   restoreSiteVersion,
   type SiteBuilderDeps,
   SiteInputError,
+  siteDraftHasDatabase,
   siteHistory,
   siteRuntimeKey,
   startSitePreview,
@@ -117,6 +118,17 @@ describe("a site's saved versions", () => {
     await workspace.writeFile("app/page.tsx", "export default () => 'Draft';");
     history = await siteHistory(deps(), client, siteId);
     expect(history.unsaved).toBe(true);
+    tenant.$client.close();
+  });
+
+  it("tells whether the draft has a database before any is live", async () => {
+    const { client, siteId, tenant, workspace } = await siteWithTwoVersions();
+    expect(await siteDraftHasDatabase(deps(), client, siteId)).toBe(false);
+    await workspace.writeFile(SITE_SCHEMA_PATH, "export {};");
+    expect(await siteDraftHasDatabase(deps(), client, siteId)).toBe(true);
+    // Only the session's client's sites.
+    const other = await authorized(clientB);
+    await expect(siteDraftHasDatabase(deps(), other, siteId)).rejects.toThrow();
     tenant.$client.close();
   });
 
