@@ -6,8 +6,9 @@ import {
   requireAgencyManager,
   resolveActiveClient,
 } from "@locus/auth";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
-import { chooseClient, signOut } from "@/app/actions";
+import { chooseClient, signOut, switchAgency } from "@/app/actions";
 import { AppSidebar } from "@/components/app-shell/app-sidebar";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -32,12 +33,15 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       if (e instanceof ClientAccessDenied) return fallback;
       throw e;
     };
-  const [client, clients, operator, manager] = await Promise.all([
+  const [client, clients, operator, manager, agencies] = await Promise.all([
     resolveActiveClient(db, ctx).catch(denied(null)),
     listAccessibleClients(db, ctx).catch(denied([])),
     isOperator(db, ctx, operatorsFromEnv()),
     requireAgencyManager(db, ctx).then(() => true, denied(false)),
+    // Only the agencies this user is a member of.
+    locus().auth.api.listOrganizations({ headers: await headers() }),
   ]);
+  const agency = agencies.find((a) => a.id === current.session.activeOrganizationId);
 
   return (
     <TooltipProvider>
@@ -45,10 +49,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <AppSidebar
           subAccount={client ? { id: client.location.id, name: client.location.name } : null}
           subAccounts={clients.map((c) => ({ id: c.id, name: c.name }))}
+          agency={agency ? { id: agency.id, name: agency.name } : null}
+          agencies={agencies.map((a) => ({ id: a.id, name: a.name }))}
           operator={operator}
           manager={manager}
           email={current.user.email}
           chooseClient={chooseClient}
+          switchAgency={switchAgency}
           signOut={signOut}
         />
         <SidebarInset className="min-h-0 overflow-hidden">
