@@ -84,8 +84,13 @@ const BUILD_SECONDS = 300;
 const tail = (text: string, max = MAX_OUTPUT_CHARS) =>
   text.length > max ? `…(earlier output cut)\n${text.slice(-max)}` : text;
 
-/** Exit code of a command the system killed (SIGKILL), almost always for running out of memory. */
+/**
+ * A command the system killed (SIGKILL), almost always for running out of memory: exit 137, a
+ * negative code (Vercel Sandbox's for death by a signal), or the shell's "Killed" line, alone or as
+ * bash writes it (`bash: line 1: 123 Killed   next build`).
+ */
 const KILLED_EXIT = 137;
+const KILLED_LINE = /^(?:.*\s)?Killed(?:\s|$)/m;
 
 /**
  * What a failed command printed, never blank: a command killed for memory or time often prints
@@ -95,7 +100,7 @@ export const failedOutput = (result: CommandResult, text = result.stderr || resu
   const printed = text.trim();
   const why = result.timedOut
     ? "It ran out of time."
-    : result.exitCode === KILLED_EXIT || /^killed$/im.test(printed)
+    : result.exitCode === KILLED_EXIT || result.exitCode < 0 || KILLED_LINE.test(printed)
       ? "The sandbox killed it, usually because it ran out of memory. That is a Locus problem, not the site's: changing the site or trying again won't fix it."
       : "";
   if (!printed) return `(It printed nothing; exit code ${result.exitCode}.)${why ? ` ${why}` : ""}`;

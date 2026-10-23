@@ -144,8 +144,34 @@ describe("sandbox tools", () => {
     }
   });
 
+  it("check_site labels a killed build too, from what bash printed", async () => {
+    const { call } = await setup({
+      runtime: {
+        handler: (command) =>
+          command === "npx"
+            ? {
+                exitCode: 1,
+                stdout: "Creating an optimized production build ...",
+                stderr: "bash: line 1:   123 Killed                  next build",
+              }
+            : undefined,
+      },
+    });
+    await startSite(t.session.workspace, { brief: { name: "Acme" }, templateId: "blank" });
+    const result = await call("check_site");
+    expect(result).toMatchObject({ ok: false, step: "build" });
+    expect(result.output).toContain("Creating an optimized production build");
+    expect(result.output).toContain("ran out of memory");
+  });
+
   it("failedOutput says why a silent command stopped, and keeps what one printed", () => {
     const base = { stdout: "", stderr: "", timedOut: false };
+    // Vercel Sandbox reports death by a signal as a negative exit code.
+    expect(failedOutput({ ...base, exitCode: -1 })).toContain("ran out of memory");
+    // "killed" as an ordinary word is not a kill.
+    expect(failedOutput({ ...base, exitCode: 1, stderr: "process killed by user request" })).toBe(
+      "process killed by user request",
+    );
     expect(failedOutput({ ...base, exitCode: 1 })).toBe("(It printed nothing; exit code 1.)");
     expect(failedOutput({ ...base, exitCode: 124, timedOut: true })).toBe(
       "(It printed nothing; exit code 124.) It ran out of time.",
