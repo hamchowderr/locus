@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CONNECTORS_OFF_KEY } from "@locus/agent-api";
 import {
   type AgentToWebClaims,
   agentToWebKey,
@@ -37,7 +38,14 @@ import { MastraClient } from "@mastra/client-js";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { createHost, PREFIX, reportFailure, sessionFromKitToken, siteSandboxes } from "./host.ts";
+import {
+  connectorsOffIn,
+  createHost,
+  PREFIX,
+  reportFailure,
+  sessionFromKitToken,
+  siteSandboxes,
+} from "./host.ts";
 import {
   ASK_ME,
   ASK_ME_REPLY,
@@ -1111,6 +1119,17 @@ describe("connected apps", () => {
 
     expect(stoppedOn).toBe("agent_end");
     expect(executed).toEqual(["GMAIL_FETCH_EMAILS"]);
+  });
+
+  test("connectors turned off for a chat read as off, and nothing else does", () => {
+    const context = (value: unknown) => ({
+      get: (key: string) => (key === CONNECTORS_OFF_KEY ? value : undefined),
+    });
+    expect(connectorsOffIn(context(["gmail", "slack"]))).toEqual({ gmail: "off", slack: "off" });
+    // Only "off": a turn can never loosen what the Connectors page set.
+    expect(connectorsOffIn(context("gmail"))).toEqual({});
+    expect(connectorsOffIn(context([1, "gmail"]))).toEqual({ gmail: "off" });
+    expect(connectorsOffIn(undefined)).toEqual({});
   });
 
   test("an app set to ask every time makes even a read wait", async () => {

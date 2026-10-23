@@ -7,6 +7,7 @@
 
 import { createClient } from "@libsql/client";
 import {
+  CONNECTORS_OFF_KEY,
   clientSiteThreads,
   clientWorkThreads,
   createAgentApi,
@@ -284,6 +285,17 @@ const KIT_STREAM_PATH = `${PREFIX}/kit/agent-controller/stream`;
 /** The run request-context key naming the session a run acts for. Set here, never by the browser. */
 export const RUN_SESSION_KEY = "locus.session";
 
+/** The connectors the person turned off for this chat, as app settings of "off". */
+export function connectorsOffIn(requestContext?: {
+  get: (key: string) => unknown;
+}): Record<string, "off"> {
+  const names = requestContext?.get(CONNECTORS_OFF_KEY);
+  if (!Array.isArray(names)) return {};
+  return Object.fromEntries(
+    names.filter((n): n is string => typeof n === "string").map((n) => [n, "off" as const]),
+  );
+}
+
 /** An open event stream re-checks access at least this often, and before events after a gap. */
 const STREAM_CHECK_MS = 5_000;
 
@@ -449,8 +461,14 @@ export function createHost({
               apps: async (requestContext) => {
                 await runClient(requestContext);
                 // How the client's owners let the chat use each app, read on every call, so
-                // turning an app off on the Apps page takes effect on the chat's next step.
-                return { ...clientApps, access: () => readAppAccess(appSettings) };
+                // turning an app off on the Connectors page takes effect on the chat's next
+                // step. The person can also turn connectors off for this chat (the composer's
+                // + menu); that can only take an app away.
+                const offHere = connectorsOffIn(requestContext);
+                return {
+                  ...clientApps,
+                  access: async () => ({ ...(await readAppAccess(appSettings)), ...offHere }),
+                };
               },
             }
           : {}),
