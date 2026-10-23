@@ -8,20 +8,31 @@ import type { AppConnection } from "@locus/harness";
 /** Apps on one page of the directory. Enough to scan, few enough logos to load at once. */
 export const PAGE_SIZE = 24;
 
+/** The page's two tabs, as Claude's connector settings have: the client's apps, and the rest. */
+export type DirectoryTab = "yours" | "discover";
+
 export interface DirectoryQuery {
   q: string;
   category: string;
   page: number;
+  /** Empty for the default tab: Yours once the client has an app, Discover before. */
+  tab: DirectoryTab | "";
 }
 
 /** The query from the page's search params; anything odd falls back to the default. */
-export function readQuery(params: { q?: unknown; category?: unknown; page?: unknown }) {
+export function readQuery(params: {
+  q?: unknown;
+  category?: unknown;
+  page?: unknown;
+  tab?: unknown;
+}) {
   const text = (value: unknown) => (typeof value === "string" ? value.trim().slice(0, 100) : "");
   const page = Number.parseInt(text(params.page), 10);
   return {
     q: text(params.q),
     category: text(params.category),
     page: Number.isFinite(page) && page > 0 ? page : 1,
+    tab: params.tab === "yours" || params.tab === "discover" ? params.tab : "",
   } satisfies DirectoryQuery;
 }
 
@@ -81,11 +92,18 @@ export function pageOf<T>(items: T[], page: number, size = PAGE_SIZE) {
 }
 
 /** A link to the directory with this query, leaving out what is default. */
-export function directoryHref({ q, category, page }: Partial<DirectoryQuery>): string {
+export function directoryHref({ q, category, page, tab }: Partial<DirectoryQuery>): string {
   const params = new URLSearchParams();
+  if (tab) params.set("tab", tab);
   if (q) params.set("q", q);
   if (category) params.set("category", category);
   if (page && page > 1) params.set("page", String(page));
   const query = params.toString();
   return query ? `/apps?${query}` : "/apps";
+}
+
+/** The tab to show: the one asked for, else Yours when the client has an app and Discover when not. */
+export function tabOf(tab: DirectoryQuery["tab"], apps: AppConnection[]): DirectoryTab {
+  if (tab) return tab;
+  return apps.some((app) => app.connected || app.expired) ? "yours" : "discover";
 }

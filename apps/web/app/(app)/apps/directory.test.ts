@@ -1,6 +1,6 @@
 import type { AppConnection } from "@locus/harness";
 import { describe, expect, it } from "vitest";
-import { categoriesOf, directoryHref, filterApps, pageOf, readQuery } from "./directory";
+import { categoriesOf, directoryHref, filterApps, pageOf, readQuery, tabOf } from "./directory";
 
 const app = (
   toolkit: string,
@@ -110,12 +110,18 @@ describe("pageOf", () => {
 
 describe("readQuery and directoryHref", () => {
   it("reads the page's search params, falling back on anything odd", () => {
-    expect(readQuery({ q: "  slack ", category: "chat", page: "3" })).toEqual({
+    expect(readQuery({ q: "  slack ", category: "chat", page: "3", tab: "discover" })).toEqual({
       q: "slack",
       category: "chat",
       page: 3,
+      tab: "discover",
     });
-    expect(readQuery({ q: ["a"], page: "-2" })).toEqual({ q: "", category: "", page: 1 });
+    expect(readQuery({ q: ["a"], page: "-2", tab: "other" })).toEqual({
+      q: "",
+      category: "",
+      page: 1,
+      tab: "",
+    });
     expect(readQuery({ page: "abc" }).page).toBe(1);
     expect(readQuery({ q: "x".repeat(500) }).q).toHaveLength(100);
   });
@@ -126,5 +132,15 @@ describe("readQuery and directoryHref", () => {
     expect(directoryHref({ q: "a&b", category: "crm", page: 2 })).toBe(
       "/apps?q=a%26b&category=crm&page=2",
     );
+    expect(directoryHref({ tab: "discover", q: "mail" })).toBe("/apps?tab=discover&q=mail");
+  });
+});
+
+describe("tabOf", () => {
+  it("opens on Yours once the client has an app, on Discover before, unless one is asked for", () => {
+    expect(tabOf("", APPS)).toBe("yours");
+    expect(tabOf("", [app("gmail", "Gmail", "", [])])).toBe("discover");
+    expect(tabOf("", [{ ...app("gmail", "Gmail", "", []), expired: true }])).toBe("yours");
+    expect(tabOf("discover", APPS)).toBe("discover");
   });
 });
