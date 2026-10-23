@@ -62,7 +62,7 @@ export function ConnectAppsCard({
               onClick={() => {
                 setError(null);
                 if (!connect(toolkit)) {
-                  setError('Your browser blocked the sign-in window. Allow pop-ups, or use the Apps page.');
+                  setError('Your browser blocked the sign-in window. Allow pop-ups, or use the Connectors page.');
                 }
               }}
             >
