@@ -49,6 +49,9 @@ interface FakeVm {
   fs: { uploadFiles: (files: { source: Buffer; destination: string }[]) => Promise<void> };
   getSignedPreviewUrl: (port: number, ttl?: number) => Promise<{ url: string; token: string }>;
   getPreviewLink: (port: number) => Promise<{ url: string; token: string }>;
+  cpu: number;
+  memory: number;
+  resize: (size: { cpu?: number; memory?: number }) => Promise<void>;
 }
 
 /** Daytona's API client, with a tiny shell: commands go to `handler` (exit 0 by default). */
@@ -60,6 +63,7 @@ function fakeDaytona(handler: Handler = () => undefined) {
     stopped: [] as string[],
     deleted: [] as string[],
     signed: [] as { port: number; ttl: number | undefined }[],
+    resized: [] as { cpu?: number; memory?: number }[],
     /** Uploads waiting on `holdUploads`. */
     held: 0,
   };
@@ -164,6 +168,15 @@ function fakeDaytona(handler: Handler = () => undefined) {
         url: `https://${port}-${vm.id}.proxy.daytona.fake`,
         token: "preview-token",
       }),
+      // Daytona's default sandbox size.
+      cpu: 1,
+      memory: 1,
+      resize: async (size) => {
+        if (vm.state !== SandboxState.STARTED) throw notRunning();
+        calls.resized.push(size);
+        vm.cpu = size.cpu ?? vm.cpu;
+        vm.memory = size.memory ?? vm.memory;
+      },
     };
     return vm;
   }
@@ -277,6 +290,61 @@ describe("DaytonaRuntimeProvider", () => {
     expect(everything).not.toContain(API_KEY);
     for (const command of vm?.commands ?? []) {
       expect(command).not.toMatch(/DAYTONA|API_KEY/);
+    }
+  });
+
+  it("grows Daytona's default sandbox to 2 CPUs and 4 GB before using it, once", async () => {
+    const fake = fakeDaytona();
+    const runtime = await provider(fake).open("site");
+    await runtime.run("ls");
+    await runtime.install();
+    expect(fake.calls.resized).toEqual([{ cpu: 2, memory: 4 }]);
+    expect(vmOf(fake, "site")).toMatchObject({ cpu: 2, memory: 4 });
+
+    // A sandbox made before sandboxes were grown is grown when it is next started.
+    const vm = vmOf(fake, "site");
+    if (vm) Object.assign(vm, { cpu: 1, memory: 8, state: SandboxState.STOPPED });
+    await (await provider(fake).open("site")).run("ls");
+    expect(fake.calls.resized).toEqual([{ cpu: 2, memory: 4 }, { cpu: 2 }]);
+
+    // Big enough already: left as it is.
+    const small = fakeDaytona();
+    await (await provider(small, { resources: { cpu: 1, memory: 1 } }).open("site")).run("ls");
+    expect(small.calls.resized).toEqual([]);
+  });
+
+  it("says plainly when Daytona can't make the sandbox big enough", async () => {
+    const fake = fakeDaytona();
+    const original = fake.client.create;
+    fake.client.create = async (params) => {
+      const vm = await original(params);
+      vm.resize = async () => {
+        throw new Error("Total memory limit exceeded");
+      };
+      return vm;
+    };
+    await expect(provider(fake).open("site")).rejects.toThrow(
+      "Daytona couldn't give the sandbox 2 CPUs and 4 GB of memory: Total memory limit exceeded",
+    );
+    expect(callerCommands(vmOf(fake, "site"))).toEqual([]);
+  });
+
+  it("keeps a seeded site working at its size when Daytona refuses to grow it", async () => {
+    const fake = fakeDaytona();
+    await (await provider(fake).open("site")).run("ls");
+    const vm = vmOf(fake, "site");
+    if (!vm) throw new Error("no sandbox");
+    Object.assign(vm, { cpu: 1, memory: 1, state: SandboxState.STOPPED });
+    vm.resize = async () => {
+      throw new Error("Total memory limit exceeded");
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await (await provider(fake).open("site")).run("ls");
+      expect(result.exitCode).toBe(0);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Total memory limit exceeded"));
+    } finally {
+      warn.mockRestore();
     }
   });
 
