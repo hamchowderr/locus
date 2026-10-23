@@ -1,10 +1,11 @@
+import { ClientAccessDenied, requireAgencyManager } from "@locus/auth";
 import { organization } from "@locus/db/control";
 import { eq } from "drizzle-orm";
 import { ChevronRight, CreditCard, Users, Workflow } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Page } from "@/app/ui";
-import { currentSession, locus } from "@/lib/locus";
+import { currentSession, locus, sessionContext } from "@/lib/locus";
 
 /** The agency's settings, each on its own page. */
 const SECTIONS = [
@@ -37,6 +38,14 @@ export default async function Settings() {
     .db.select({ name: organization.name })
     .from(organization)
     .where(eq(organization.id, orgId));
+  // The agency's settings are its owners' and admins'; a member sees only their own account.
+  const manager = await requireAgencyManager(locus().db, sessionContext(current)).then(
+    () => true,
+    (e) => {
+      if (e instanceof ClientAccessDenied) return false;
+      throw e;
+    },
+  );
 
   return (
     <Page title="Settings">
@@ -51,22 +60,24 @@ export default async function Settings() {
           <dd className="truncate">{agency?.name ?? "Unknown"}</dd>
         </dl>
       </section>
-      <nav aria-label="Agency settings" className="divide-y rounded-lg border">
-        {SECTIONS.map((s) => (
-          <Link
-            key={s.href}
-            href={s.href}
-            className="flex items-center gap-3 p-4 transition-colors hover:bg-muted"
-          >
-            <s.icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-medium">{s.name}</span>
-              <span className="block text-sm text-muted-foreground">{s.about}</span>
-            </span>
-            <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
-          </Link>
-        ))}
-      </nav>
+      {manager && (
+        <nav aria-label="Agency settings" className="divide-y rounded-lg border">
+          {SECTIONS.map((s) => (
+            <Link
+              key={s.href}
+              href={s.href}
+              className="flex items-center gap-3 p-4 transition-colors hover:bg-muted"
+            >
+              <s.icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{s.name}</span>
+                <span className="block text-sm text-muted-foreground">{s.about}</span>
+              </span>
+              <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
+            </Link>
+          ))}
+        </nav>
+      )}
     </Page>
   );
 }
