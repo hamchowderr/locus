@@ -633,6 +633,17 @@ describe("Composio connections", () => {
       expect(again.find((app) => app.toolkit === "gmail")).toMatchObject({ connected: true });
     });
 
+    test("an app Locus no longer offers is still listed, so it can be disconnected", async () => {
+      routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_old", "ACTIVE", "oldapp", "ac_1"]]);
+      const listed = await createComposioConnections({
+        apiKey: "test-key",
+        baseURL,
+        catalog: catalog(),
+        authConfigs: { oldapp: "ac_own" },
+      }).list("client-1");
+      expect(listed.find((app) => app.toolkit === "oldapp")).toMatchObject({ connected: true });
+    });
+
     test("connecting signs in through it, after removing the old sign-in", async () => {
       routes[`GET ${ACCOUNTS}`] = () => accountsBody([["ca_gmail_old", "ACTIVE", "gmail", "ac_1"]]);
       routes[`DELETE ${ACCOUNTS}/ca_gmail_old`] = () => ({ success: true });
