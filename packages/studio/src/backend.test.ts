@@ -14,6 +14,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { drizzle } from "drizzle-orm/libsql";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesignBrief } from "./brief.ts";
+import { PREVIEW_DEV_HOSTS, withPreviewDevHosts } from "./preview-config.ts";
 import {
   BACKEND_STACK,
   FIRST_MIGRATION_PATH,
@@ -498,6 +499,48 @@ describe("the generated preview database", () => {
       expect(cookie).toMatch(/Partitioned/);
     } finally {
       await closeDb();
+    }
+  });
+
+  it("lets the preview's own address sign members up, and no other", async () => {
+    // Inside the sandbox the request reaches the dev server on its own address, while the
+    // browser sends the preview's, so Better Auth needs telling which addresses to trust. The
+    // preview's next.config does that. (Better Auth skips this check under test, hence the flag.)
+    const dir = await mkdtemp(join(tmpdir(), "locus-preview-config-"));
+    vi.stubEnv("BETTER_AUTH_TRUSTED_ORIGINS", "https://own.example.test");
+    try {
+      const config = [{ path: "next.config.ts", content: "export default {};\n" }];
+      for (const file of withPreviewDevHosts(config, PREVIEW_DEV_HOSTS)) {
+        await writeFile(join(dir, file.path), String(file.content));
+      }
+      await import(join(dir, "next.config.ts"));
+      const auth = betterAuth({
+        secret: "a-test-secret-that-is-long-enough-for-better-auth",
+        emailAndPassword: { enabled: true },
+        advanced: { disableOriginCheck: false },
+        telemetry: { enabled: false },
+      });
+      const signUpFrom = async (origin: string) =>
+        (
+          await auth.handler(
+            new Request("http://127.0.0.1:3000/api/auth/sign-up/email", {
+              method: "POST",
+              headers: { "content-type": "application/json", origin, cookie: "seen=1" },
+              body: JSON.stringify({
+                name: "Ann",
+                email: `${new URL(origin).hostname}@example.test`,
+                password: "correct horse battery",
+              }),
+            }),
+          )
+        ).status;
+      expect(await signUpFrom("https://sb-preview.vercel.run")).toBe(200);
+      expect(await signUpFrom("https://elsewhere.example.test")).toBe(403);
+      // The site's own trusted addresses are kept.
+      expect(await signUpFrom("https://own.example.test")).toBe(200);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { Library } from "lucide-react";
+import type { ReactNode } from "react";
 import type { ToolViews } from "@/components/chat/tool-steps";
 import { ProjectChat } from "@/components/chat-project/project-chat";
 import type { ThreadOutput } from "@/components/chat-project/thread-groups";
@@ -25,15 +27,19 @@ const outputsOf = (t: ThreadItem): ThreadOutput[] =>
     : [];
 
 /**
- * The sub-account's chats: the chat kit's project chat, with Locus's tools told in plain words
- * and sites' conversations left out of the list.
+ * The sub-account's chat: the chat kit's project chat, with Locus's tools told in plain words
+ * and sites' conversations kept out of it. Its panel has the sub-account's Library beside
+ * Threads. The model is the server's own, so the composer offers no picker.
  */
 export function MainChat({
   className,
   modes,
+  library,
 }: {
   className?: string | undefined;
   modes: ReadonlyArray<{ id: string; name: string }>;
+  /** The Library tab's content, read on the server. */
+  library: ReactNode;
 }) {
   return (
     <ProjectChat
@@ -42,6 +48,14 @@ export function MainChat({
       toolViews={TOOL_VIEWS}
       isChat={isChat}
       outputsOf={outputsOf}
+      tabs={[
+        {
+          id: "library",
+          label: "Library",
+          icon: <Library className="size-4" aria-hidden />,
+          content: library,
+        },
+      ]}
     />
   );
 }
