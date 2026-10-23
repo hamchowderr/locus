@@ -3,6 +3,7 @@ import { type ListedSite, listSites } from "@locus/connect";
 import { Funnel, Globe } from "lucide-react";
 import Link from "next/link";
 import { SITE_STATUS } from "@/app/(app)/sites/[siteId]/site";
+import { RefreshWhenShown } from "@/components/refresh-when-shown";
 import { Badge } from "@/components/ui/badge";
 import { locus, NotConfigured } from "@/lib/locus";
 import { type SiteSummary, siteSummaries } from "@/lib/site-builder";
@@ -15,19 +16,25 @@ import { siteBuilderDeps } from "@/lib/site-builder-host";
  */
 export async function LibraryTab({ client }: { client: AuthorizedClient }) {
   const sites = await listSites(locus().db, client);
-  const names = await siteSummaries(
-    siteBuilderDeps(),
-    client,
-    sites.map((s) => s.id),
-  ).catch((e) => {
-    if (e instanceof NotConfigured) return new Map<string, SiteSummary>();
-    console.error("Library tab: reading site names failed", e);
-    return new Map<string, SiteSummary>();
-  });
+  // The deps are built inside the promise: an environment without the site builder's settings
+  // throws NotConfigured while building them, and that must not take the chat page down.
+  const names = await Promise.resolve()
+    .then(() =>
+      siteSummaries(
+        siteBuilderDeps(),
+        client,
+        sites.map((s) => s.id),
+      ),
+    )
+    .catch((e) => {
+      if (e instanceof NotConfigured) return new Map<string, SiteSummary>();
+      console.error("Library tab: reading site names failed", e);
+      return new Map<string, SiteSummary>();
+    });
   const sorted = [...sites].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
   return (
-    <div className="flex flex-col gap-3">
+    <RefreshWhenShown className="flex flex-col gap-3">
       {sorted.length === 0 ? (
         <p className="px-2 text-pretty text-xs text-muted-foreground">
           What this sub-account&apos;s threads make shows up here. Ask in the chat for a site or a
@@ -45,7 +52,7 @@ export async function LibraryTab({ client }: { client: AuthorizedClient }) {
       <Link href="/sites" className="px-2 text-xs text-muted-foreground underline">
         Open the full Library
       </Link>
-    </div>
+    </RefreshWhenShown>
   );
 }
 
