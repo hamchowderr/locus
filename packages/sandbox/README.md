@@ -42,7 +42,8 @@ output and the preview log are cut to a bounded tail (64k characters by default)
   of `package.json` and lockfiles differs from the last successful install.
 - **`DaytonaRuntimeProvider`** (`@mastra/daytona`, Mastra's workspace sandbox on Daytona): the
   same contract on a named, private Daytona sandbox per site (`locus-site-<hash of key>`,
-  `public: false`). Daytona stops an idle sandbox (`autoStopMinutes`, default 30) and keeps its
+  `public: false`), at least 2 CPUs and 4 GB of memory as on Vercel (`resources`; Daytona's
+  default sandbox is too small to install a Next site, so a smaller one is grown on start). Daytona stops an idle sandbox (`autoStopMinutes`, default 30) and keeps its
   files; Mastra starts it again on the next call, including one that stopped under a running
   call (`retryOnDead`). Seeding (`onCreate`, the same `.locus/seeded` marker) runs in Mastra's
   `onStart` hook, so it also covers a sandbox recreated mid-call, and every other call waits for
