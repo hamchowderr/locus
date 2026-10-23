@@ -46,6 +46,7 @@ Infisical paths). Running your own: [`docs/self-hosting.md`](../../docs/self-hos
 | `LOCUS_SANDBOX_PROVIDER`, `DAYTONA_API_KEY` | unset: Vercel Sandbox, as above | `daytona` runs site sandboxes on Daytona instead, with Otaku's `DAYTONA_API_KEY` (server-side only); set both on the web app and the agent server. Optional `LOCUS_SANDBOX_EGRESS` (domain allowlist), `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT` (see [`packages/sandbox`](../../packages/sandbox/README.md#configuration)) |
 | `LOCUS_IMAGE_API_KEY` (+ optional `LOCUS_IMAGE_BASE_URL`, `LOCUS_IMAGE_MODEL`) | — | the site builder's image API. Unset means no image generation |
 | `COMPOSIO_API_KEY` | — | Otaku's Composio project, for the Apps page (connect Gmail, Google Calendar, Slack per client). Unset means the page says it isn't set up. The agent server needs the same key to use the apps in chat |
+| `COMPOSIO_AUTH_CONFIGS` | — | Otaku's own sign-in apps, as `gmail=ac_123,googlecalendar=ac_456` (Composio auth config ids). A named app's sign-in screen shows Otaku's name instead of Composio's; its accounts connected before then need connecting again. The agent server needs the same value |
 | `COMPOSIO_WEBHOOK_SECRET` | — | the signing secret of the Composio project's webhook subscription to `/api/webhooks/composio`. With it, an app sign-in that expires emails the client's agency owners and admins. Unset means the webhook answers 503 |
 
 Without the required settings, a production deployment shows "Locus is being set up" and the
