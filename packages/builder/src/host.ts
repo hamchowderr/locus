@@ -585,7 +585,7 @@ export const pooledUsers = (locationId: string) => pool.get(locationId)?.users ?
  * Site sandboxes from the environment (see `sandboxProviderFromEnv`): Vercel Sandbox by default,
  * with `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID` and `LOCUS_SANDBOX_PROJECT_ID` or on a Vercel
  * deployment with its own OIDC token; Daytona with `LOCUS_SANDBOX_PROVIDER=daytona` and
- * `DAYTONA_API_KEY`. Otherwise the in-memory fake outside production (commands succeed and run
+ * `DAYTONA_API_KEY`; E2B with `LOCUS_SANDBOX_PROVIDER=e2b` and `E2B_API_KEY`. Otherwise the in-memory fake outside production (commands succeed and run
  * nothing, like the other stubs). In production without them, sandbox tools answer that previews
  * aren't set up; the setting names go to the log only.
  */
@@ -618,11 +618,12 @@ export function runtimesFromEnv(
 }
 
 /**
- * Sandboxes run on Daytona (`LOCUS_SANDBOX_PROVIDER=daytona`), which any host can reach. Any
- * other value, unknown ones included, is not Daytona; the settings checks report unknown ones.
+ * Sandboxes run on a service any host can reach with Otaku's API key: Daytona or E2B
+ * (`LOCUS_SANDBOX_PROVIDER=daytona` or `e2b`). Any other value, unknown ones included, is
+ * neither; the settings checks report unknown ones.
  */
-export const daytonaSandboxes = (env: Record<string, string | undefined> = process.env) =>
-  env.LOCUS_SANDBOX_PROVIDER === "daytona";
+export const directSandboxes = (env: Record<string, string | undefined> = process.env) =>
+  env.LOCUS_SANDBOX_PROVIDER === "daytona" || env.LOCUS_SANDBOX_PROVIDER === "e2b";
 
 /** How a Locus backend off Vercel reaches the web app (`remoteSiteRuntimes`, `remotePublish`). */
 export interface WebAppOptions {

@@ -31,6 +31,7 @@ import {
   AppServiceError,
   accessOf,
   createComposioConnections,
+  parseAuthConfigs,
 } from "@locus/harness";
 import { configured } from "./connect.ts";
 
@@ -72,7 +73,12 @@ async function withClientDb<T>(
 export function appConnectionsFromEnv(
   env: Record<string, string | undefined> = process.env,
 ): AppConnections | null {
-  return env.COMPOSIO_API_KEY ? createComposioConnections({ apiKey: env.COMPOSIO_API_KEY }) : null;
+  return env.COMPOSIO_API_KEY
+    ? createComposioConnections({
+        apiKey: env.COMPOSIO_API_KEY,
+        authConfigs: parseAuthConfigs(env.COMPOSIO_AUTH_CONFIGS),
+      })
+    : null;
 }
 
 /** Owners and admins may change the agency's clients' apps; others see them only. */

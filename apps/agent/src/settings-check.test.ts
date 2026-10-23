@@ -119,7 +119,7 @@ describe("the agent's settings check", () => {
     ]);
   });
 
-  it("needs DAYTONA_API_KEY only when sandboxes run on Daytona, and never echoes a value", () => {
+  it("needs a provider's key only when sandboxes run there, and never echoes a value", () => {
     expect(sandboxProblems({})).toEqual([]);
     expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "vercel" })).toEqual([]);
     expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "daytona" })).toEqual([
@@ -128,8 +128,12 @@ describe("the agent's settings check", () => {
     expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "daytona", DAYTONA_API_KEY: "k" })).toEqual(
       [],
     );
+    expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "e2b", DAYTONA_API_KEY: "k" })).toEqual([
+      "LOCUS_SANDBOX_PROVIDER is e2b, but E2B_API_KEY is not set",
+    ]);
+    expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "e2b", E2B_API_KEY: "k" })).toEqual([]);
     expect(sandboxProblems({ LOCUS_SANDBOX_PROVIDER: "dayt0na-key" })).toEqual([
-      "LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona",
+      "LOCUS_SANDBOX_PROVIDER must be one of vercel, daytona, e2b",
     ]);
   });
 });

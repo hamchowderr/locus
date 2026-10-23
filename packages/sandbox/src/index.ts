@@ -5,6 +5,8 @@ export {
   daytonaFromEnv,
   daytonaOptions,
 } from "./daytona.ts";
+export type { E2BSandboxConfig } from "./e2b.ts";
+export { E2B_PREVIEW_HOSTS, E2BRuntimeProvider, e2bFromEnv, e2bOptions } from "./e2b.ts";
 export type { SandboxProviderName } from "./env.ts";
 export {
   missingSandboxSettings,

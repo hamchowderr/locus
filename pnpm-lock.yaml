@@ -52,10 +52,10 @@ importers:
         version: link:../../packages/secrets
       '@mastra/core':
         specifier: 1.75.0
-        version: 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/libsql':
         specifier: 1.25.1
-        version: 1.25.1(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+        version: 1.25.1(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6)
@@ -68,7 +68,7 @@ importers:
         version: link:../../packages/testing
       '@mastra/client-js':
         specifier: 1.52.0
-        version: 1.52.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 1.52.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
@@ -143,7 +143,7 @@ importers:
         version: 6.2.6(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       better-auth:
         specifier: 1.7.7
-        version: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
+        version: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -225,13 +225,13 @@ importers:
         version: link:../harness
       '@mastra/core':
         specifier: 1.75.0
-        version: 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/hono':
         specifier: 1.7.17
-        version: 1.7.17(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(zod@4.6.5)
+        version: 1.7.17(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(zod@4.6.5)
       '@mastra/server':
         specifier: 1.75.0
-        version: 1.75.0(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+        version: 1.75.0(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
       hono:
         specifier: 4.13.13
         version: 4.13.13
@@ -247,10 +247,10 @@ importers:
         version: link:../testing
       '@mastra/client-js':
         specifier: 1.52.0
-        version: 1.52.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 1.52.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/libsql':
         specifier: 1.25.1
-        version: 1.25.1(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+        version: 1.25.1(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
@@ -274,7 +274,7 @@ importers:
         version: link:../db
       better-auth:
         specifier: 1.7.7
-        version: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
+        version: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6)
@@ -311,7 +311,7 @@ importers:
         version: link:../studio
       '@mastra/core':
         specifier: 1.75.0
-        version: 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6)
@@ -410,13 +410,13 @@ importers:
         version: link:../skills
       '@mastra/core':
         specifier: 1.75.0
-        version: 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/libsql':
         specifier: 1.25.1
-        version: 1.25.1(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+        version: 1.25.1(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
       '@mastra/memory':
         specifier: 1.36.0
-        version: 1.36.0(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+        version: 1.36.0(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
       zod:
         specifier: 4.6.5
         version: 4.6.5
@@ -438,13 +438,19 @@ importers:
         version: 0.201.0
       '@mastra/core':
         specifier: 1.75.0
-        version: 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+        version: 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/daytona':
         specifier: 0.11.3
-        version: 0.11.3(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+        version: 0.11.3(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
+      '@mastra/e2b':
+        specifier: 0.13.0
+        version: 0.13.0(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))
       '@vercel/sandbox':
         specifier: 3.8.0
         version: 3.8.0
+      e2b:
+        specifier: 2.55.0
+        version: 2.55.0
     devDependencies:
       '@types/node':
         specifier: 22.20.5
@@ -1026,6 +1032,9 @@ packages:
   '@braintree/sanitize-url@7.1.2':
     resolution: {integrity: sha512-jigsZK+sMF/cuiB7sERuo9V7N9jx+dhmHHnQyDSVdpZwVutaBu7WvNYqMDLSgFgfB30n452TP3vjDAvFC973mA==}
 
+  '@bufbuild/protobuf@2.16.0':
+    resolution: {integrity: sha512-FWa0sPlqYGJgpTs6OxBRcL/AW4JT0OIO+W1ajerluoTVh8CV0B7XM1qsNCRgnkSCkRCgOICKHRQlY17jrsm0+Q==}
+
   '@cfworker/json-schema@4.1.1':
     resolution: {integrity: sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og==}
 
@@ -1076,6 +1085,17 @@ packages:
     peerDependencies:
       zod: '>=3.25.76 <5'
 
+  '@connectrpc/connect-web@2.2.0':
+    resolution: {integrity: sha512-uuBUcBTYfb/r1o98LzCCZk1H90yx0vmZ5m21dpw/q4EUwsKwkCDGI8H0aEdjcZld+Q2jJ5A5ADvPqfb6lzQ/sg==}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.7.0
+      '@connectrpc/connect': 2.2.0
+
+  '@connectrpc/connect@2.2.0':
+    resolution: {integrity: sha512-M63OQ1ZFcPUm85CuewJ9G9CMV8LjzGR9935xOnXNQGSazAbwMb3x2W7vXBYM1zqrP7XFD8uxp/dUAhirclgwnQ==}
+    peerDependencies:
+      '@bufbuild/protobuf': ^2.7.0
+
   '@copilotkit/aimock@1.44.0':
     resolution: {integrity: sha512-3OTwrUmfEsK0cRre7m10m42Dyg97eAMcPVlPaqOBXyZPi14LM4R4D3Hb+mpihLSRSFQ40iF2AMfXbOaijs/h6Q==}
     engines: {node: '>=20.15.0'}
@@ -1111,6 +1131,10 @@ packages:
 
   '@drizzle-team/brocli@0.10.2':
     resolution: {integrity: sha512-z33Il7l5dKjUgGULTqBsQBQwckHh5AbIuxhdsIxDDiZAzBOrZO6q9ogcWC65kU382AfynTfgNumVcNIjuIua6w==}
+
+  '@e2b/dockerfile-utils@0.1.1':
+    resolution: {integrity: sha512-eDmlWRMrJNzSUbBOf6Y/qTChd1Ys/o3YY8PK6tRQmwkV2u7z3ZS2cak/YJB07odHMT/Z6HJKoUElR/b0N6bHUw==}
+    engines: {node: '>=22'}
 
   '@electron-internal/extract-zip@1.0.5':
     resolution: {integrity: sha512-+bqFCP98pLI0Tt0XQo1TmlXtwjWchISndDOxCkEcIuUgXWpBnLyRI+2DU+mesvnMMX6L1XDqYNA0lXNDHd/yiA==}
@@ -1879,6 +1903,12 @@ packages:
 
   '@mastra/daytona@0.11.3':
     resolution: {integrity: sha512-OAAphkAo2DWA61uCq8z6BqAhGlY+i4p9tm9x6hcbsdKOxUWkHkE/xcnWcZwE6OQCZDmo32+akJ/3E9BgkY1bvg==}
+    engines: {node: '>=22.13.0'}
+    peerDependencies:
+      '@mastra/core': '>=1.67.0-0 <2.0.0-0'
+
+  '@mastra/e2b@0.13.0':
+    resolution: {integrity: sha512-Rzk280i0LjI/hP9V3i8bpq7EWeMmR9kg0OT3obVJZ3sUgffKpfl3KE5jr2MFfX1UI3aqPJpGR2a3r0IRXF0JUQ==}
     engines: {node: '>=22.13.0'}
     peerDependencies:
       '@mastra/core': '>=1.67.0-0 <2.0.0-0'
@@ -4154,6 +4184,9 @@ packages:
     resolution: {integrity: sha512-OkTL9umf+He2DZkUq8f8J9of7yL6RJKI24dVITBmNfZBmri9zYZQrKkuXiKhyfPSu8tUhnVBB1iKXevvnlR4Ww==}
     engines: {node: '>= 12'}
 
+  compare-versions@6.1.1:
+    resolution: {integrity: sha512-4hm4VPpIecmlg59CHXnRDnqGplJFrbLG4aFEl5vl6cK1u76ws3LLvX7ikFnTDl5vo39sjWD6AaDPYodJp/NNHg==}
+
   conf@10.2.0:
     resolution: {integrity: sha512-8fLl9F04EJqjSqH+QjITQfJF8BrOVaYr1jewVgSRAEWePfxT0sku4w2hrGQ60BC/TNLGQ2pgxNlTbWQmMPFvXg==}
     engines: {node: '>=12'}
@@ -4582,6 +4615,10 @@ packages:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
     engines: {node: '>= 0.4'}
 
+  e2b@2.55.0:
+    resolution: {integrity: sha512-viC7GLHMPqzilndlKgNXWN0ebMV8fpbI1IfDlPd+GHuNcJIcUCXKyr5HAxjcC5sDMym3rrbyUyUQ+zQVAU9oGA==}
+    engines: {node: '>=20.18.1 <21 || >=22'}
+
   ee-first@1.1.1:
     resolution: {integrity: sha512-WMwm9LhRUo+WUaRN+vRuETqG89IgZphVSNkdFgeb6sS/E4OrDIN7t48CAewSHXc6C8lefD8KKfr5vY61brQlow==}
 
@@ -4925,6 +4962,10 @@ packages:
   glob-parent@5.1.2:
     resolution: {integrity: sha512-AOIgSQCepiJYwP3ARnGx+5VnTu2HBYdzbGP45eLw1vr3zB3vZLeyed1sC9hnbcOc9/SrMyM5RPQrkGz4aS9Zow==}
     engines: {node: '>= 6'}
+
+  glob@13.0.6:
+    resolution: {integrity: sha512-Wjlyrolmm8uDpm/ogGyXZXb1Z+Ca2B8NbJwqBVg0axK9GbBeoS7yGV6vjXnYdGm6X53iehEuxxbyiKp8QmN4Vw==}
+    engines: {node: 18 || 20 || >=22}
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
@@ -5905,8 +5946,14 @@ packages:
       zod:
         optional: true
 
+  openapi-fetch@0.17.0:
+    resolution: {integrity: sha512-PsbZR1wAPcG91eEthKhN+Zn92FMHxv+/faECIwjXdxfTODGSGegYv0sc1Olz+HYPvKOuoXfp+0pA2XVt2cI0Ig==}
+
   openapi-types@12.1.3:
     resolution: {integrity: sha512-N4YtSYJqghVu4iek2ZUvcN/0aqH1kRDuNqzcycDxhOUpg7GdvLa2F3DgS6yBNhInhv2r/6I0Flkn7CqL8+nIcw==}
+
+  openapi-typescript-helpers@0.1.0:
+    resolution: {integrity: sha512-OKTGPthhivLw/fHz6c3OPtg72vi86qaMlqbJuVJ23qOvQ+53uw1n7HdmkJFibloF7QEjDrDkzJiOJuockM/ljw==}
 
   ora@8.2.0:
     resolution: {integrity: sha512-weP+BZ8MVNnlCm8c0Qdc1WSWq4Qn7I+9CJGm7Qali6g44e/PUzbjNqJX5NJ9ljlNMosfJvg1fKEGILklK9cwnw==}
@@ -5975,6 +6022,10 @@ packages:
     resolution: {integrity: sha512-haREypq7xkM7ErfgIyA0z+Bj4AGKlMSdlQE2jvJo6huWD1EdkKYV+G/T4nq0YEF2vgTT8kqMFKo1uHn950r4SQ==}
     engines: {node: '>=12'}
 
+  path-scurry@2.0.2:
+    resolution: {integrity: sha512-3O/iVVsJAPsOnpwWIeD+d6z/7PmqApyQePUtCndjatj/9I5LylHvt5qluFaBT3I5h3r1ejfR056c+FCv+NnNXg==}
+    engines: {node: 18 || 20 || >=22}
+
   path-to-regexp@8.4.2:
     resolution: {integrity: sha512-qRcuIdP69NPm4qbACK+aDogI5CBDMi1jKe0ry5rSQJz8JVLsC7jV8XpiJjGRLLol3N+R5ihGYcrPLTno6pAdBA==}
 
@@ -6002,6 +6053,9 @@ packages:
   pkg-up@3.1.0:
     resolution: {integrity: sha512-nDywThFk1i4BQK4twPQ6TA4RT8bDY96yeuCVBWL3ePARCiEKDRSrNGbFIgUJpLp+XeIR65v8ra7WuJOFUBtkMA==}
     engines: {node: '>=8'}
+
+  platform@1.3.6:
+    resolution: {integrity: sha512-fnWVljUchTro6RiCFvCXBbNhJc2NijN7oIQxbwsyL0buWJPG85v81ehlHI9fXrJsMNgTofEoWIQeClKpgxFLrg==}
 
   points-on-curve@0.2.0:
     resolution: {integrity: sha512-0mYKnYYe9ZcqMCWhUjItv/oHjvgEsfKvnUTg8sAtnHr3GVy7rGkXCb6d5cSyqrWqL4k81b9CPg3urd+T7aop3A==}
@@ -6633,6 +6687,10 @@ packages:
     resolution: {integrity: sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==}
     engines: {node: '>=20.18.1'}
 
+  undici@8.11.2:
+    resolution: {integrity: sha512-u4UB2/IrKdU6lFxumHmmo1a3fCQO5tzQllRorfoRS63txhrB7xTpSn1PftwC4qEHkOaqP95fCWW4lJzwErwzhQ==}
+    engines: {node: '>=22.19.0'}
+
   unicorn-magic@0.3.0:
     resolution: {integrity: sha512-+QBBXBCvifc56fsbuxZQ6Sic3wqqc3WWaqxs58gvJrcOuN83HGTCwz3oS5phzU9LthRNE9VrJCFCLUgHeeFnfA==}
     engines: {node: '>=18'}
@@ -6970,18 +7028,20 @@ packages:
 
 snapshots:
 
-  '@a2a-js/sdk@0.3.14(@grpc/grpc-js@1.14.6)(express@5.3.0)':
+  '@a2a-js/sdk@0.3.14(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(express@5.3.0)':
     dependencies:
       uuid: 11.1.1
     optionalDependencies:
+      '@bufbuild/protobuf': 2.16.0
       '@grpc/grpc-js': 1.14.6
       express: 5.3.0
 
-  '@a2a-js/sdk@1.0.1(@grpc/grpc-js@1.14.6)(express@5.3.0)':
+  '@a2a-js/sdk@1.0.1(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(express@5.3.0)':
     dependencies:
       jose: 6.2.12
       uuid: 11.1.1
     optionalDependencies:
+      '@bufbuild/protobuf': 2.16.0
       '@grpc/grpc-js': 1.14.6
       express: 5.3.0
 
@@ -7516,6 +7576,13 @@ snapshots:
     optionalDependencies:
       drizzle-orm: 0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6)
 
+  '@better-auth/drizzle-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))':
+    dependencies:
+      '@better-auth/core': 1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
+      '@better-auth/utils': 0.4.2
+    optionalDependencies:
+      drizzle-orm: 0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6)
+
   '@better-auth/drizzle-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.5.0)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
@@ -7530,9 +7597,21 @@ snapshots:
     optionalDependencies:
       kysely: 0.29.6
 
+  '@better-auth/kysely-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(kysely@0.29.6)':
+    dependencies:
+      '@better-auth/core': 1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
+      '@better-auth/utils': 0.4.2
+    optionalDependencies:
+      kysely: 0.29.6
+
   '@better-auth/memory-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
+      '@better-auth/utils': 0.4.2
+
+  '@better-auth/memory-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)':
+    dependencies:
+      '@better-auth/core': 1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
       '@better-auth/utils': 0.4.2
 
   '@better-auth/mongo-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)':
@@ -7540,15 +7619,25 @@ snapshots:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
       '@better-auth/utils': 0.4.2
 
+  '@better-auth/mongo-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)':
+    dependencies:
+      '@better-auth/core': 1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
+      '@better-auth/utils': 0.4.2
+
   '@better-auth/prisma-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
       '@better-auth/utils': 0.4.2
 
+  '@better-auth/prisma-adapter@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)':
+    dependencies:
+      '@better-auth/core': 1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
+      '@better-auth/utils': 0.4.2
+
   '@better-auth/stripe@1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(better-auth@1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))))(better-call@1.4.0(zod@4.6.5))(stripe@22.6.2(@types/node@22.20.5))':
     dependencies:
       '@better-auth/core': 1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
-      better-auth: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
+      better-auth: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
       better-call: 1.4.0(zod@4.6.5)
       defu: 6.1.7
       stripe: 22.6.2(@types/node@22.20.5)
@@ -7613,6 +7702,8 @@ snapshots:
 
   '@braintree/sanitize-url@7.1.2': {}
 
+  '@bufbuild/protobuf@2.16.0': {}
+
   '@cfworker/json-schema@4.1.1': {}
 
   '@chevrotain/cst-dts-gen@12.0.0':
@@ -7672,6 +7763,15 @@ snapshots:
       dequal: 2.0.3
       re2js: 2.8.6
       zod: 4.6.5
+
+  '@connectrpc/connect-web@2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))':
+    dependencies:
+      '@bufbuild/protobuf': 2.16.0
+      '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.16.0)
+
+  '@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0)':
+    dependencies:
+      '@bufbuild/protobuf': 2.16.0
 
   '@copilotkit/aimock@1.44.0(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))':
     optionalDependencies:
@@ -7755,6 +7855,8 @@ snapshots:
   '@dotenvx/primitives@0.8.0': {}
 
   '@drizzle-team/brocli@0.10.2': {}
+
+  '@e2b/dockerfile-utils@0.1.1': {}
 
   '@electron-internal/extract-zip@1.0.5': {}
 
@@ -8263,11 +8365,11 @@ snapshots:
     dependencies:
       '@lukeed/csprng': 1.1.0
 
-  '@mastra/client-js@1.52.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/client-js@1.52.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
       '@ai-sdk/ui-utils': 1.2.11(zod@4.6.5)
       '@lukeed/uuid': 2.0.1
-      '@mastra/core': 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/schema-compat': 1.3.13(zod@4.6.5)
       canonicalize: 1.0.8
       jose: 6.2.12
@@ -8292,10 +8394,10 @@ snapshots:
       - zod-openapi
       - zod-to-json-schema
 
-  '@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@a2a-js/sdk-v0_3': '@a2a-js/sdk@0.3.14(@grpc/grpc-js@1.14.6)(express@5.3.0)'
-      '@a2a-js/sdk-v1': '@a2a-js/sdk@1.0.1(@grpc/grpc-js@1.14.6)(express@5.3.0)'
+      '@a2a-js/sdk-v0_3': '@a2a-js/sdk@0.3.14(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(express@5.3.0)'
+      '@a2a-js/sdk-v1': '@a2a-js/sdk@1.0.1(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(express@5.3.0)'
       '@ai-sdk/provider-utils-v6': '@ai-sdk/provider-utils@4.0.40(zod@4.6.5)'
       '@ai-sdk/provider-utils-v7': '@ai-sdk/provider-utils@5.0.13(zod@4.6.5)'
       '@ai-sdk/provider-v5': '@ai-sdk/provider@2.0.3'
@@ -8344,21 +8446,27 @@ snapshots:
       - zod-openapi
       - zod-to-json-schema
 
-  '@mastra/daytona@0.11.3(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
+  '@mastra/daytona@0.11.3(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
     dependencies:
       '@daytonaio/sdk': 0.201.0
-      '@mastra/core': 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     transitivePeerDependencies:
       - bufferutil
       - debug
       - supports-color
       - utf-8-validate
 
-  '@mastra/hono@1.7.17(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(zod@4.6.5)':
+  '@mastra/e2b@0.13.0(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
+    dependencies:
+      '@mastra/core': 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      e2b: 2.55.0
+      esbuild: 0.28.2
+
+  '@mastra/hono@1.7.17(@hono/node-server@1.19.17(hono@4.13.13))(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(hono@4.13.13)(zod@4.6.5)':
     dependencies:
       '@hono/node-ws': 1.3.1(@hono/node-server@1.19.17(hono@4.13.13))(hono@4.13.13)
-      '@mastra/core': 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
-      '@mastra/server': 1.75.0(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/server': 1.75.0(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)
       fetch-to-node: 2.1.0
       hono: 4.13.13
       ws: 8.22.0
@@ -8368,17 +8476,17 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@mastra/libsql@1.25.1(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
+  '@mastra/libsql@1.25.1(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
     dependencies:
       '@libsql/client': 0.18.0
-      '@mastra/core': 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@mastra/memory@1.36.0(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
+  '@mastra/memory@1.36.0(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))':
     dependencies:
-      '@mastra/core': 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       '@mastra/schema-compat': 1.3.13(zod@4.6.5)
       async-mutex: 0.5.0
       diff: 8.0.4
@@ -8396,9 +8504,9 @@ snapshots:
       zod: 4.6.5
       zod-from-json-schema: 0.5.6
 
-  '@mastra/server@1.75.0(@mastra/core@1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
+  '@mastra/server@1.75.0(@mastra/core@1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5))(zod@4.6.5)':
     dependencies:
-      '@mastra/core': 1.75.0(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
+      '@mastra/core': 1.75.0(@bufbuild/protobuf@2.16.0)(@grpc/grpc-js@1.14.6)(ai@7.0.140(zod@4.6.5))(express@5.3.0)(zod-to-json-schema@3.25.2(zod@4.6.5))(zod@4.6.5)
       hono: 4.13.13
       zod: 4.6.5
 
@@ -10313,7 +10421,7 @@ snapshots:
       '@better-auth/utils': 0.4.2
       '@clack/prompts': 1.8.1
       '@mrleebo/prisma-ast': 0.16.0
-      better-auth: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
+      better-auth: 1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1)))
       c12: 4.0.0-rc.2(dotenv@17.4.2)(jiti@2.7.0)
       chalk: 5.6.2
       commander: 15.0.0
@@ -10376,6 +10484,35 @@ snapshots:
   base64-js@1.5.1: {}
 
   baseline-browser-mapping@2.11.28: {}
+
+  better-auth@1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))):
+    dependencies:
+      '@better-auth/core': 1.7.7(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5)
+      '@better-auth/drizzle-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))
+      '@better-auth/kysely-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(kysely@0.29.6)
+      '@better-auth/memory-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)
+      '@better-auth/mongo-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)
+      '@better-auth/prisma-adapter': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)
+      '@better-auth/telemetry': 1.7.7(@better-auth/core@1.7.7(@better-auth/utils@0.5.0)(@better-fetch/fetch@1.3.2)(@opentelemetry/api@1.10.0)(better-call@1.4.0(zod@4.6.5))(jose@6.2.12)(kysely@0.29.6)(nanostores@1.5.5))(@better-auth/utils@0.4.2)(@better-fetch/fetch@1.3.2)
+      '@better-auth/utils': 0.4.2
+      '@better-fetch/fetch': 1.3.2
+      '@noble/ciphers': 2.4.0
+      '@noble/hashes': 2.4.0
+      better-call: 1.4.0(zod@4.6.5)
+      defu: 6.1.7
+      jose: 6.2.12
+      kysely: 0.29.6
+      nanostores: 1.5.5
+      zod: 4.6.5
+    optionalDependencies:
+      drizzle-kit: 0.31.11
+      drizzle-orm: 0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6)
+      next: 16.4.0(@babel/core@7.29.7)(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      react: 19.3.0
+      react-dom: 19.3.0(react@19.3.0)
+      vitest: 5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
+    transitivePeerDependencies:
+      - '@opentelemetry/api'
 
   better-auth@1.7.7(@opentelemetry/api@1.10.0)(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6))(next@16.4.0(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(react-dom@19.3.0(react@19.3.0))(react@19.3.0))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.3(@opentelemetry/api@1.10.0)(@types/node@22.20.5)(vite@8.3.4(@types/node@22.20.5)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))):
     dependencies:
@@ -10592,6 +10729,8 @@ snapshots:
   commander@7.2.0: {}
 
   commander@8.3.0: {}
+
+  compare-versions@6.1.1: {}
 
   conf@10.2.0:
     dependencies:
@@ -10920,6 +11059,22 @@ snapshots:
       call-bind-apply-helpers: 1.0.2
       es-errors: 1.3.0
       gopd: 1.2.0
+
+  e2b@2.55.0:
+    dependencies:
+      '@bufbuild/protobuf': 2.16.0
+      '@connectrpc/connect': 2.2.0(@bufbuild/protobuf@2.16.0)
+      '@connectrpc/connect-web': 2.2.0(@bufbuild/protobuf@2.16.0)(@connectrpc/connect@2.2.0(@bufbuild/protobuf@2.16.0))
+      '@e2b/dockerfile-utils': 0.1.1
+      chalk: 5.6.2
+      compare-versions: 6.1.1
+      glob: 13.0.6
+      openapi-fetch: 0.17.0
+      platform: 1.3.6
+      tar: 7.5.22
+      undici: 7.30.0
+    optionalDependencies:
+      undici8: undici@8.11.2
 
   ee-first@1.1.1: {}
 
@@ -11352,6 +11507,12 @@ snapshots:
   glob-parent@5.1.2:
     dependencies:
       is-glob: 4.0.3
+
+  glob@13.0.6:
+    dependencies:
+      minimatch: 10.2.6
+      minipass: 7.1.3
+      path-scurry: 2.0.2
 
   gopd@1.2.0: {}
 
@@ -12516,7 +12677,13 @@ snapshots:
       ws: 8.22.0
       zod: 4.6.5
 
+  openapi-fetch@0.17.0:
+    dependencies:
+      openapi-typescript-helpers: 0.1.0
+
   openapi-types@12.1.3: {}
+
+  openapi-typescript-helpers@0.1.0: {}
 
   ora@8.2.0:
     dependencies:
@@ -12580,6 +12747,11 @@ snapshots:
 
   path-key@4.0.0: {}
 
+  path-scurry@2.0.2:
+    dependencies:
+      lru-cache: 11.5.3
+      minipass: 7.1.3
+
   path-to-regexp@8.4.2: {}
 
   pathe@2.0.3: {}
@@ -12601,6 +12773,8 @@ snapshots:
   pkg-up@3.1.0:
     dependencies:
       find-up: 3.0.0
+
+  platform@1.3.6: {}
 
   points-on-curve@0.2.0: {}
 
@@ -13491,6 +13665,9 @@ snapshots:
   undici-types@7.24.6: {}
 
   undici@7.30.0: {}
+
+  undici@8.11.2:
+    optional: true
 
   unicorn-magic@0.3.0: {}
 
