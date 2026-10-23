@@ -303,7 +303,8 @@ describe("DaytonaRuntimeProvider", () => {
 
   it("says plainly when a site's sandbox is too small, instead of letting its install be killed", async () => {
     const tooSmall =
-      /has 1 CPUs and 1 GB of memory, and a site needs at least 2 and 4\. .*delete it and it is made again/;
+      "This site's preview sandbox is too small to install the site (it has 1 CPUs and 1 GB of memory; a site needs at least 2 and 4). Otaku needs to replace it; trying again won't help.";
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
     // A snapshot that's too small.
     const fake = fakeDaytona();
     await expect(provider(fake, { snapshot: "daytona-small" }).open("site")).rejects.toThrow(
@@ -319,6 +320,10 @@ describe("DaytonaRuntimeProvider", () => {
     Object.assign(vm, { cpu: 1, memory: 1, state: SandboxState.STOPPED });
     await expect(provider(old).open("site")).rejects.toThrow(tooSmall);
     expect(old.calls.deleted).toEqual([]);
+    // Otaku's log names the sandbox and the setting; the error the builder sees doesn't.
+    expect(error).toHaveBeenCalledWith(expect.stringContaining(vm.name));
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("DAYTONA_SNAPSHOT"));
+    error.mockRestore();
   });
 
   it("gives commands only Locus's fixed environment", async () => {

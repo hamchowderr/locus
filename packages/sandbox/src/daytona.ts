@@ -80,7 +80,8 @@ export interface DaytonaSandboxConfig {
   /**
    * The least CPU (cores) and memory (GiB) a site's sandbox may run with. Default 2 and 4, as on
    * Vercel Sandbox. A smaller one (made before `snapshot` was bigger) is refused with a plain
-   * error rather than left to fail its install: delete it, and it is made again from `snapshot`.
+   * error rather than left to fail its install. Deleting it makes it again from `snapshot`, without
+   * the preview's own data (`.data`: its database and members' uploads).
    */
   resources?: { cpu: number; memory: number };
   /**
@@ -446,8 +447,12 @@ class DaytonaSiteRuntime implements SiteRuntime {
     const want = this.config.resources ?? DEFAULTS.resources;
     const { cpu, memory } = sandbox.daytona;
     if (cpu >= want.cpu && memory >= want.memory) return;
+    // The details are for Otaku; the error reaches the site builder and the agency.
+    console.error(
+      `Daytona sandbox ${this.id} has ${cpu} CPUs and ${memory} GB of memory, under ${want.cpu} and ${want.memory}: made before sandboxes came from a big enough snapshot, or DAYTONA_SNAPSHOT is too small. Deleting it makes it again, without the preview's own data (.data).`,
+    );
     throw new Error(
-      `The site's Daytona sandbox (${this.id}) has ${cpu} CPUs and ${memory} GB of memory, and a site needs at least ${want.cpu} and ${want.memory}. It was made before sandboxes came from a big enough snapshot, or DAYTONA_SNAPSHOT is too small; delete it and it is made again.`,
+      `This site's preview sandbox is too small to install the site (it has ${cpu} CPUs and ${memory} GB of memory; a site needs at least ${want.cpu} and ${want.memory}). Otaku needs to replace it; trying again won't help.`,
     );
   }
 
