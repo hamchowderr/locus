@@ -39,7 +39,8 @@ export function AccessPicker({
   }
 
   const choose = (next: AppAccess) => {
-    if (next === value) return;
+    // Rows stay enabled while saving, so the pressed one keeps keyboard focus.
+    if (next === value || pending) return;
     const previous = value;
     setValue(next);
     setError(null);
@@ -71,10 +72,10 @@ export function AccessPicker({
               type="button"
               role="radio"
               aria-checked={selected}
-              disabled={pending}
+              aria-disabled={pending}
               onClick={() => choose(option.value)}
               className={cn(
-                "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 disabled:opacity-70",
+                "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 aria-disabled:opacity-70",
                 selected && "bg-muted/60",
               )}
             >
