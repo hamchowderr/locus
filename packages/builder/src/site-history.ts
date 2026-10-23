@@ -1,5 +1,6 @@
 import { type AuthorizedClient, assertAuthorizedClient, type SessionContext } from "@locus/auth";
 import {
+  SITE_SCHEMA_PATH,
   type SitePage,
   SiteWorkspace,
   sitePages,
@@ -83,6 +84,23 @@ export async function siteHistory(
       refusal: await buildRefusal(deps.db, client, siteId),
     };
   });
+}
+
+/**
+ * Whether the site's draft has a database (its schema). The live database is only made the first
+ * time the site is published, so until then the Database page has none to show.
+ */
+export async function siteDraftHasDatabase(
+  deps: HistoryDeps,
+  client: AuthorizedClient,
+  siteId: string,
+): Promise<boolean> {
+  return withWorkspace(
+    deps,
+    client,
+    siteId,
+    async (workspace) => (await workspace.readFile(SITE_SCHEMA_PATH)) !== null,
+  );
 }
 
 async function versionByNumber(workspace: SiteWorkspace, number: number): Promise<VersionInfo> {
