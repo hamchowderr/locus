@@ -3,22 +3,22 @@ import { CheckIcon, TriangleAlertIcon } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Notice } from "@/app/ui";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { appConnectionsFromEnv, type ClientApp, clientApps, clientDbFromEnv } from "@/lib/apps";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
-import { AccessPicker } from "./access-picker";
-import { disconnectApp } from "./actions";
+import { cn } from "@/lib/utils";
+import { accessOption } from "./access";
+import { AppLogo } from "./app-logo";
 import { ConnectButton } from "./connect-button";
-import { categoriesOf, directoryHref, filterApps, pageOf, readQuery } from "./directory";
+import {
+  categoriesOf,
+  type DirectoryTab,
+  directoryHref,
+  filterApps,
+  pageOf,
+  readQuery,
+  tabOf,
+} from "./directory";
 import { DirectoryFilters } from "./directory-filters";
 
 type Search = {
@@ -28,17 +28,29 @@ type Search = {
   q?: string;
   category?: string;
   page?: string;
+  tab?: string;
 };
 
-function Shell({ children }: { children: React.ReactNode }) {
+type Query = ReturnType<typeof readQuery>;
+
+function Shell({ header, children }: { header?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
-      <h1 className="text-2xl font-semibold tracking-tight">Connectors</h1>
-      <div className="mt-6 space-y-6">{children}</div>
+    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Connectors</h1>
+          {header}
+        </div>
+      </div>
+      <div className="mt-6 space-y-4">{children}</div>
     </div>
   );
 }
 
+/**
+ * The client's connectors, laid out like Claude's: Yours (what's connected, and whether it
+ * still works) and Discover (every app Locus offers). Each app has its own page.
+ */
 export default async function Apps({ searchParams }: { searchParams: Promise<Search> }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fapps");
@@ -50,7 +62,7 @@ export default async function Apps({ searchParams }: { searchParams: Promise<Sea
   if (!connections) {
     return (
       <Shell>
-        <Notice tone="info">Connected apps aren't set up here yet.</Notice>
+        <Notice tone="info">Connectors aren't set up here yet.</Notice>
       </Shell>
     );
   }
@@ -63,88 +75,175 @@ export default async function Apps({ searchParams }: { searchParams: Promise<Sea
       return { problem: true as const };
     });
   if (!listing) redirect("/clients");
+  if ("problem" in listing) {
+    return (
+      <Shell>
+        <Notice tone="error">
+          Locus couldn't load the connectors just now. Reload to try again.
+        </Notice>
+      </Shell>
+    );
+  }
 
+  const tab = tabOf(query.tab, listing.apps);
   return (
-    <Shell>
+    <Shell header={<Tabs tab={tab} query={query} />}>
       {error && <Notice tone="error">{error}</Notice>}
       {connected && <Notice tone="info">Back from the app's sign-in. Its status is below.</Notice>}
-      {disconnected && <Notice tone="info">App disconnected.</Notice>}
-      <p className="max-w-2xl text-neutral-600">
-        The chat can use the apps connected for this client. For each one, choose whether it runs
-        without asking, asks before changes (the default) or asks every time, or turn it off. After
-        the chat reads an email or message, everything it does next waits for approval, whatever the
-        setting.
-        {!("problem" in listing) &&
-          !listing.manager &&
-          " Only owners and admins can connect apps or change these settings."}
-      </p>
-      {"problem" in listing ? (
-        <Notice tone="error">Locus couldn't load the apps just now. Reload to try again.</Notice>
+      {disconnected && <Notice tone="info">Connector disconnected.</Notice>}
+      <DirectoryFilters
+        tab={tab}
+        q={query.q}
+        category={query.category}
+        categories={tab === "discover" ? categoriesOf(listing.apps) : undefined}
+      />
+      {tab === "yours" ? (
+        <Yours apps={listing.apps} manager={listing.manager} query={query} />
       ) : (
-        <Directory apps={listing.apps} manager={listing.manager} query={query} />
+        <Discover apps={listing.apps} manager={listing.manager} query={query} />
+      )}
+      {!listing.manager && (
+        <p className="text-sm text-muted-foreground">
+          Only owners and admins can connect apps or change how the chat uses them.
+        </p>
       )}
     </Shell>
   );
 }
 
-function Directory({
-  apps,
-  manager,
-  query,
-}: {
-  apps: ClientApp[];
-  manager: boolean;
-  query: ReturnType<typeof readQuery>;
-}) {
-  const matching = filterApps(apps, query);
-  // An app whose sign-in expired stays with the connected ones, so it's seen and reconnected.
-  const connectedApps = matching.filter((app) => app.connected || app.expired);
-  const others = pageOf(
-    matching.filter((app) => !app.connected && !app.expired),
-    query.page,
-  );
-  const filtered = query.q !== "" || query.category !== "";
-
-  return (
-    <>
-      <DirectoryFilters q={query.q} category={query.category} categories={categoriesOf(apps)} />
-      {connectedApps.length > 0 && (
-        <section aria-labelledby="connected-apps" className="space-y-3">
-          <h2 id="connected-apps" className="text-sm font-medium text-neutral-600">
-            Connected ({connectedApps.length})
-          </h2>
-          <AppGrid apps={connectedApps} manager={manager} />
-        </section>
+/** Claude's Yours | Discover switch. Links, so each tab has its own address. */
+function Tabs({ tab, query }: { tab: DirectoryTab; query: Query }) {
+  const item = (value: DirectoryTab, label: string) => (
+    <Link
+      href={directoryHref({ q: query.q, tab: value })}
+      aria-current={tab === value ? "page" : undefined}
+      scroll={false}
+      className={cn(
+        "rounded-md px-3 py-1 text-sm font-medium transition-colors",
+        tab === value
+          ? "bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
       )}
-      <section aria-labelledby="all-apps" className="space-y-3">
-        <h2 id="all-apps" className="text-sm font-medium text-neutral-600">
-          {filtered ? "Matching apps" : "All apps"} ({others.total})
-        </h2>
-        {others.total === 0 ? (
-          <p className="text-sm text-neutral-600">
-            No apps match.{" "}
-            <Link href="/apps" className="underline">
-              Clear the search
-            </Link>
-          </p>
-        ) : (
-          <AppGrid apps={others.items} manager={manager} />
-        )}
-        {others.pages > 1 && (
-          <nav aria-label="Pages" className="flex items-center justify-between gap-3 pt-2">
-            <PageLink query={query} page={others.page - 1} disabled={others.page <= 1}>
-              Previous
-            </PageLink>
-            <span className="text-sm text-neutral-600">
-              Page {others.page} of {others.pages}
-            </span>
-            <PageLink query={query} page={others.page + 1} disabled={others.page >= others.pages}>
-              Next
-            </PageLink>
-          </nav>
-        )}
-      </section>
-    </>
+    >
+      {label}
+    </Link>
+  );
+  return (
+    <nav aria-label="Connectors" className="inline-flex rounded-lg bg-muted p-0.5">
+      {item("yours", "Yours")}
+      {item("discover", "Discover")}
+    </nav>
+  );
+}
+
+/** The client's connected apps as a list: name, how the chat may use it, and its status. */
+function Yours({ apps, manager, query }: { apps: ClientApp[]; manager: boolean; query: Query }) {
+  // An app whose sign-in expired stays here, so it's seen and reconnected.
+  const yours = filterApps(apps, query).filter((app) => app.connected || app.expired);
+  if (yours.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed px-6 py-10 text-center">
+        <p className="text-sm text-muted-foreground">
+          {query.q ? "None of your connectors match." : "No connectors yet."}
+        </p>
+        <Button variant="outline" size="sm" className="mt-3" asChild>
+          <Link href={directoryHref({ q: query.q, tab: "discover" })}>Browse connectors</Link>
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="text-left text-muted-foreground">
+          <th className="py-2 font-normal">Connector</th>
+          <th className="hidden py-2 font-normal sm:table-cell">Chat may</th>
+          <th className="w-32 py-2 font-normal">Status</th>
+        </tr>
+      </thead>
+      <tbody className="divide-y border-t">
+        {yours.map((app) => (
+          <tr key={app.toolkit}>
+            <td className="py-2.5 pr-3">
+              <Link
+                href={`/apps/${encodeURIComponent(app.toolkit)}`}
+                className="flex items-center gap-3 font-medium hover:underline"
+              >
+                <AppLogo app={app} size="sm" />
+                <span className="truncate">{app.name}</span>
+              </Link>
+            </td>
+            <td className="hidden py-2.5 pr-3 text-muted-foreground sm:table-cell">
+              {app.connected ? accessOption(app.access).label : "Nothing until reconnected"}
+            </td>
+            <td className="py-2.5">
+              {app.connected ? (
+                <CheckIcon aria-label="Connected" className="size-4" />
+              ) : (
+                <span className="flex items-center gap-2">
+                  <TriangleAlertIcon
+                    aria-label="Sign-in expired"
+                    className="size-4 text-amber-600"
+                  />
+                  {manager && (
+                    <ConnectButton toolkit={app.toolkit} name={app.name} label="Reconnect" />
+                  )}
+                </span>
+              )}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** Every app Locus offers, as Claude's two-column cards, connected ones first. */
+function Discover({ apps, manager, query }: { apps: ClientApp[]; manager: boolean; query: Query }) {
+  const matching = pageOf(filterApps(apps, query), query.page);
+  if (matching.total === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No apps match.{" "}
+        <Link href={directoryHref({ tab: "discover" })} className="underline">
+          Clear the search
+        </Link>
+      </p>
+    );
+  }
+  return (
+    <section aria-label="Apps" className="space-y-4">
+      <h2 className="text-sm font-medium">
+        {query.q || query.category ? "Matching apps" : "All apps"}{" "}
+        <span className="ml-1 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+          {matching.total}
+        </span>
+      </h2>
+      <ul className="grid gap-3 sm:grid-cols-2">
+        {matching.items.map((app) => (
+          <li key={app.toolkit}>
+            <AppCard app={app} manager={manager} />
+          </li>
+        ))}
+      </ul>
+      {matching.pages > 1 && (
+        <nav aria-label="Pages" className="flex items-center justify-between gap-3 pt-2">
+          <PageLink query={query} page={matching.page - 1} disabled={matching.page <= 1}>
+            Previous
+          </PageLink>
+          <span className="text-sm text-muted-foreground">
+            Page {matching.page} of {matching.pages}
+          </span>
+          <PageLink
+            query={query}
+            page={matching.page + 1}
+            disabled={matching.page >= matching.pages}
+          >
+            Next
+          </PageLink>
+        </nav>
+      )}
+    </section>
   );
 }
 
@@ -154,7 +253,7 @@ function PageLink({
   disabled,
   children,
 }: {
-  query: ReturnType<typeof readQuery>;
+  query: Query;
   page: number;
   disabled: boolean;
   children: React.ReactNode;
@@ -168,119 +267,40 @@ function PageLink({
   }
   return (
     <Button variant="outline" size="sm" asChild>
-      <Link href={directoryHref({ ...query, page })} scroll={false}>
+      <Link href={directoryHref({ ...query, tab: "discover", page })} scroll={false}>
         {children}
       </Link>
     </Button>
   );
 }
 
-function AppGrid({ apps, manager }: { apps: ClientApp[]; manager: boolean }) {
-  return (
-    <ul className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-      {apps.map((app) => (
-        <li key={app.toolkit}>
-          <AppCard app={app} manager={manager} />
-        </li>
-      ))}
-    </ul>
-  );
-}
-
+/** One app: the whole card opens its page; the + connects it straight away. */
 function AppCard({ app, manager }: { app: ClientApp; manager: boolean }) {
-  const category = app.categories[0]?.name;
   return (
-    <Card size="sm" className="h-full">
-      <CardHeader>
-        <div className="flex min-w-0 items-center gap-3">
-          <Logo app={app} />
-          <div className="min-w-0">
-            <CardTitle className="truncate">{app.name}</CardTitle>
-            {app.connected ? (
-              <span className="flex items-center gap-1 text-xs text-emerald-700">
-                <CheckIcon className="size-3" /> Connected
-              </span>
-            ) : app.expired ? (
-              <span className="flex items-center gap-1 text-xs text-amber-700">
-                <TriangleAlertIcon className="size-3" /> Sign-in expired
-              </span>
-            ) : (
-              category && (
-                <Badge variant="secondary" className="mt-0.5">
-                  {category}
-                </Badge>
-              )
-            )}
-          </div>
-        </div>
-        {manager && (
-          <CardAction>
-            {app.connected ? (
-              <DisconnectButton app={app} />
-            ) : app.expired ? (
-              // An expired app can be signed in again, or removed without signing in.
-              <div className="flex items-center gap-2">
-                <ConnectButton toolkit={app.toolkit} name={app.name} label="Reconnect" />
-                <DisconnectButton app={app} label="Remove" />
-              </div>
-            ) : (
-              <ConnectButton toolkit={app.toolkit} name={app.name} />
-            )}
-          </CardAction>
-        )}
+    <div className="relative flex h-full gap-3 rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40">
+      <AppLogo app={app} />
+      <div className="min-w-0 flex-1">
+        <Link
+          href={`/apps/${encodeURIComponent(app.toolkit)}`}
+          className="font-medium after:absolute after:inset-0 after:rounded-xl"
+        >
+          {app.name}
+        </Link>
         {app.description && (
-          <CardDescription className="line-clamp-2">{app.description}</CardDescription>
+          <p className="mt-0.5 line-clamp-2 text-sm text-muted-foreground">{app.description}</p>
         )}
-      </CardHeader>
-      {app.connected && (
-        <CardContent>
-          <AccessPicker
-            toolkit={app.toolkit}
-            name={app.name}
-            access={app.access}
-            manager={manager}
-          />
-        </CardContent>
-      )}
-    </Card>
-  );
-}
-
-function DisconnectButton({ app, label = "Disconnect" }: { app: ClientApp; label?: string }) {
-  return (
-    <form action={disconnectApp}>
-      <input type="hidden" name="toolkit" value={app.toolkit} />
-      <Button type="submit" variant="outline" size="sm" aria-label={`${label} ${app.name}`}>
-        {label}
-      </Button>
-    </form>
-  );
-}
-
-/** The app's logo from Composio, loaded only as it scrolls into view; its initial without one. */
-function Logo({ app }: { app: ClientApp }) {
-  if (!app.logo.startsWith("https://")) {
-    return (
-      <span
-        aria-hidden
-        className="flex size-9 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-sm font-medium uppercase text-neutral-600"
-      >
-        {app.name.slice(0, 1)}
-      </span>
-    );
-  }
-  return (
-    // Composio's logos come from hosts Locus doesn't list for next/image; they're small already.
-    // biome-ignore lint/performance/noImgElement: see above
-    <img
-      src={app.logo}
-      alt=""
-      width={36}
-      height={36}
-      loading="lazy"
-      decoding="async"
-      referrerPolicy="no-referrer"
-      className="size-9 shrink-0 rounded-md bg-white object-contain p-1 ring-1 ring-foreground/10"
-    />
+      </div>
+      <div className="relative z-10 shrink-0">
+        {app.connected ? (
+          <span className="flex size-7 items-center justify-center rounded-md border">
+            <CheckIcon aria-label="Connected" className="size-4 text-emerald-600" />
+          </span>
+        ) : app.expired ? (
+          <TriangleAlertIcon aria-label="Sign-in expired" className="m-1.5 size-4 text-amber-600" />
+        ) : (
+          manager && <ConnectButton toolkit={app.toolkit} name={app.name} icon />
+        )}
+      </div>
+    </div>
   );
 }

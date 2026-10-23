@@ -1,21 +1,17 @@
 "use client";
 
 import type { AppAccess } from "@locus/harness";
+import { CheckIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { cn } from "@/lib/utils";
 import { ACCESS_OPTIONS, accessOption } from "./access";
 import { setAppAccess } from "./actions";
 
 /**
- * How the chat may use one connected app. Owners and admins choose; everyone else sees the
- * setting. The agent enforces it; this only saves it.
+ * How the chat may use one connected app, as a list of choices like Claude's tool permissions.
+ * Owners and admins choose; everyone else sees the setting. The agent enforces it; this only
+ * saves it.
  */
 export function AccessPicker({
   toolkit,
@@ -32,19 +28,20 @@ export function AccessPicker({
   const [value, setValue] = useState<AppAccess>(access);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const current = accessOption(value);
 
   if (!manager) {
+    const current = accessOption(value);
     return (
-      <p className="text-xs text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         <span className="font-medium text-foreground">{current.label}.</span> {current.detail}
       </p>
     );
   }
 
-  const choose = (next: string) => {
+  const choose = (next: AppAccess) => {
+    if (next === value) return;
     const previous = value;
-    setValue(next as AppAccess);
+    setValue(next);
     setError(null);
     startTransition(async () => {
       const result = await setAppAccess(toolkit, next);
@@ -58,26 +55,43 @@ export function AccessPicker({
   };
 
   return (
-    <div className="space-y-1.5">
-      <Select value={value} onValueChange={choose} disabled={pending}>
-        <SelectTrigger
-          className="h-8 w-full"
-          aria-label={`How the chat may use ${name}`}
-          aria-busy={pending}
-        >
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          {ACCESS_OPTIONS.map((option) => (
-            <SelectItem key={option.value} value={option.value}>
-              {option.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <p className="text-xs text-muted-foreground">{current.detail}</p>
+    <div className="space-y-2">
+      <div
+        role="radiogroup"
+        aria-label={`How the chat may use ${name}`}
+        aria-busy={pending}
+        className="divide-y overflow-hidden rounded-xl border"
+      >
+        {ACCESS_OPTIONS.map((option) => {
+          const selected = option.value === value;
+          return (
+            // biome-ignore lint/a11y/useSemanticElements: a row with a label and a description reads better than a bare radio
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              disabled={pending}
+              onClick={() => choose(option.value)}
+              className={cn(
+                "flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/60 disabled:opacity-70",
+                selected && "bg-muted/60",
+              )}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm font-medium">{option.label}</span>
+                <span className="block text-sm text-muted-foreground">{option.detail}</span>
+              </span>
+              <CheckIcon
+                aria-hidden
+                className={cn("size-4 shrink-0", selected ? "opacity-100" : "opacity-0")}
+              />
+            </button>
+          );
+        })}
+      </div>
       {error && (
-        <p role="alert" className="text-xs text-destructive">
+        <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
       )}
