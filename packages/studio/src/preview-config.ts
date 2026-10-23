@@ -13,7 +13,10 @@ const CONFIGS = ["next.config.js", "next.config.mjs", "next.config.ts", "next.co
 
 /**
  * The preview's `next.config`: the draft's own one moves to `next.config.site.*`, and a small
- * one in its place adds the preview's hosts to `allowedDevOrigins`. A draft whose config Next
+ * one in its place adds the preview's hosts to `allowedDevOrigins`, and tells the site's logins
+ * (Better Auth, through `BETTER_AUTH_TRUSTED_ORIGINS`) to trust them. Inside the sandbox the
+ * request reaches the dev server on its own address, so Better Auth would otherwise refuse a
+ * sign-up from the preview's address with "Invalid origin". A draft whose config Next
  * takes is in another form (`next.config.js` or `.mts`) is left as it is.
  *
  * `next dev` restarts only when the file it loaded changes, so the small one carries a hash of
@@ -43,6 +46,11 @@ import site from "./next.config.site";
 type SiteConfig = NextConfig | ((...args: never[]) => NextConfig | Promise<NextConfig>);
 
 const previewHosts: string[] = ${JSON.stringify(hosts)};
+// The site's logins accept sign-ups sent from the preview's address.
+const trusted = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "").split(",").filter(Boolean);
+process.env.BETTER_AUTH_TRUSTED_ORIGINS = [
+  ...new Set([...trusted, ...previewHosts.map((host) => \`https://\${host}\`)]),
+].join(",");
 const withPreview = (config: NextConfig): NextConfig => ({
   ...config,
   allowedDevOrigins: [...(config.allowedDevOrigins ?? []), ...previewHosts],
@@ -58,6 +66,11 @@ const mjsWrapper = (header: string, hosts: string[]) => `${header}
 import site from "./next.config.site.mjs";
 
 const previewHosts = ${JSON.stringify(hosts)};
+// The site's logins accept sign-ups sent from the preview's address.
+const trusted = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ?? "").split(",").filter(Boolean);
+process.env.BETTER_AUTH_TRUSTED_ORIGINS = [
+  ...new Set([...trusted, ...previewHosts.map((host) => \`https://\${host}\`)]),
+].join(",");
 const withPreview = (config) => ({
   ...config,
   allowedDevOrigins: [...(config.allowedDevOrigins ?? []), ...previewHosts],
