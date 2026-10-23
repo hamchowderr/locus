@@ -4,10 +4,10 @@ import {
   Building2,
   ChevronsUpDown,
   CreditCard,
-  Library,
   LogOut,
   MessagesSquare,
   Plug,
+  Settings,
   Shield,
   Users,
   Workflow,
@@ -38,20 +38,18 @@ import { type AppPage, afterSwitch, isCurrent, menuSections } from "@/lib/app-pa
 
 const ICONS: Record<AppPage["icon"], typeof MessagesSquare> = {
   chat: MessagesSquare,
-  sites: Library,
   connectors: Plug,
   "sub-accounts": Building2,
   team: Users,
   integrations: Workflow,
-  billing: CreditCard,
   operator: Shield,
 };
 
 export type SubAccountOption = { id: string; name: string };
 
 /**
- * Locus's menu: the sub-account switcher, the sub-account's pages, the agency's pages, and
- * who is signed in. The server actions come from the layout, so this file holds no access
+ * Locus's menu: the sub-account switcher, the sub-account's pages, the agency's pages, and the
+ * account menu at the bottom (Settings, Billing, Sign out), as in the Claude app. The server actions come from the layout, so this file holds no access
  * checks of its own; switching goes through `chooseClient`, which checks access first.
  */
 export function AppSidebar({
@@ -149,17 +147,44 @@ export function AppSidebar({
       <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
-            <div className="truncate px-2 py-1 text-xs text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden">
-              {email}
-            </div>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <form action={signOut}>
-              <SidebarMenuButton type="submit" tooltip="Sign out">
-                <LogOut />
-                <span>Sign out</span>
-              </SidebarMenuButton>
-            </form>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton size="lg" tooltip="Account">
+                  <div className="flex aspect-square size-8 items-center justify-center rounded-full bg-sidebar-accent text-sm font-medium uppercase">
+                    {email.charAt(0) || "?"}
+                  </div>
+                  <span className="min-w-0 flex-1 truncate text-sm">{email}</span>
+                  <ChevronsUpDown className="ml-auto size-4" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent side="top" align="start" className="w-64">
+                <DropdownMenuLabel className="truncate font-normal text-muted-foreground">
+                  {email}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">
+                    <Settings />
+                    Settings
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuItem asChild>
+                  <Link href="/billing">
+                    <CreditCard />
+                    Billing
+                  </Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <form action={signOut}>
+                  <DropdownMenuItem asChild>
+                    <button type="submit" className="w-full">
+                      <LogOut />
+                      Sign out
+                    </button>
+                  </DropdownMenuItem>
+                </form>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>

@@ -7,14 +7,14 @@ const names = (sections: ReturnType<typeof menuSections>) =>
 describe("menuSections", () => {
   it("shows the sub-account's pages first once one is chosen", () => {
     expect(names(menuSections({ hasSubAccount: true, operator: false }))).toEqual([
-      ["Sub-account", ["Chat", "Library", "Connectors"]],
-      ["Agency", ["Sub-accounts", "Team", "Integrations", "Billing"]],
+      ["Sub-account", ["Chat", "Connectors"]],
+      ["Agency", ["Sub-accounts", "Team", "Integrations"]],
     ]);
   });
 
   it("leaves out the sub-account's pages until one is chosen", () => {
     expect(names(menuSections({ hasSubAccount: false, operator: false }))).toEqual([
-      ["Agency", ["Sub-accounts", "Team", "Integrations", "Billing"]],
+      ["Agency", ["Sub-accounts", "Team", "Integrations"]],
     ]);
   });
 
@@ -30,11 +30,15 @@ describe("isCurrent", () => {
     expect(isCurrent({ href: "/sites" }, "/sites/abc/versions")).toBe(true);
     expect(isCurrent({ href: "/apps" }, "/apps-other")).toBe(false);
   });
+
+  it("counts a site, opened from the chat, as the chat", () => {
+    expect(isCurrent({ href: "/chat", also: ["/sites"] }, "/sites/abc")).toBe(true);
+  });
 });
 
 describe("afterSwitch", () => {
   it("stays on the same menu page but leaves the previous sub-account's site", () => {
-    expect(afterSwitch("/sites/abc/versions")).toBe("/sites");
+    expect(afterSwitch("/sites/abc/versions")).toBe("/chat");
     expect(afterSwitch("/apps")).toBe("/apps");
   });
 
