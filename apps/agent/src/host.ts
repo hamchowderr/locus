@@ -48,7 +48,12 @@ import {
 } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
-import { type AppConnector, createComposioConnector, createLocusController } from "@locus/harness";
+import {
+  type AppConnector,
+  createComposioConnector,
+  createLocusController,
+  parseAuthConfigs,
+} from "@locus/harness";
 import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { LibSQLStore } from "@mastra/libsql";
@@ -244,9 +249,7 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
         }
       : null,
     // Connected apps are on once Otaku's Composio key is set.
-    apps: env.COMPOSIO_API_KEY
-      ? (clientId) => createComposioConnector({ apiKey: env.COMPOSIO_API_KEY as string, clientId })
-      : null,
+    apps: env.COMPOSIO_API_KEY ? appsFromEnv(env.COMPOSIO_API_KEY, env) : null,
   };
 }
 
@@ -696,4 +699,10 @@ async function readCapped(stream: ReadableStream<Uint8Array>, max: number) {
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
+}
+
+/** Each client's connected apps, signing in through Otaku's own sign-in apps where set. */
+function appsFromEnv(apiKey: string, env: Env) {
+  const authConfigs = parseAuthConfigs(env.COMPOSIO_AUTH_CONFIGS);
+  return (clientId: string) => createComposioConnector({ apiKey, clientId, authConfigs });
 }

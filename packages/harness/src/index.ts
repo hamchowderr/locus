@@ -33,6 +33,7 @@ export {
   createComposioCatalog,
   createComposioConnections,
   createComposioConnector,
+  parseAuthConfigs,
 } from "./composio.ts";
 export {
   type ComposioWebhookEvent,
