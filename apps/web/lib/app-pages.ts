@@ -7,39 +7,34 @@ export type AppPage = {
   href: string;
   /** Its name in the menu and as the page title. */
   name: string;
-  icon:
-    | "chat"
-    | "sites"
-    | "connectors"
-    | "sub-accounts"
-    | "team"
-    | "integrations"
-    | "billing"
-    | "operator";
+  icon: "chat" | "connectors" | "sub-accounts" | "team" | "integrations" | "operator";
   /** Shown only to operators (Otaku staff). */
   operatorOnly?: true;
+  /** Other addresses that count as this page in the menu (a site opened from the chat). */
+  also?: readonly string[];
 };
 
 export type AppSection = { name: string; pages: readonly AppPage[] };
 
-/** The pages that work on the chosen sub-account. They need one chosen. */
+/**
+ * The pages that work on the chosen sub-account. They need one chosen. Its Library is a tab
+ * beside the chat, not a page of its own here.
+ */
 export const SUB_ACCOUNT_PAGES: AppSection = {
   name: "Sub-account",
   pages: [
-    { href: "/chat", name: "Chat", icon: "chat" },
-    { href: "/sites", name: "Library", icon: "sites" },
+    { href: "/chat", name: "Chat", icon: "chat", also: ["/sites"] },
     { href: "/apps", name: "Connectors", icon: "connectors" },
   ],
 };
 
-/** The pages for the whole agency. */
+/** The pages for the whole agency. Settings and Billing are in the account menu, at the bottom. */
 export const AGENCY_PAGES: AppSection = {
   name: "Agency",
   pages: [
     { href: "/clients", name: "Sub-accounts", icon: "sub-accounts" },
     { href: "/team", name: "Team", icon: "team" },
     { href: "/connect", name: "Integrations", icon: "integrations" },
-    { href: "/billing", name: "Billing", icon: "billing" },
     { href: "/operator", name: "Operator", icon: "operator", operatorOnly: true },
   ],
 };
@@ -60,8 +55,10 @@ export function menuSections({
 }
 
 /** Whether `pathname` is `page` or a page under it, for highlighting the menu. */
-export function isCurrent(page: Pick<AppPage, "href">, pathname: string): boolean {
-  return pathname === page.href || pathname.startsWith(`${page.href}/`);
+export function isCurrent(page: Pick<AppPage, "href" | "also">, pathname: string): boolean {
+  return [page.href, ...(page.also ?? [])].some(
+    (href) => pathname === href || pathname.startsWith(`${href}/`),
+  );
 }
 
 /**
