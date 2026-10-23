@@ -3,6 +3,7 @@ import {
   isOperator,
   listAccessibleClients,
   operatorsFromEnv,
+  requireAgencyManager,
   resolveActiveClient,
 } from "@locus/auth";
 import type { ReactNode } from "react";
@@ -31,10 +32,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       if (e instanceof ClientAccessDenied) return fallback;
       throw e;
     };
-  const [client, clients, operator] = await Promise.all([
+  const [client, clients, operator, manager] = await Promise.all([
     resolveActiveClient(db, ctx).catch(denied(null)),
     listAccessibleClients(db, ctx).catch(denied([])),
     isOperator(db, ctx, operatorsFromEnv()),
+    requireAgencyManager(db, ctx).then(() => true, denied(false)),
   ]);
 
   return (
@@ -44,12 +46,13 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           subAccount={client ? { id: client.location.id, name: client.location.name } : null}
           subAccounts={clients.map((c) => ({ id: c.id, name: c.name }))}
           operator={operator}
+          manager={manager}
           email={current.user.email}
           chooseClient={chooseClient}
           signOut={signOut}
         />
         <SidebarInset className="min-h-0 overflow-hidden">
-          <header className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+          <header className="flex h-12 shrink-0 items-center gap-2 px-3">
             <SidebarTrigger />
             <span className="truncate text-sm text-muted-foreground">
               {client ? client.location.name : "No sub-account chosen"}
