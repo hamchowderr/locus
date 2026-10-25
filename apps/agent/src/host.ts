@@ -498,6 +498,10 @@ export function createHost({
       // before it saves a note, as before any other change.
       const brain = createBrainWorkspace(appSettings, {
         needsApproval: (context) => isTainted(context) || hasRefusedBrief(context),
+        // The same staff check as GHL, before every brain call.
+        authorize: async (context) => {
+          await runClient(context as { get: (key: string) => unknown } | undefined);
+        },
       });
       // The main chat hands longer work to threads of their own (`start_thread`), which run in
       // the background and report back. Its result is the new thread's id and title only.

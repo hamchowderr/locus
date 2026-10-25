@@ -89,6 +89,13 @@ export class BrainFilesystem extends MastraFilesystem {
     ].join("\n");
   }
 
+  /** Every note with its content, by path. Throws when the database can't be read. */
+  async notes(): Promise<{ path: string; content: string }[]> {
+    return this.#serial(async () =>
+      (await listNotes(this.#db)).map(({ path, content }) => ({ path, content })),
+    );
+  }
+
   /** A number that changes whenever any note does (see `brainStamp`). */
   async changes(): Promise<number> {
     return this.#serial(() => brainStamp(this.#db));

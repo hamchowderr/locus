@@ -40,6 +40,9 @@ agent: Mastra's file and search tools over the brain, named `brain_read`, `brain
 
 - Reads never wait. Deleting always waits for a person. A write waits when `needsApproval`
   says so (the host passes its taint check) and always for `instructions.md`.
-- Search is Mastra's BM25 index, rebuilt from the notes before a search whenever the brain
-  changed, so notes saved anywhere are found.
+- Search is Mastra's BM25 index, built afresh from the notes before a search whenever the
+  brain changed, so notes saved anywhere are found. The new index replaces the old one only
+  once complete.
+- Every brain call, and putting the brain in context, runs the host's staff check first
+  (`authorize`). The context is read again whenever the brain changes during a run.
 - Ask mode gets the read tools only; every other mode gets them all.

@@ -2,7 +2,7 @@ import type { TenantDb } from "@locus/db";
 import type { ProcessInputStepArgs, Processor } from "@mastra/core/processors";
 import { WORKSPACE_TOOLS, Workspace } from "@mastra/core/workspace";
 import { BrainFilesystem } from "./filesystem.ts";
-import { BRAIN_FOLDERS, INDEX_FILE, INSTRUCTIONS_FILE, normalizeBrainPath } from "./paths.ts";
+import { INDEX_FILE, INSTRUCTIONS_FILE, normalizeBrainPath } from "./paths.ts";
 
 /** The names agents see for Mastra's workspace tools over the brain. */
 export const BRAIN_TOOLS = {
@@ -41,6 +41,12 @@ export interface BrainWorkspaceOptions {
    * told to plant a note, and a note is read again on every later run.
    */
   needsApproval?: (requestContext: unknown) => boolean;
+  /**
+   * Run before every brain tool call and before the brain is put in context, with the run's
+   * request context; throws to refuse. The host passes its staff check, as for GHL calls, so
+   * a member who loses the client mid-run stops reaching its brain at once.
+   */
+  authorize?: (requestContext: unknown) => Promise<void>;
 }
 
 /** An approval rule in the shape Locus's tools use: `(input, { requestContext })`. */
@@ -59,9 +65,6 @@ export interface BrainWorkspace {
   context: BrainContextProcessor;
 }
 
-/** Search indexes the notes in these places; `index.md` is a listing, not a note. */
-const INDEXED = [`/${INSTRUCTIONS_FILE}`, ...Object.keys(BRAIN_FOLDERS).map((f) => `/${f}`)];
-
 /**
  * One client's brain as a Mastra workspace: Mastra's file and search tools over
  * `BrainFilesystem`, renamed `brain_*` so they can't be taken for a site's files.
@@ -69,34 +72,54 @@ const INDEXED = [`/${INSTRUCTIONS_FILE}`, ...Object.keys(BRAIN_FOLDERS).map((f) 
  * - Reads never wait. Deleting a note always waits for a person, as every deletion in Locus
  *   does. A write waits when `needsApproval` says so, and always for `instructions.md`, which
  *   steers every later run.
- * - Search is Mastra's BM25 index, held in memory and rebuilt from the notes before a search
- *   whenever the brain changed since the last build, so changes from anywhere are found.
+ * - Search is Mastra's BM25 keyword search over the notes (not `index.md`, which lists them).
+ *   Its index is held in memory and built afresh from the notes before a search whenever the
+ *   brain changed since the last build, so changes from anywhere are found. A new index
+ *   replaces the old one only once it is complete, so a search never sees one half built.
  *
  * `db` is the client's own database, opened from the session; nothing here names a client.
  */
 export function createBrainWorkspace(
   db: TenantDb,
-  { needsApproval = () => false }: BrainWorkspaceOptions = {},
+  { needsApproval = never, authorize = async () => {} }: BrainWorkspaceOptions = {},
 ): BrainWorkspace {
   const filesystem = new BrainFilesystem(db, { actor: AGENT_ACTOR });
   const writeWaits = (args: unknown, requestContext: unknown) =>
     needsApproval(requestContext) || namesInstructions(args);
   const writeRule = ({ args, requestContext }: { args: unknown; requestContext?: unknown }) =>
     writeWaits(args, requestContext);
-  // The search index matches the brain as it was at change `built`. One rebuild at a time: a
-  // rebuild clears the index before it fills it again. A failed one is tried again next search.
+  // `index` holds the notes as they were at change `built`. One build at a time; a failed
+  // build keeps the old index and leaves `built` alone, so the next search tries again.
+  let index = searchIndex(filesystem);
   let built = -1;
-  let rebuilding: Promise<void> = Promise.resolve();
+  let building: Promise<void> = Promise.resolve();
   const refreshSearch = () => {
-    rebuilding = rebuilding
+    building = building
       .catch(() => {})
       .then(async () => {
         const now = await filesystem.changes();
         if (now === built) return;
-        await workspace.rebuildSearchIndex(INDEXED);
+        const next = searchIndex(filesystem);
+        for (const note of await filesystem.notes())
+          await next.index(`/${note.path}`, note.content);
+        index = next;
         built = now;
       });
-    return rebuilding;
+    return building;
+  };
+  const search = async ({ query, topK, minScore }: SearchInput) => {
+    await refreshSearch();
+    const results = await index.search(query, {
+      mode: "bm25",
+      ...(topK !== undefined ? { topK } : {}),
+      ...(minScore !== undefined ? { minScore } : {}),
+    });
+    // The same text Mastra's search tool returns.
+    return [
+      ...results.map((r) => `${r.id}: ${r.content}`),
+      "---",
+      `${results.length} result${results.length !== 1 ? "s" : ""} (bm25 search)`,
+    ].join("\n");
   };
   const workspace: Workspace = new Workspace({
     id: "locus-brain",
@@ -104,10 +127,12 @@ export function createBrainWorkspace(
     filesystem,
     bm25: true,
     tools: {
-      [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: { name: BRAIN_TOOLS.read },
-      [WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES]: { name: BRAIN_TOOLS.list },
-      [WORKSPACE_TOOLS.FILESYSTEM.GREP]: { name: BRAIN_TOOLS.grep },
-      [WORKSPACE_TOOLS.SEARCH.SEARCH]: { name: BRAIN_TOOLS.search },
+      // A function, not `false`: the agent controller asks about every tool whose own rule
+      // isn't a function.
+      [WORKSPACE_TOOLS.FILESYSTEM.READ_FILE]: { name: BRAIN_TOOLS.read, requireApproval: never },
+      [WORKSPACE_TOOLS.FILESYSTEM.LIST_FILES]: { name: BRAIN_TOOLS.list, requireApproval: never },
+      [WORKSPACE_TOOLS.FILESYSTEM.GREP]: { name: BRAIN_TOOLS.grep, requireApproval: never },
+      [WORKSPACE_TOOLS.SEARCH.SEARCH]: { name: BRAIN_TOOLS.search, requireApproval: never },
       [WORKSPACE_TOOLS.FILESYSTEM.WRITE_FILE]: {
         name: BRAIN_TOOLS.write,
         requireApproval: writeRule,
@@ -125,14 +150,15 @@ export function createBrainWorkspace(
       [WORKSPACE_TOOLS.FILESYSTEM.AST_EDIT]: { enabled: false },
       [WORKSPACE_TOOLS.SEARCH.INDEX]: { enabled: false },
       hooks: {
-        beforeToolCall: async ({ workspaceToolName }) => {
-          if (workspaceToolName === WORKSPACE_TOOLS.SEARCH.SEARCH) await refreshSearch();
+        beforeToolCall: async ({ workspaceToolName, input, context }) => {
+          await authorize((context as { requestContext?: unknown } | undefined)?.requestContext);
+          if (workspaceToolName !== WORKSPACE_TOOLS.SEARCH.SEARCH) return;
+          // Answered here from our own index; Mastra's would search one being rebuilt.
+          return { proceed: false, output: await search(input as SearchInput) };
         },
       },
     },
   });
-  const always = () => true;
-  const never = () => false;
   return {
     workspace,
     filesystem,
@@ -146,8 +172,21 @@ export function createBrainWorkspace(
       [BRAIN_TOOLS.delete]: { requireApproval: always },
     },
     readTools: BRAIN_READ_TOOLS,
-    context: new BrainContextProcessor(filesystem),
+    context: new BrainContextProcessor(filesystem, authorize),
   };
+}
+
+const always = () => true;
+const never = () => false;
+
+type SearchInput = { query: string; topK?: number; minScore?: number };
+
+/**
+ * An empty in-memory keyword index. Mastra keeps its index inside a workspace, and a workspace
+ * needs a filesystem; this one is only ever filled with `index()` and read with `search()`.
+ */
+function searchIndex(filesystem: BrainFilesystem): Workspace {
+  return new Workspace({ id: "locus-brain-search", filesystem, bm25: true });
 }
 
 function namesInstructions(args: unknown): boolean {
@@ -163,22 +202,35 @@ function namesInstructions(args: unknown): boolean {
 const CONTEXT_TAG = "locus-brain";
 
 /**
- * Puts the brain in front of the agent once per run: how to use it, the agency's
- * `instructions.md` for this client, and `index.md`. Read fresh for each run, so a note saved
- * in one run is listed in the next; a run that resumes after an approval reads it again.
+ * Puts the brain in front of the agent: how to use it, the agency's `instructions.md` for this
+ * client, and `index.md`. Read at a run's first step, and again at any later step once the
+ * brain has changed (a note the run saved, or one saved elsewhere meanwhile), so the agent
+ * never works from an old copy. Unchanged, the text stays the same and still caches.
  */
 export class BrainContextProcessor implements Processor<"locus-brain-context"> {
   readonly id = "locus-brain-context" as const;
   readonly name = "Put the client's brain in context";
   readonly #filesystem: BrainFilesystem;
+  readonly #authorize: (requestContext: unknown) => Promise<void>;
+  /** The change each message list's brain text was read at. */
+  readonly #readAt = new WeakMap<object, number>();
 
-  constructor(filesystem: BrainFilesystem) {
+  constructor(
+    filesystem: BrainFilesystem,
+    authorize: (requestContext: unknown) => Promise<void> = async () => {},
+  ) {
     this.#filesystem = filesystem;
+    this.#authorize = authorize;
   }
 
-  async processInputStep({ messageList }: ProcessInputStepArgs) {
-    if (messageList.getSystemMessages(CONTEXT_TAG).length > 0) return;
+  async processInputStep({ messageList, requestContext }: ProcessInputStepArgs) {
+    await this.#authorize(requestContext);
+    const now = await this.#filesystem.changes();
+    const shown = messageList.getSystemMessages(CONTEXT_TAG).length > 0;
+    if (shown && this.#readAt.get(messageList) === now) return;
+    messageList.clearSystemMessages(CONTEXT_TAG);
     messageList.addSystem({ role: "system", content: await this.render() }, CONTEXT_TAG);
+    this.#readAt.set(messageList, now);
   }
 
   /** The text the agent is given. */
