@@ -1,6 +1,6 @@
 import type { TenantDb } from "@locus/db";
 import { brainFile, brainFileVersion } from "@locus/db/tenant";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq } from "drizzle-orm";
 
 /** The client database, or a transaction on it. */
 type Tx = Parameters<Parameters<TenantDb["transaction"]>[0]>[0];
@@ -79,6 +79,15 @@ export async function putNote(
       target: brainFile.path,
       set: { content, size, updatedAt: now, updatedBy: actor },
     });
+}
+
+/**
+ * Changes on record. Every write and deletion adds a version and none is ever removed, so the
+ * brain changed exactly when this number did, whoever changed it (an agent, a person, a restore).
+ */
+export async function brainStamp(db: Executor): Promise<number> {
+  const [row] = await db.select({ n: count() }).from(brainFileVersion);
+  return row?.n ?? 0;
 }
 
 /** A note's history, newest first. Includes deletions, so a deleted note can come back. */
