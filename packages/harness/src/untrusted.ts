@@ -7,6 +7,8 @@
  *
  * 1. `withholdInstructions` replaces any string (or object key) that reads like instructions to
  *    an AI before the tool result reaches the model or memory, and says how many it withheld.
+ *    Text of several lines (a file, a long note) loses only the lines that read that way, so one
+ *    `<User>` in a site's JSX doesn't hide the whole file.
  * 2. A run that has read such content, or has read free text the public writes (form and survey
  *    submissions, conversation messages, notes, reviews, comments), is *tainted*: from then on
  *    every `perform_action` waits for a person to approve it, whatever the operation.
@@ -30,6 +32,9 @@ import type {
 } from "@mastra/core/processors";
 
 export const WITHHELD = "[withheld by Locus: this text from GoHighLevel read like instructions]";
+
+/** Stands in for one line of a longer text that read like instructions. */
+export const WITHHELD_LINE = "[line withheld by Locus: it read like instructions]";
 
 /** Present in every tool result that taints a run; how a resumed run knows it is tainted. */
 export const TAINT_MARK = "locus:untrusted";
@@ -136,6 +141,33 @@ function isLocusError(value: unknown): value is { error: string; from: typeof LO
   return keys.length === 2 && from === LOCUS && typeof error === "string";
 }
 
+/** A chat-template marker; only a JSX tag such as `<User>` or `</Tool>` is ever kept around. */
+const CHAT_MARKER =
+  /<\/?\s*(system|assistant|user|tool|instructions?)\s*>|\[\/?(INST|SYS)\]|<<\/?SYS>>|<\|im_(start|end)\|>/gi;
+const JSX_TAG = /^<\/?[A-Z][a-z]+>$/;
+
+/**
+ * Text of several lines with only its instruction-like lines withheld, or null when the whole
+ * text must go: when no single line matches (the phrasing spans lines), when what is left still
+ * reads like instructions, or when a line holds a real chat-template marker, which fences
+ * whatever sits between its lines.
+ */
+function keepingTheRest(text: string): { text: string; withheld: number } | null {
+  if (!text.includes("\n")) return null;
+  let withheld = 0;
+  let fenced = false;
+  const kept = text.split("\n").map((line) => {
+    if (!looksLikeInstructions(line)) return line;
+    const visible = line.normalize("NFKC").replace(INVISIBLE, "");
+    for (const [marker] of visible.matchAll(CHAT_MARKER)) fenced ||= !JSX_TAG.test(marker);
+    withheld++;
+    return WITHHELD_LINE;
+  });
+  if (withheld === 0 || fenced) return null;
+  const rest = kept.join("\n");
+  return looksLikeInstructions(rest) ? null : { text: rest, withheld };
+}
+
 /** Returns `value` with every instruction-like string or key replaced, and how many were. */
 export function withholdInstructions(value: unknown): { value: unknown; withheld: number } {
   if (isLocusError(value)) {
@@ -147,6 +179,11 @@ export function withholdInstructions(value: unknown): { value: unknown; withheld
   const walk = (node: unknown): unknown => {
     if (typeof node === "string") {
       if (!looksLikeInstructions(node)) return node;
+      const lines = keepingTheRest(node);
+      if (lines) {
+        withheld += lines.withheld;
+        return lines.text;
+      }
       withheld++;
       return WITHHELD;
     }
@@ -250,7 +287,7 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
     const source = fromApp ? "a connected app" : fromThread ? "a thread" : "GoHighLevel";
     const why =
       screened.withheld > 0
-        ? `${screened.withheld} value(s) from ${source} read like instructions and were withheld.`
+        ? `${screened.withheld} value(s) or line(s) from ${source} read like instructions and were withheld.`
         : fromApp
           ? "This result comes from a connected app and holds text written by other people."
           : fromThread
