@@ -12,16 +12,20 @@ import {
   clientSiteThreads,
   clientWorkThreads,
   createAgentApi,
+  createInboxDrafts,
+  type InboxDrafts,
   KIT_STREAM_BODY_LIMIT,
   OPERATOR_AGENT,
 } from "@locus/agent-api";
 import {
   type AuthorizedClient,
   authorizeClient,
+  authorizeMemberClient,
   ClientAccessDenied,
   chatKitKey,
   chatKitSessionId,
   createAuth,
+  inboxDraftsFor,
   mintClientDbToken,
   resolveActiveClient,
   type SessionContext,
@@ -51,14 +55,18 @@ import * as schema from "@locus/db/control";
 import { session as authSession } from "@locus/db/control";
 import {
   type AppConnector,
+  clientResource,
   createComposioConnector,
   createLocusController,
   parseAuthConfigs,
+  TAINT_KEY,
 } from "@locus/harness";
 import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
+import { RequestContext } from "@mastra/core/request-context";
 import { LibSQLStore } from "@mastra/libsql";
 import { eq } from "drizzle-orm";
+import { INBOUND_PATH, inboundMessages } from "./inbound.ts";
 import { refreshingClient } from "./refreshing-client.ts";
 import {
   SITE_UPLOAD_PATH,
@@ -144,6 +152,11 @@ export interface HostDeps {
    * caps a request at 4.5 MB. Null, the default, leaves the route out.
    */
   siteUploads?: SiteUploadDeps | null;
+  /**
+   * GHL's webhook public key, for new messages the web app passes on (`inbound.ts`). Null, the
+   * default, leaves the route out, and no reply is ever drafted.
+   */
+  ghlWebhookKey?: string | null;
 }
 
 /** On Vercel Sandbox the agent holds no sandbox credentials: every sandbox goes through the web app. */
@@ -249,6 +262,8 @@ export function hostDepsFromEnv(env: Env = process.env): HostDeps {
           ipHashKey: deriveSecretsSubkey("locus/site-lead-ip", env),
         }
       : null,
+    // New messages get drafted replies once GHL's webhook key is set.
+    ghlWebhookKey: env.GHL_WEBHOOK_PUBLIC_KEY || null,
     // Connected apps are on once Otaku's Composio key is set.
     apps: env.COMPOSIO_API_KEY ? appsFromEnv(env.COMPOSIO_API_KEY, env) : null,
   };
@@ -289,6 +304,12 @@ const KIT_STREAM_PATH = `${PREFIX}/kit/agent-controller/stream`;
 /** The run request-context key naming the session a run acts for. Set here, never by the browser. */
 export const RUN_SESSION_KEY = "locus.session";
 
+/**
+ * The run request-context key naming the member a drafted reply runs as: the owner or admin who
+ * turned drafting on for the client. Set here, for runs no request started.
+ */
+export const RUN_MEMBER_KEY = "locus.member";
+
 /** The connectors the person turned off for this chat, as app settings of "off". */
 export function connectorsOffIn(requestContext?: {
   get: (key: string) => unknown;
@@ -316,6 +337,7 @@ export function createHost({
   siteBuilder = null,
   apps = null,
   siteUploads: uploadDeps = null,
+  ghlWebhookKey = null,
 }: HostDeps) {
   const uploads = uploadDeps ? siteUploads(uploadDeps, logError) : null;
   // Per client, the sessions that opened it, newest last: its database token is the client's,
@@ -337,7 +359,21 @@ export function createHost({
     return authorizeClient(db, ctx, clientId);
   };
 
-  /** For the client's own database: any session that opened it and may still. */
+  /**
+   * The member drafted replies run as, checked as at a sign-in, while drafting is still on for
+   * the client with them: turning it off, or the member losing the client, stops their drafts.
+   */
+  const drafterFor = async (memberId: string, clientId: string) => {
+    if ((await inboxDraftsFor(db, clientId)) !== memberId) {
+      throw new ClientAccessDenied("drafting is off for this client");
+    }
+    return authorizeMemberClient(db, memberId, clientId);
+  };
+
+  /**
+   * For the client's own database: any session that opened it and may still, or else the
+   * member drafts run as.
+   */
   const anyAuthorized = async (clientId: string) => {
     const byId = openers.get(clientId) ?? new Map<string, SessionContext>();
     for (const [id, ctx] of [...byId].reverse()) {
@@ -348,8 +384,13 @@ export function createHost({
         byId.delete(id);
       }
     }
+    const drafter = await inboxDraftsFor(db, clientId);
+    if (drafter) return drafterFor(drafter, clientId);
     throw new ClientAccessDenied("nobody may open this client now");
   };
+
+  /** Each client's drafted replies, set up with its controller. */
+  const inboxes = new Map<string, InboxDrafts>();
 
   const api = createAgentApi({
     prefix: PREFIX,
@@ -416,11 +457,13 @@ export function createHost({
         // runtime but not under exactOptionalPropertyTypes.
         client: clientDb as unknown as StoreClient,
       });
-      /** The staff check for the session a run acts for. */
+      /** The staff check for the session a run acts for, or the member a draft runs as. */
       const runClient = async (requestContext?: { get: (key: string) => unknown }) => {
         const ctx = requestContext?.get(RUN_SESSION_KEY) as SessionContext | undefined;
-        if (!ctx?.id) throw new ClientAccessDenied("run has no session");
-        return authorizedFor(ctx, clientId);
+        if (ctx?.id) return authorizedFor(ctx, clientId);
+        const drafter = requestContext?.get(RUN_MEMBER_KEY);
+        if (typeof drafter === "string" && drafter) return drafterFor(drafter, clientId);
+        throw new ClientAccessDenied("run has no session");
       };
       const builder = siteBuilder
         ? createSiteBuilder(
@@ -497,6 +540,15 @@ export function createHost({
         ...(builder ? { processors: builder.processors } : {}),
       });
       workThreads.attach(controller);
+      inboxes.set(
+        clientId,
+        createInboxDrafts({
+          storage,
+          threads: workThreads,
+          resourceId: clientResource({ token: "", tokenKind: "location", locationId }),
+          agent: CONVERSATIONS_AGENT,
+        }),
+      );
       return controller;
     },
   });
@@ -517,6 +569,52 @@ export function createHost({
       response,
     );
   };
+
+  /**
+   * Drafts a reply to a new message in each active client of that GHL location with drafting
+   * on, as the member who turned it on. The run is tainted from the start: the agent will read
+   * what the contact wrote, and every message to a contact waits for a person anyway.
+   */
+  const draftFor = async (
+    ghlLocationId: string,
+    message: Parameters<InboxDrafts["draft"]>[0],
+  ): Promise<boolean> => {
+    const clients = await db
+      .select({ id: schema.location.id })
+      .from(schema.location)
+      .where(eq(schema.location.ghlLocationId, ghlLocationId));
+    let drafted = false;
+    for (const { id: clientId } of clients) {
+      const memberId = await inboxDraftsFor(db, clientId);
+      if (!memberId) continue;
+      let client: Awaited<ReturnType<typeof drafterFor>>;
+      try {
+        client = await drafterFor(memberId, clientId);
+      } catch (error) {
+        if (error instanceof ClientAccessDenied) continue;
+        throw error;
+      }
+      await api.controller({
+        memberId: client.memberId,
+        locationId: client.location.ghlLocationId,
+        clientId,
+      });
+      const inbox = inboxes.get(clientId);
+      if (!inbox) continue;
+      const context = new RequestContext();
+      context.set(RUN_MEMBER_KEY, memberId);
+      context.set(TAINT_KEY, true);
+      const result = await inbox.draft(message, context);
+      if ("threadId" in result) drafted = true;
+    }
+    return drafted;
+  };
+  const inbound = inboundMessages({
+    publicKey: ghlWebhookKey,
+    appId: connect.ghl.appId,
+    draft: draftFor,
+    logError,
+  });
 
   const serve = async (request: Request): Promise<Response> => {
     const { pathname } = new URL(request.url);
@@ -558,6 +656,8 @@ export function createHost({
         if (new URL(request.url).pathname === SITE_UPLOAD_PATH) {
           return uploads ? await uploads(request) : siteUploadsOff(request);
         }
+        // Signed by GHL, never by a cookie, so it skips the chat's origin check.
+        if (new URL(request.url).pathname === INBOUND_PATH) return await inbound(request);
         response = await serve(request);
       } catch (error) {
         logError(`Agent request failed: ${what}`, error);

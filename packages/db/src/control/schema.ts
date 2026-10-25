@@ -105,6 +105,25 @@ export const siteBuilderOff = sqliteTable("site_builder_off", {
 });
 
 /**
+ * Clients whose new GHL messages get a drafted reply, and the member who turned that on: drafts
+ * run as that member, through the same staff check as a sign-in, so a member who loses the
+ * client stops drafting for it. No row means off. Ids only, never a message.
+ */
+export const inboxDrafts = sqliteTable(
+  "inbox_drafts",
+  {
+    locationId: text("location_id")
+      .primaryKey()
+      .references(() => location.id, { onDelete: "cascade" }),
+    memberId: text("member_id")
+      .notNull()
+      .references(() => member.id, { onDelete: "cascade" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("inbox_drafts_member_idx").on(t.memberId)],
+);
+
+/**
  * A member's access to one site, for members who don't already reach every client. No row
  * means "manage": anyone who may work on the client may build its sites unless an owner or
  * admin made them view-only here.
