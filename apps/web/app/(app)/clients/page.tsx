@@ -1,11 +1,12 @@
 import {
   ClientAccessDenied,
+  inboxDraftsFor,
   listAccessibleClients,
   requireAgencyManager,
   resolveActiveClient,
 } from "@locus/auth";
 import { redirect } from "next/navigation";
-import { chooseClient, switchSiteBuilder } from "@/app/actions";
+import { chooseClient, switchInboxDrafts, switchSiteBuilder } from "@/app/actions";
 import { Button, Notice, Page } from "@/app/ui";
 import { checkClientConnection } from "@/lib/connect";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
@@ -13,12 +14,12 @@ import { currentSession, locus, sessionContext } from "@/lib/locus";
 export default async function Clients({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; builder?: string; changed?: string }>;
+  searchParams: Promise<{ error?: string; builder?: string; drafts?: string; changed?: string }>;
 }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, builder, changed } = await searchParams;
+  const { error, builder, drafts, changed } = await searchParams;
   const ctx = sessionContext(current);
   const clients = await listAccessibleClients(locus().db, ctx).catch((e) => {
     // Removed from the agency: nothing to choose, rather than an error page.
@@ -37,6 +38,16 @@ export default async function Clients({
     throw e;
   });
   const ghl = active ? await checkClientConnection(active) : null;
+  // Read only for owners and admins, the only ones who can change it.
+  const drafting = new Set(
+    manager
+      ? (
+          await Promise.all(
+            clients.map(async (c) => ((await inboxDraftsFor(locus().db, c.id)) ? c.id : null)),
+          )
+        ).filter((id): id is string => id !== null)
+      : [],
+  );
   const count = Number(changed) || 0;
   return (
     <Page
@@ -58,6 +69,12 @@ export default async function Clients({
       {(builder === "on" || builder === "off") && (
         <Notice tone="info">
           Site builder turned {builder} for {count} {count === 1 ? "sub-account" : "sub-accounts"}.
+        </Notice>
+      )}
+      {(drafts === "on" || drafts === "off") && (
+        <Notice tone="info">
+          Drafted replies turned {drafts} for {count} {count === 1 ? "sub-account" : "sub-accounts"}
+          .
         </Notice>
       )}
       {clients.length === 0 ? (
@@ -99,6 +116,36 @@ export default async function Clients({
                 <input type="checkbox" name="locationId" value={client.id} />
                 {client.name}
                 <span className="text-neutral-500">· {client.siteBuilder ? "on" : "off"}</span>
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <Button name="on" value="yes">
+              Turn on
+            </Button>
+            <Button name="on" value="no">
+              Turn off
+            </Button>
+          </div>
+        </form>
+      )}
+      {manager && clients.length > 0 && (
+        <form
+          action={switchInboxDrafts}
+          className="space-y-3 rounded-md border border-neutral-200 p-4"
+        >
+          <h2 className="font-semibold">Drafted replies</h2>
+          <p className="text-sm text-neutral-600">
+            When a contact texts, emails, chats or messages one of these sub-accounts, Locus drafts
+            a reply in a thread of its chat. Nothing is sent until someone approves it there. Each
+            draft uses AI credits. Drafts run as you, the person who turns them on.
+          </p>
+          <div className="space-y-1">
+            {clients.map((client) => (
+              <label key={client.id} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="locationId" value={client.id} />
+                {client.name}
+                <span className="text-neutral-500">· {drafting.has(client.id) ? "on" : "off"}</span>
               </label>
             ))}
           </div>

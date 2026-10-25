@@ -128,8 +128,9 @@ Agencies connect their GoHighLevel company through your own Marketplace app.
 4. Create a client key. The client id, client secret and the app's id are `GHL_CLIENT_ID`,
    `GHL_CLIENT_SECRET` and `GHL_APP_ID`.
 5. Set the app's webhook URL to `https://<your host>/api/webhooks/crm` and subscribe to the
-   **AppInstall** and **AppUninstall** events. Put GoHighLevel's webhook public key in
-   `GHL_WEBHOOK_PUBLIC_KEY`.
+   **AppInstall**, **AppUninstall** and **InboundMessage** events. Put GoHighLevel's webhook
+   public key in `GHL_WEBHOOK_PUBLIC_KEY`, on the web app and the agent server: the web app
+   passes new messages on to the agent server, which drafts replies where that is turned on.
 
 Agencies approve the app on GoHighLevel's neutral host (`marketplace.leadconnectorhq.com`).
 Installing on a sub-account syncs it in as a client; uninstalling suspends it (its data stays),
