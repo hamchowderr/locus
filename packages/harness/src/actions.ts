@@ -37,12 +37,18 @@ export async function performAction(
 }
 
 /**
- * Whether a write needs a person to approve it before it runs. Deletions always do. This is a
- * rule in code, not a request in the prompt.
+ * Writes that reach a person outside the agency: a message to a contact can't be taken back.
+ * Scheduling one is no different, since it goes out with nobody watching.
+ */
+export const SENDS_TO_CONTACT: ReadonlySet<string> = new Set(["conversations.send-a-new-message"]);
+
+/**
+ * Whether a write needs a person to approve it before it runs. Deletions and messages to a
+ * contact always do. This is a rule in code, not a request in the prompt.
  */
 export function needsApproval(operationId: string): boolean {
   const op = operationById(operationId);
-  return op === undefined || op.method === "DELETE";
+  return op === undefined || op.method === "DELETE" || SENDS_TO_CONTACT.has(operationId);
 }
 
 export function writeOperation(id: string): SkillOperation {

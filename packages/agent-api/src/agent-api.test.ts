@@ -54,7 +54,7 @@ function apiFor(
                 work.steering.suggest_threads.id,
               ],
               threadTextTools: work.threadTextTools,
-              modes: [work.supervisor],
+              modes: work.modes,
             }
           : {}),
         ...extras,
@@ -1078,6 +1078,119 @@ describe("work threads, through the chat kit's routes", () => {
     const reply = kitEvents(await kit(api, "stream", { text: "Tag c1 again", threadId: work.id }));
     const again = await reply.until((e) => e.type === "tool_approval_required");
     expect(again.toolCallId).toBe("w3-tag2");
+  });
+
+  test("the conversations agent reads a conversation, and its reply waits for the member", async () => {
+    const offered = (pattern: RegExp) => {
+      const request = mock()
+        .llm.getRequests()
+        .findLast((r) => pattern.test(JSON.stringify(r.body)))?.body as {
+        tools?: { name?: string; function?: { name?: string } }[];
+      };
+      return (request?.tools ?? []).map((t) => t.name ?? t.function?.name ?? "");
+    };
+    mock().llm.on(
+      { userMessage: /answer jane/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w-conv-start",
+            name: "start_thread",
+            arguments: JSON.stringify({
+              title: "Reply to Jane",
+              brief: "Reply to Jane's latest text in conversation conv-1 (contact c-jane).",
+              agent: "conversations",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "w-conv-start" }, { content: "The inbox agent is on it." });
+    mock().llm.on(
+      { userMessage: /latest text in conversation conv-1/, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "w-conv-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [
+                {
+                  as: "messages",
+                  operation: "conversations.get-messages",
+                  params: { path: { conversationId: "conv-1" } },
+                  rowsField: "messages.messages",
+                },
+              ],
+              sql: "SELECT body, messageType FROM messages WHERE direction = 'inbound'",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "w-conv-read" },
+      perform("w-conv-send", "conversations.send-a-new-message", {
+        body: {
+          type: "SMS",
+          contactId: "c-jane",
+          message: "Yes, Saturday at 10 works. See you then!",
+          status: "pending",
+        },
+      }),
+    );
+    mock().llm.on({ toolCallId: "w-conv-send" }, { content: "Sent Jane a text." });
+    const ghl = createFakeGhl({
+      "GET /conversations/conv-1/messages": {
+        body: {
+          messages: {
+            lastMessageId: "m1",
+            nextPage: false,
+            messages: [
+              {
+                id: "m1",
+                body: "Can I view the house Saturday at 10?",
+                direction: "inbound",
+                messageType: "TYPE_SMS",
+              },
+            ],
+          },
+        },
+      },
+      "POST /conversations/messages": { body: { conversationId: "conv-1", messageId: "m2" } },
+    });
+    const { api } = apiFor(ghl, {}, undefined, { workThreads: true });
+
+    const main = kitEvents(
+      await kit(api, "stream", { text: "Answer Jane for me", mode: "supervisor" }),
+    );
+    await main.until((e) => e.type === "__done__");
+    const work = await workThreadReaching(api, "needs_you");
+    const listed = (await (await kit(api, "threads")).json()) as {
+      threads: (Listed & { agent?: { id: string; name: string } })[];
+    };
+    expect(listed.threads.find((t) => t.id === work.id)?.agent).toEqual({
+      id: "conversations",
+      name: "Conversations",
+    });
+    const tools = offered(/latest text in conversation conv-1/);
+    expect(tools).toEqual(expect.arrayContaining(["load_skill", "query_data", "perform_action"]));
+    expect(tools).not.toContain("start_thread");
+    // The contact's message is their words: a reply after reading it waits for the member.
+    expect(ghl.requests.map((r) => `${r.method} ${r.url.pathname}`)).toEqual([
+      "GET /conversations/conv-1/messages",
+    ]);
+
+    const approved = await kit(api, "approve", {
+      decision: "approve",
+      toolCallId: "w-conv-send",
+      threadId: work.id,
+    });
+    expect(approved.status).toBe(200);
+    await workThreadReaching(api, "done");
+    const sent = ghl.requests.at(-1);
+    expect(`${sent?.method} ${sent?.url.pathname}`).toBe("POST /conversations/messages");
+    expect(sent?.body).toMatchObject({ type: "SMS", contactId: "c-jane" });
   });
 
   test("refuses what a thread that is not the client.s waits on", async () => {
