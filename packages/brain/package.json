@@ -1,0 +1,23 @@
+{
+  "name": "@locus/brain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@locus/db": "workspace:*",
+    "@mastra/core": "1.75.0",
+    "drizzle-orm": "0.45.4"
+  },
+  "devDependencies": {
+    "@libsql/client": "0.18.0",
+    "@types/node": "22.20.5",
+    "vitest": "5.0.3"
+  }
+}

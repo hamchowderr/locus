@@ -43,5 +43,12 @@ export const EMBEDDED_TENANT_MIGRATIONS: { hash: string; sql: string[] }[] = [
     "sql": [
       "CREATE TABLE `app_access` (\n\t`toolkit` text PRIMARY KEY NOT NULL,\n\t`access` text NOT NULL,\n\t`updated_by_user_id` text,\n\t`updated_at` integer NOT NULL\n);"
     ]
+  },
+  {
+    "hash": "b9950df694f5e19e939159f743c021a9add51b88d6546ca181a455f8b7fe8c28",
+    "sql": [
+      "CREATE TABLE `brain_file` (\n\t`path` text PRIMARY KEY NOT NULL,\n\t`content` text NOT NULL,\n\t`size` integer NOT NULL,\n\t`created_at` integer NOT NULL,\n\t`updated_at` integer NOT NULL,\n\t`updated_by` text\n);",
+      "CREATE TABLE `brain_file_version` (\n\t`path` text NOT NULL,\n\t`number` integer NOT NULL,\n\t`content` text,\n\t`created_at` integer NOT NULL,\n\t`created_by` text,\n\tPRIMARY KEY(`path`, `number`)\n);"
+    ]
   }
 ];
