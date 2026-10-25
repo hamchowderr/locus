@@ -1,12 +1,15 @@
 import { handleGhlWebhook, verifyGhlSignature } from "@locus/connect";
+import { after } from "next/server";
 import { connectDeps } from "@/lib/connect";
+import { RELAYED_HEADER, relayTarget, relayToTarget } from "@/lib/ghl-relay";
 import { NotConfigured } from "@/lib/locus";
 
 /**
  * GHL's app webhooks. The signature is checked against the raw body before anything is parsed;
  * an unsigned or wrongly signed request changes nothing. Install and uninstall are handled here;
  * a new message from a contact goes on to the agent server, unchanged and with GHL's signature,
- * which checks it again and drafts a reply where that is on.
+ * which checks it again and drafts a reply where that is on. With `LOCUS_GHL_RELAY_URL` set, a
+ * copy of each new message also goes to another Locus (staging), after this one has answered.
  */
 export async function POST(request: Request) {
   const publicKey = process.env.GHL_WEBHOOK_PUBLIC_KEY;
@@ -22,7 +25,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "bad body" }, { status: 400 });
   }
   if ((event as { type?: unknown } | null)?.type === "InboundMessage") {
-    return forwardToAgent(raw, request.headers.get("x-ghl-signature") ?? "");
+    const signature = request.headers.get("x-ghl-signature") ?? "";
+    const relay = relayTarget();
+    if (relay && !request.headers.has(RELAYED_HEADER)) {
+      after(() => relayToTarget(relay, raw, signature));
+    }
+    return forwardToAgent(raw, signature);
   }
   try {
     const outcome = await handleGhlWebhook(
