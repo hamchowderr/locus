@@ -33,13 +33,17 @@ Folders aren't stored: the fixed ones always exist and others exist while a note
 
 ## Agents
 
-`createBrainWorkspace(db, { needsApproval })` is what the agent server gives every client's
+`createBrainWorkspace(db, { needsApproval, authorize, autoSave })` is what the agent server gives every client's
 agent: Mastra's file and search tools over the brain, named `brain_read`, `brain_list`,
 `brain_grep`, `brain_search`, `brain_write`, `brain_edit` and `brain_delete`, and a processor
 (`context`) that puts `instructions.md` and `index.md` in front of the agent on every run.
 
 - Reads never wait. Deleting always waits for a person. A write waits when `needsApproval`
   says so (the host passes its taint check) and always for `instructions.md`.
+- What a person tells the agent it saves at once with `brain_write`. A note the agent worked
+  out itself goes through `brain_propose` (in `tools`, for the controller), which waits on an
+  approval card unless the client's owners turned on auto-save (`autoSave`, read on every
+  proposal; Clients page, "Notes the agent works out"). Auto-save never skips the rules above.
 - Search is Mastra's BM25 index, built afresh from the notes before a search whenever the
   brain changed, so notes saved anywhere are found. The new index replaces the old one only
   once complete.

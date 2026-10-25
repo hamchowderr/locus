@@ -105,6 +105,16 @@ export const siteBuilderOff = sqliteTable("site_builder_off", {
 });
 
 /**
+ * Clients whose agents save the notes they work out themselves straight into the brain, without
+ * a person approving each one first. No row means each such note waits for a yes.
+ */
+export const brainAutoSave = sqliteTable("brain_auto_save", {
+  locationId: text("location_id")
+    .primaryKey()
+    .references(() => location.id, { onDelete: "cascade" }),
+});
+
+/**
  * Clients whose new GHL messages get a drafted reply, and the member who turned that on: drafts
  * run as that member, through the same staff check as a sign-in, so a member who loses the
  * client stops drafting for it. No row means off. Ids only, never a message.
