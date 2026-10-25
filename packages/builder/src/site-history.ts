@@ -17,6 +17,7 @@ import {
   siteOfClient,
   siteRuntimeKey,
   usageMeter,
+  versionPreviewKey,
 } from "./host.ts";
 import { BuilderError } from "./index.ts";
 import { syncRuntime } from "./sync.ts";
@@ -163,9 +164,7 @@ export interface SitePreview {
   version: number | null;
 }
 
-/** The sandbox that shows a site's saved versions, apart from the one the builder works in. */
-export const versionPreviewKey = (client: AuthorizedClient, siteId: string) =>
-  `${siteRuntimeKey(client, siteId)}/versions`;
+export { versionPreviewKey };
 
 /** How long a preview may spend installing packages before giving up. */
 const INSTALL_MS = 180_000;
