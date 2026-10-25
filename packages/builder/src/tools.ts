@@ -467,7 +467,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "The site's files. action list: every path with its size. read: one file (`path`). " +
       "write: create or replace a text file with its complete `content`. edit: replace exact " +
       "text in `path`; `find` must match exactly once (include enough surrounding lines) " +
-      "unless `all` is true. delete: remove `paths`. Prefer edit for small changes.",
+      "unless `all` is true. delete: remove `paths`. Prefer edit for small changes. A read may " +
+      "show a line Locus withheld; never write such a file whole: edit around that line.",
     requireApproval: noApproval,
     inputSchema: z.object({
       action: z.enum(FILE_ACTIONS),

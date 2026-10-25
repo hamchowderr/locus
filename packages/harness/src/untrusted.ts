@@ -141,6 +141,33 @@ function isLocusError(value: unknown): value is { error: string; from: typeof LO
   return keys.length === 2 && from === LOCUS && typeof error === "string";
 }
 
+/** A chat-template marker; only a JSX tag such as `<User>` or `</Tool>` is ever kept around. */
+const CHAT_MARKER =
+  /<\/?\s*(system|assistant|user|tool|instructions?)\s*>|\[\/?(INST|SYS)\]|<<\/?SYS>>|<\|im_(start|end)\|>/gi;
+const JSX_TAG = /^<\/?[A-Z][a-z]+>$/;
+
+/**
+ * Text of several lines with only its instruction-like lines withheld, or null when the whole
+ * text must go: when no single line matches (the phrasing spans lines), when what is left still
+ * reads like instructions, or when a line holds a real chat-template marker, which fences
+ * whatever sits between its lines.
+ */
+function keepingTheRest(text: string): { text: string; withheld: number } | null {
+  if (!text.includes("\n")) return null;
+  let withheld = 0;
+  let fenced = false;
+  const kept = text.split("\n").map((line) => {
+    if (!looksLikeInstructions(line)) return line;
+    const visible = line.normalize("NFKC").replace(INVISIBLE, "");
+    for (const [marker] of visible.matchAll(CHAT_MARKER)) fenced ||= !JSX_TAG.test(marker);
+    withheld++;
+    return WITHHELD_LINE;
+  });
+  if (withheld === 0 || fenced) return null;
+  const rest = kept.join("\n");
+  return looksLikeInstructions(rest) ? null : { text: rest, withheld };
+}
+
 /** Returns `value` with every instruction-like string or key replaced, and how many were. */
 export function withholdInstructions(value: unknown): { value: unknown; withheld: number } {
   if (isLocusError(value)) {
@@ -152,18 +179,10 @@ export function withholdInstructions(value: unknown): { value: unknown; withheld
   const walk = (node: unknown): unknown => {
     if (typeof node === "string") {
       if (!looksLikeInstructions(node)) return node;
-      if (node.includes("\n")) {
-        let lines = 0;
-        const kept = node.split("\n").map((line) => {
-          if (!looksLikeInstructions(line)) return line;
-          lines++;
-          return WITHHELD_LINE;
-        });
-        // No single line matched (the phrasing spans lines): withhold the whole text.
-        if (lines > 0) {
-          withheld += lines;
-          return kept.join("\n");
-        }
+      const lines = keepingTheRest(node);
+      if (lines) {
+        withheld += lines.withheld;
+        return lines.text;
       }
       withheld++;
       return WITHHELD;
