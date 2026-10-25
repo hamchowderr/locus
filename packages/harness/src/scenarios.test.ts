@@ -350,7 +350,7 @@ describe("calendars", () => {
 });
 
 describe("conversations", () => {
-  test("texts the contact it found, and reads the thread first without writing", async () => {
+  test("reads the thread first, and the text it drafts waits for a person", async () => {
     script(
       /text ada/i,
       [
@@ -410,15 +410,12 @@ describe("conversations", () => {
       maxSteps: 6,
     });
 
-    expect(result.text).toBe("Texted Ada.");
+    // A message to a contact can't be taken back, and Ada's words were read: it waits.
+    expect(result.finishReason).toBe("suspended");
+    expect(result.suspendPayload).toMatchObject({ toolName: "perform_action" });
     expect(shownToModel()).toContain("Is 3pm ok?");
-    expect(sent(ghl)).toEqual(["GET /conversations/search", "POST /conversations/messages"]);
+    expect(sent(ghl)).toEqual(["GET /conversations/search"]);
     expect(ghl.requests[0]?.url.searchParams.get("locationId")).toBe("loc-A");
-    expect(ghl.requests[1]?.body).toEqual({
-      type: "SMS",
-      contactId: "c-ada",
-      message: "See you tomorrow at 3!",
-    });
   });
 });
 

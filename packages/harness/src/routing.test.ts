@@ -1,7 +1,7 @@
 import { catalog, isRead } from "@locus/skills";
 import { createFakeGhl } from "@locus/testing";
 import { describe, expect, test } from "vitest";
-import { needsApproval, performAction } from "./actions.ts";
+import { needsApproval, performAction, SENDS_TO_CONTACT } from "./actions.ts";
 import { runQuery } from "./query-data.ts";
 
 const session = { token: "tok", tokenKind: "location", locationId: "loc-A" } as const;
@@ -27,7 +27,7 @@ describe.each(catalog.map((skill) => [skill.category, skill.operations] as const
         expect(needsApproval(id)).toBe(false);
       } else {
         expect(await query).toMatch(/changes data/);
-        expect(needsApproval(id)).toBe(op.method === "DELETE");
+        expect(needsApproval(id)).toBe(op.method === "DELETE" || SENDS_TO_CONTACT.has(id));
         expect(ghl.requests).toEqual([]);
       }
     });
