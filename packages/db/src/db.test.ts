@@ -101,6 +101,8 @@ describe("provisioning", () => {
     );
     expect(await tables(hostname)).toEqual([
       "app_access",
+      "brain_file",
+      "brain_file_version",
       "generation_run",
       "site_blob",
       "site_brief",
