@@ -197,7 +197,11 @@ Agencies host their clients' sites on their own Vercel team through your Vercel 
    exactly.
 3. Give it read and write access to **projects**, **deployments** and **domains**: the Sites
    page lists the team's projects, creates one for each published site, shows its latest
-   deployment, adds a client's domain to it, and reads the domain's DNS configuration.
+   deployment, adds a client's domain to it, and reads the domain's DNS configuration. Also give
+   it read and write access to **project environment variables**: an app-style site's
+   database, login and file settings live there, and without it Vercel answers "Project not
+   found" when Locus publishes such a site. Adding the permission to an existing integration
+   asks each team that installed it to accept the change.
 4. The integration's client id and secret are `VERCEL_INTEGRATION_CLIENT_ID` and
    `VERCEL_INTEGRATION_CLIENT_SECRET`.
 
