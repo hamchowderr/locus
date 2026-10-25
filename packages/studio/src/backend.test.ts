@@ -161,7 +161,7 @@ describe("an app-style site's files", () => {
     );
     // lib/auth.ts as sites got it before Better Auth's address warning was left out of the logs.
     expect(text(app, "lib/auth.ts")).toContain(
-      'if (message.includes("Base URL is not set")) return;',
+      'if (typeof message === "string" && message.includes("Base URL is not set")) return;',
     );
     const beforeQuiet = text(app, "lib/auth.ts").replace(
       /\n {2}\/\/ Better Auth warns[\s\S]*?\n {2}\},(?=\n\}\);)/,
