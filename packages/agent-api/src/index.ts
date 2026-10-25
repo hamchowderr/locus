@@ -64,6 +64,9 @@ export { CONNECTORS_OFF_KEY } from "./mastra/lib/connectors-off.ts";
 /** The largest body the chat kit's stream route takes (a message with its attachments). */
 export { STREAM_BODY_LIMIT as KIT_STREAM_BODY_LIMIT } from "./mastra/routes/stream-body.ts";
 export {
+  CONVERSATIONS_AGENT,
+  CONVERSATIONS_MODE,
+  CONVERSATIONS_MODE_ID,
   clientSiteThreads,
   clientWorkThreads,
   OPERATOR_AGENT,
