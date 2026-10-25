@@ -2,6 +2,7 @@ import { Mastra } from "@mastra/core";
 import { Agent } from "@mastra/core/agent";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import type { InputProcessorOrWorkflow, OutputProcessorOrWorkflow } from "@mastra/core/processors";
+import type { Workspace } from "@mastra/core/workspace";
 import { APP_TOOL_NAMES, createAppTools } from "./apps.ts";
 import { type ConversationStore, createLocusMemory, ForgetGhlData } from "./conversation.ts";
 import { RUN_STOP_CONDITIONS } from "./run-limits.ts";
@@ -71,6 +72,16 @@ export interface LocusAgentConfig extends ToolDeps {
    * function rule is trusted: the controller asks about every other tool, `false` included.
    */
   runTools?: Record<string, unknown>;
+  /**
+   * A Mastra workspace whose tools the agent gets (the client's brain). `approvals` holds each
+   * of its tools' approval rule by name, in the shape of Locus's tools: `ForgetGhlData` asks
+   * them whether a step will pause for a person. `readTools` are the ones that change nothing.
+   */
+  workspace?: {
+    workspace: Workspace;
+    approvals: Record<string, unknown>;
+    readTools: readonly string[];
+  };
 }
 
 /**
@@ -100,6 +111,7 @@ export function createLocusAgent({
   threadTextTools = [],
   apps,
   runTools = {},
+  workspace,
   ...deps
 }: LocusAgentConfig): Agent {
   const tools = { ...createLocusTools(deps), ...(apps ? createAppTools(apps) : {}) };
@@ -118,14 +130,19 @@ export function createLocusAgent({
       ...(processors.output ?? []),
       ...(storage
         ? [
-            new ForgetGhlData(waitsForApproval({ ...decidesOwnApproval(runTools), ...tools }), [
-              ...keepResults,
-              ...ownTextTools,
-            ]),
+            new ForgetGhlData(
+              waitsForApproval({
+                ...decidesOwnApproval(runTools),
+                ...workspace?.approvals,
+                ...tools,
+              }),
+              [...keepResults, ...ownTextTools],
+            ),
           ]
         : []),
     ],
     ...(storage ? { memory: createLocusMemory(storage) } : {}),
+    ...(workspace ? { workspace: workspace.workspace } : {}),
     // Merged into every run, so it holds for the agent controller's runs and their resumes.
     defaultOptions: { stopWhen: RUN_STOP_CONDITIONS },
   });

@@ -14,3 +14,16 @@ export {
   normalizeBrainPath,
 } from "./paths.ts";
 export { listNoteVersions, type NoteVersion, restoreNoteVersion } from "./store.ts";
+export {
+  AGENT_ACTOR,
+  BRAIN_READ_TOOLS,
+  BRAIN_TOOL_NAMES,
+  BRAIN_TOOLS,
+  BRAIN_WRITE_TOOLS,
+  type BrainApprovalRule,
+  BrainContextProcessor,
+  type BrainWorkspace,
+  type BrainWorkspaceOptions,
+  createBrainWorkspace,
+  MAX_CONTEXT_CHARS,
+} from "./workspace.ts";
