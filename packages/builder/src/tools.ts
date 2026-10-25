@@ -53,6 +53,19 @@ export class BuilderError extends Error {
 }
 
 /**
+ * A file read can come back with lines Locus withheld (they read like instructions to an AI).
+ * Writing the placeholder back would replace the site's real line with it, so refuse.
+ */
+function refuseWithheld(text: string | undefined): void {
+  if (text?.includes("withheld by Locus")) {
+    throw new BuilderError(
+      "That text holds a line Locus withheld from you. Leave withheld lines as they are: " +
+        "use edit on the lines around them instead of writing the file whole.",
+    );
+  }
+}
+
+/**
  * Thrown by the host's `onVersionSaved` with a message written for the person (e.g. "Connect
  * GitHub on the Integrations page first."). Any other error is reported generically, so a git
  * host's raw error text never reaches the model.
@@ -454,7 +467,8 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
       "The site's files. action list: every path with its size. read: one file (`path`). " +
       "write: create or replace a text file with its complete `content`. edit: replace exact " +
       "text in `path`; `find` must match exactly once (include enough surrounding lines) " +
-      "unless `all` is true. delete: remove `paths`. Prefer edit for small changes.",
+      "unless `all` is true. delete: remove `paths`. Prefer edit for small changes. A read may " +
+      "show a line Locus withheld; never write such a file whole: edit around that line.",
     requireApproval: noApproval,
     inputSchema: z.object({
       action: z.enum(FILE_ACTIONS),
@@ -494,6 +508,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           case "write": {
             const path = need(input.path, "write needs a path");
+            refuseWithheld(input.content);
             // The preview's location attributes never belong in the site's own files.
             await ws.writeFile(
               path,
@@ -503,6 +518,7 @@ export function createSiteBuilderTools(deps: SiteBuilderToolDeps) {
           }
           case "edit": {
             const path = need(input.path, "edit needs a path");
+            refuseWithheld(input.replace);
             return {
               replacements: await ws.editFile(
                 path,

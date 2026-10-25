@@ -99,5 +99,6 @@ export {
   TAINT_MARK,
   UntrustedContentProcessor,
   WITHHELD,
+  WITHHELD_LINE,
   withholdInstructions,
 } from "./untrusted.ts";
