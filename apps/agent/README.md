@@ -43,6 +43,7 @@ docker build -f apps/agent/Dockerfile -t locus-agent .
 | `LOCUS_IMAGE_API_KEY` | Optional: image generation for the site builder, as the web app's |
 | `COMPOSIO_API_KEY` | Optional: Otaku's Composio project key. Set, every client's chat can use the apps that client connected (Gmail, Google Calendar, Slack; see `packages/harness/src/apps.ts`); unset, the chat has GHL tools only |
 | `COMPOSIO_AUTH_CONFIGS` | Optional, with `COMPOSIO_API_KEY`: the same value as the web app's, so the chat uses the accounts connected through Otaku's own sign-in apps |
+| `GHL_WEBHOOK_PUBLIC_KEY` | Optional: GoHighLevel's webhook public key, as the web app's. Set, a new message from a contact (passed on by the web app) gets a drafted reply in the sub-accounts where an owner or admin turned drafted replies on (Sub-accounts page); unset, nothing is drafted |
 | `PORT` | Defaults to 3000 |
 
 `GET /health` answers `ok`.

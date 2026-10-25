@@ -6,6 +6,7 @@ import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { rememberAgency } from "./agency.ts";
 import { createAuth } from "./auth.ts";
 import { consumeAttempt, LONGEST_WINDOW_MS } from "./rate-limit.ts";
 
@@ -266,6 +267,62 @@ describe("signing in", () => {
     await verifiedOwner();
     const current = await auth.api.getSession({ headers: await signIn() });
     expect(current?.session.activeOrganizationId ?? null).toBeNull();
+  });
+
+  describe("with more than one agency", () => {
+    /** Two agencies, the first joined first; the session ends in the second. */
+    async function twoAgencies() {
+      await verifiedOwner();
+      const headers = await signIn();
+      const first = await auth.api.createOrganization({
+        body: { name: "First Agency", slug: "first-agency" },
+        headers,
+      });
+      const second = await auth.api.createOrganization({
+        body: { name: "Second Agency", slug: "second-agency" },
+        headers,
+      });
+      const session = await auth.api.getSession({ headers });
+      if (!first || !second || !session) throw new Error("setup failed");
+      return { headers, first, second, userId: session.user.id };
+    }
+
+    it("reopens the agency the user last switched to, not the one joined first", async () => {
+      const { headers, second, userId } = await twoAgencies();
+      await auth.api.setActiveOrganization({ body: { organizationId: second.id }, headers });
+      await rememberAgency(db, userId, second.id);
+      await auth.api.signOut({ headers });
+
+      const again = await auth.api.getSession({ headers: await signIn() });
+      expect(again?.session.activeOrganizationId).toBe(second.id);
+    });
+
+    it("falls back to the agency joined first once the user has left the remembered one", async () => {
+      const { headers, first, second, userId } = await twoAgencies();
+      await rememberAgency(db, userId, second.id);
+      await auth.api.deleteOrganization({ body: { organizationId: second.id }, headers });
+      await auth.api.signOut({ headers });
+
+      const again = await auth.api.getSession({ headers: await signIn() });
+      expect(again?.session.activeOrganizationId).toBe(first.id);
+    });
+
+    it("drops the session's sub-account and site when it changes agency", async () => {
+      const { headers, first } = await twoAgencies();
+      const session = await auth.api.getSession({ headers });
+      const id = session?.session.id ?? "";
+      await db
+        .update(schema.session)
+        .set({ activeLocationId: "loc-1", activeSiteId: "site-1" })
+        .where(eq(schema.session.id, id));
+
+      await auth.api.setActiveOrganization({ body: { organizationId: first.id }, headers });
+
+      const [row] = await db.select().from(schema.session).where(eq(schema.session.id, id));
+      expect(row?.activeOrganizationId).toBe(first.id);
+      expect(row?.activeLocationId).toBeNull();
+      expect(row?.activeSiteId).toBeNull();
+    });
   });
 
   describe("deleting an agency", () => {

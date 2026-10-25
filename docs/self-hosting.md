@@ -65,6 +65,8 @@ deployment is not considered set up without it.
 | `STRIPE_WEBHOOK_SECRET` | with Stripe | The signing secret of your Stripe webhook endpoint |
 | `LOCUS_OPERATORS` | no | Comma-separated emails of the deployment's operators (verified accounts only). Unset means nobody can open `/operator` |
 | `LOCUS_AGENT_URL` | for the chat | The agent server's `https` address, e.g. `https://agent.example.com`. The web app forwards the browser's cookies there, so never plain `http` over the internet. Read when the web app is built: changing it needs a rebuild. Unset means the chat has no backend |
+| `LOCUS_GHL_RELAY_URL` | no | For testing: another Locus's GHL webhook address (e.g. `https://staging.example/api/webhooks/crm`). Each new GHL message this deployment verifies is also sent there, unchanged and with GHL's signature, so a second deployment of the same GHL app can draft replies too. `https` only; copies are never relayed again. Unset means no copies |
+| `LOCUS_GHL_RELAY_LOCATIONS` | with the relay | Comma-separated GHL location ids whose new messages are relayed (your test sub-accounts). Messages of any other location are never copied; empty means none are |
 | `LOCUS_SANDBOX_TOKEN`, `LOCUS_SANDBOX_TEAM_ID`, `LOCUS_SANDBOX_PROJECT_ID` | for the site builder, off Vercel | A Vercel token, team and project of your own (not an agency's) where each site's build-and-preview sandbox runs. On Vercel, leave them unset: the deployment's OIDC token is used. Elsewhere, without them the site builder's sandbox tools fail in production |
 | `LOCUS_SANDBOX_PROVIDER` | no | `vercel` (the default), `daytona` or `e2b`. With `daytona` or `e2b`, site sandboxes run there: set it and `DAYTONA_API_KEY` or `E2B_API_KEY` on both the web app and the agent server, which then opens sandboxes itself instead of through the web app. Optional `LOCUS_SANDBOX_EGRESS` (comma-separated domains sandboxes may reach), `DAYTONA_API_URL`, `DAYTONA_TARGET`, `DAYTONA_SNAPSHOT` |
 | `DAYTONA_API_KEY` | with `daytona` | A Daytona API key of your own (not an agency's). Read server-side only; it never enters a sandbox |
@@ -128,8 +130,9 @@ Agencies connect their GoHighLevel company through your own Marketplace app.
 4. Create a client key. The client id, client secret and the app's id are `GHL_CLIENT_ID`,
    `GHL_CLIENT_SECRET` and `GHL_APP_ID`.
 5. Set the app's webhook URL to `https://<your host>/api/webhooks/crm` and subscribe to the
-   **AppInstall** and **AppUninstall** events. Put GoHighLevel's webhook public key in
-   `GHL_WEBHOOK_PUBLIC_KEY`.
+   **AppInstall**, **AppUninstall** and **InboundMessage** events. Put GoHighLevel's webhook
+   public key in `GHL_WEBHOOK_PUBLIC_KEY`, on the web app and the agent server: the web app
+   passes new messages on to the agent server, which drafts replies where that is turned on.
 
 Agencies approve the app on GoHighLevel's neutral host (`marketplace.leadconnectorhq.com`).
 Installing on a sub-account syncs it in as a client; uninstalling suspends it (its data stays),
@@ -196,7 +199,11 @@ Agencies host their clients' sites on their own Vercel team through your Vercel 
    exactly.
 3. Give it read and write access to **projects**, **deployments** and **domains**: the Sites
    page lists the team's projects, creates one for each published site, shows its latest
-   deployment, adds a client's domain to it, and reads the domain's DNS configuration.
+   deployment, adds a client's domain to it, and reads the domain's DNS configuration. Also give
+   it read and write access to **project environment variables**: an app-style site's
+   database, login and file settings live there, and without it Vercel answers "Project not
+   found" when Locus publishes such a site. Adding the permission to an existing integration
+   asks each team that installed it to accept the change.
 4. The integration's client id and secret are `VERCEL_INTEGRATION_CLIENT_ID` and
    `VERCEL_INTEGRATION_CLIENT_SECRET`.
 
