@@ -16,13 +16,16 @@ import { createAuth } from "./auth.ts";
 import {
   type AuthorizedClient,
   authorizeClient,
+  authorizeMemberClient,
   ClientAccessDenied,
+  inboxDraftsFor,
   listAccessibleClients,
   listTeam,
   mintClientDbToken,
   resolveActiveClient,
   type SessionContext,
   selectClient,
+  setInboxDrafts,
   setMemberClients,
 } from "./client-access.ts";
 
@@ -193,6 +196,34 @@ describe("staff client access", () => {
     expect(
       (await listTeam(db, owner)).find((m) => m.memberId === "staff@agency-a")?.locationIds,
     ).toEqual([a1]);
+  });
+  it("drafts run as the owner who turned them on, through the same check, and stop with it", async () => {
+    const owner = await signedIn("owner", "agency-a");
+    const staff = await signedIn("staff", "agency-a");
+    // Only owners and admins turn drafting on: every draft is a run the agency pays for.
+    await denied(setInboxDrafts(db, staff, a1, true));
+    await denied(setInboxDrafts(db, owner, b1, true));
+    expect(await inboxDraftsFor(db, a1)).toBeNull();
+
+    await setInboxDrafts(db, owner, a1, true);
+    const drafter = await inboxDraftsFor(db, a1);
+    expect(drafter).toBe("owner@agency-a");
+    expect((await authorizeMemberClient(db, drafter as string, a1)).location.id).toBe(a1);
+    // The member's own agency decides, never the client named: another agency's is refused.
+    await denied(authorizeMemberClient(db, drafter as string, b1));
+    // Staff never draft, not even for a client on their list.
+    await denied(authorizeMemberClient(db, "staff@agency-a", a1));
+
+    // Demoted: the next draft is refused at once, even with the client on their list.
+    await db.update(member).set({ role: "member" }).where(eq(member.id, "owner@agency-a"));
+    await db.insert(memberLocation).values({ memberId: "owner@agency-a", locationId: a1 });
+    await denied(authorizeMemberClient(db, "owner@agency-a", a1));
+    await denied(authorizeMemberClient(db, "nobody", a1));
+
+    await db.delete(memberLocation).where(eq(memberLocation.memberId, "owner@agency-a"));
+    await db.update(member).set({ role: "owner" }).where(eq(member.id, "owner@agency-a"));
+    await setInboxDrafts(db, owner, a1, false);
+    expect(await inboxDraftsFor(db, a1)).toBeNull();
   });
 });
 
