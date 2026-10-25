@@ -1533,6 +1533,39 @@ describe("the client's brain", () => {
     expect(systemOf(asked)).toContain("business/hours.md: Open 8 to 5, Monday to Friday.");
   });
 
+  test("reading and searching the brain never asks", async () => {
+    mock().llm.on(
+      { userMessage: /what do our notes say/i, hasToolResult: false },
+      {
+        toolCalls: [
+          { id: "br-3", name: "brain_search", arguments: JSON.stringify({ query: "hours" }) },
+          {
+            id: "br-4",
+            name: "brain_read",
+            arguments: JSON.stringify({ path: "/business/hours.md" }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "br-4" }, { content: "Open 8 to 5." });
+    const setup = await hostFor({ as: "owner" });
+    const { brain, close } = await notes(setup);
+    try {
+      await brain.writeFile("/business/hours.md", "# Hours\n\nOpen 8 to 5.");
+    } finally {
+      close();
+    }
+
+    const events = await say(setup, "What do our notes say about hours?");
+    expect(events.map((e) => e.type)).not.toContain("tool_approval_required");
+    const searched = mock()
+      .llm.getRequests()
+      .find(
+        (r) => /br-4/.test(JSON.stringify(r.body)) && /Open 8 to 5/.test(JSON.stringify(r.body)),
+      );
+    expect(JSON.stringify(searched?.body)).toContain("/business/hours.md: # Hours");
+  });
+
   test("changing the client's instructions waits for a yes", async () => {
     mock().llm.on(
       { userMessage: /from now on/i, hasToolResult: false },

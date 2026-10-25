@@ -68,7 +68,9 @@ describe("the brain workspace", () => {
     );
     expect(await ask(BRAIN_TOOLS.edit, { path: "/instructions.md" }, clean)).toBe(true);
     expect(tools[BRAIN_TOOLS.delete]?.requireApproval).toBe(true);
-    expect(tools[BRAIN_TOOLS.read]?.requireApproval).toBe(false);
+    // Reads decide for themselves (a function), so the agent controller doesn't ask.
+    expect(await ask(BRAIN_TOOLS.read, { path: "/business/hours.md" }, dirty)).toBe(false);
+    expect(await ask(BRAIN_TOOLS.search, { query: "hours" }, dirty)).toBe(false);
 
     // The same rules in Locus's own shape, for code that must know which calls pause.
     expect(
@@ -97,6 +99,24 @@ describe("the brain workspace", () => {
     await person.deleteFile("/business/pricing.md");
     expect(await search("roof repair")).not.toContain("pricing.md");
   });
+
+  it("a search during a rebuild finds the notes, and a failed build is tried again", async () => {
+    const { brain, tools, ctx } = await brainTools();
+    const search = async (query: string) =>
+      JSON.stringify(await tools[BRAIN_TOOLS.search]?.execute({ query }, ctx));
+    await brain.filesystem.writeFile("/business/pricing.md", "# Pricing\n\nRoof repair from $450.");
+    const results = await Promise.all([search("roof"), search("roof"), search("roof")]);
+    for (const r of results) expect(r).toContain("pricing.md");
+
+    await brain.filesystem.writeFile("/business/gutters.md", "# Gutters\n\nGutter cleaning $90.");
+    const notes = brain.filesystem.notes.bind(brain.filesystem);
+    brain.filesystem.notes = async () => {
+      throw new Error("database unreachable");
+    };
+    await expect(search("gutter")).rejects.toThrow("database unreachable");
+    brain.filesystem.notes = notes;
+    expect(await search("gutter")).toContain("gutters.md");
+  });
 });
 
 describe("the brain in context", () => {
@@ -119,19 +139,45 @@ describe("the brain in context", () => {
     expect(text).not.toContain("a".repeat(MAX_CONTEXT_CHARS + 1));
   });
 
-  it("adds itself once per run", async () => {
+  it("is read once per run, and again once the brain changes", async () => {
     const { brain } = await brainTools();
-    const added: unknown[] = [];
-    const tagged: unknown[] = [];
+    let tagged: { content: string }[] = [];
+    let reads = 0;
     const messageList = {
       getSystemMessages: () => tagged,
-      addSystem: (message: unknown) => {
-        added.push(message);
+      clearSystemMessages: () => {
+        tagged = [];
+      },
+      addSystem: (message: { content: string }) => {
+        reads++;
         tagged.push(message);
       },
     };
-    await brain.context.processInputStep({ messageList } as never);
-    await brain.context.processInputStep({ messageList } as never);
-    expect(added).toHaveLength(1);
+    const step = () => brain.context.processInputStep({ messageList } as never);
+    await step();
+    await step();
+    expect(reads).toBe(1);
+
+    await brain.filesystem.writeFile("/business/hours.md", "# Hours\n\nOpen 8 to 6.");
+    await step();
+    expect(reads).toBe(2);
+    expect(tagged).toHaveLength(1);
+    expect(tagged[0]?.content).toContain("business/hours.md: Open 8 to 6.");
+  });
+
+  it("refuses a run the host's staff check refuses", async () => {
+    const brain = createBrainWorkspace(db, {
+      authorize: async () => {
+        throw new Error("no access");
+      },
+    });
+    const tools = (await createWorkspaceTools(brain.workspace)) as unknown as Record<string, Tool>;
+    await expect(
+      tools[BRAIN_TOOLS.read]?.execute({ path: "/business/x.md" }, { workspace: brain.workspace }),
+    ).rejects.toThrow("no access");
+    const messageList = { getSystemMessages: () => [], clearSystemMessages() {}, addSystem() {} };
+    await expect(brain.context.processInputStep({ messageList } as never)).rejects.toThrow(
+      "no access",
+    );
   });
 });
