@@ -381,7 +381,7 @@ export const auth = betterAuth({
   // last publish. Every other message is logged as usual.
   logger: {
     log: (level, message, ...args) => {
-      if (message.includes("Base URL is not set")) return;
+      if (typeof message === "string" && message.includes("Base URL is not set")) return;
       const write = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
       write("[Better Auth]", message, ...args);
     },
