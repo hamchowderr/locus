@@ -338,6 +338,7 @@ export async function POST() {
 const authContent = (
   withMembers: boolean,
   previewCookies = true,
+  quietBaseUrl = true,
 ) => `import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import * as schema from "@/db/schema";
@@ -371,7 +372,22 @@ export const auth = betterAuth({
   databaseHooks: { user: { create: { after: memberSignedUp } } },`
       : ""
   }
-  telemetry: { enabled: false },
+  telemetry: { enabled: false },${
+    quietBaseUrl
+      ? `
+  // Better Auth warns on each start that it has no fixed address. A published site answers at
+  // its vercel.app address and at any domain added to it later, so it takes the address from
+  // each request on purpose: a fixed list would refuse sign-ins on a domain added after the
+  // last publish. Every other message is logged as usual.
+  logger: {
+    log: (level, message, ...args) => {
+      if (typeof message === "string" && message.includes("Base URL is not set")) return;
+      const write = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+      write("[Better Auth]", message, ...args);
+    },
+  },`
+      : ""
+  }
 });
 `;
 
@@ -430,15 +446,20 @@ export function withPreviewAuth(files: SiteFile[]): SiteFile[] {
 }
 
 const BEFORE_PREVIEW_COOKIES = new Map(
-  [false, true].map((withMembers) => [authContent(withMembers, false), authContent(withMembers)]),
+  [false, true].map((withMembers) => [
+    authContent(withMembers, false, false),
+    authContent(withMembers),
+  ]),
 );
 
 /** lib/auth.ts as sites got it in earlier versions: replaced when unchanged. */
 const EARLIER_AUTH = new Set([
   // before sign-ups went to HighLevel
-  authContent(false, false),
+  authContent(false, false, false),
   // before the preview's login cookie worked inside the editor
-  authContent(true, false),
+  authContent(true, false, false),
+  // before Better Auth's warning about its address was left out of the logs
+  authContent(true, true, false),
 ]);
 
 const authRouteFile = (): SiteFile => ({
