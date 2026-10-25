@@ -1713,6 +1713,13 @@ describe("what reaches the model from a publishing refusal", () => {
     expect(raw).toMatch(/GitHub refused/);
   });
 
+  it("names Vercel, not GitHub, when Vercel refused, and hides Vercel's raw text", () => {
+    const raw = publishMessage(new ConnectError("Vercel: Project not found"));
+    expect(raw).not.toMatch(/GitHub|not found/);
+    expect(raw).toMatch(/Vercel refused/);
+    expect(raw).toMatch(/environment variables/);
+  });
+
   it("passes Locus's own file checks, so the agent can fix the file", () => {
     for (const message of [
       'Locus won\'t publish ".env.local": environment files can hold secrets and never go in the repository.',
