@@ -196,6 +196,40 @@ describe("runQuery", () => {
     expect((await query("archived")).rows).toEqual([{ id: "f0" }]);
   });
 
+  test("reaches a nested list with a dotted rows field", async () => {
+    const ghl = createFakeGhl({
+      "GET /conversations/conv-1/messages": {
+        body: {
+          messages: {
+            lastMessageId: "m2",
+            nextPage: false,
+            messages: [
+              { id: "m1", direction: "inbound", messageType: "TYPE_SMS" },
+              { id: "m2", direction: "outbound", messageType: "TYPE_SMS" },
+            ],
+          },
+        },
+      },
+    });
+
+    const result = await runQuery(
+      {
+        sources: [
+          {
+            as: "messages",
+            operation: "conversations.get-messages",
+            params: { path: { conversationId: "conv-1" } },
+            rowsField: "messages.messages",
+          },
+        ],
+        sql: "SELECT id FROM messages WHERE direction = 'inbound'",
+      },
+      { session, fetch: ghl.fetch },
+    );
+
+    expect(result.rows).toEqual([{ id: "m1" }]);
+  });
+
   test("runs one SELECT and caps what it returns", async () => {
     const ghl = createFakeGhl({ "GET /forms/": paged("forms", forms, "skip") });
     const query = (sql: string) =>
