@@ -136,6 +136,56 @@ describe("BrainFilesystem", () => {
   });
 });
 
+describe("found in review", () => {
+  it("moving a note or folder onto itself keeps it", async () => {
+    await fs.writeFile("business/a.md", "A");
+    await fs.writeFile("business/x/b.md", "B");
+    await fs.moveFile("/business/a.md", "business//a.md");
+    await fs.moveFile("business/x", "./business/x", { recursive: true });
+    expect(await fs.readFile("business/a.md", { encoding: "utf8" })).toBe("A");
+    expect(await fs.readFile("business/x/b.md", { encoding: "utf8" })).toBe("B");
+  });
+
+  it("refuses to move a folder into itself", async () => {
+    await fs.writeFile("business/x/a.md", "A");
+    await fs.writeFile("business/x/y/a.md", "ORIG");
+    await expect(fs.moveFile("business/x", "business/x/y", { recursive: true })).rejects.toThrow(
+      "is inside",
+    );
+    expect(await fs.readFile("business/x/y/a.md", { encoding: "utf8" })).toBe("ORIG");
+  });
+
+  it("runs parallel tool calls one at a time instead of failing", async () => {
+    const results = await Promise.allSettled([
+      fs.writeFile("business/a.md", "A"),
+      fs.writeFile("business/b.md", "B"),
+      fs.readdir("/"),
+      fs.deleteFile("business/a.md"),
+      ...[1, 2, 3, 4, 5].map((n) => fs.appendFile("business/log.md", `${n}\n`)),
+    ]);
+    expect(results.filter((r) => r.status === "rejected")).toEqual([]);
+    expect(await fs.readFile("business/log.md", { encoding: "utf8" })).toBe("1\n2\n3\n4\n5\n");
+    expect((await listNoteVersions(db, "business/a.md")).map((v) => v.number)).toEqual([2, 1]);
+  });
+
+  it("won't put a note inside another note", async () => {
+    await fs.writeFile("business/a.md", "A");
+    await expect(fs.writeFile("business/a.md/b.md", "B")).rejects.toThrow();
+    await expect(fs.mkdir("business/a.md/sub")).rejects.toThrow();
+  });
+
+  it("honours the requested encoding", async () => {
+    await fs.writeFile("business/a.md", "hi");
+    expect(await fs.readFile("business/a.md", { encoding: "base64" })).toBe("aGk=");
+  });
+
+  it("lists index.md as a file with its real size", async () => {
+    await expect(fs.readdir("index.md")).rejects.toThrow("not a directory");
+    const index = (await fs.readdir("/")).find((e) => e.name === "index.md");
+    expect(index?.size).toBe((await fs.stat("index.md")).size);
+  });
+});
+
 describe("with Mastra's workspace tools", () => {
   it("the agent's file tools and keyword search work on the brain", async () => {
     const workspace = new Workspace({ id: "brain-test", filesystem: fs, bm25: true });

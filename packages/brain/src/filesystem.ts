@@ -34,6 +34,8 @@ import { getNote, listNotePaths, listNotes, putNote } from "./store.ts";
 /** Mastra's write and walk option shapes, which its index doesn't re-export. */
 type CopyOptions = { overwrite?: boolean; recursive?: boolean };
 type WalkEntry = FileEntry & { path: string };
+/** The client database, or a transaction on it. */
+type Executor = Parameters<typeof getNote>[0];
 
 export interface BrainFilesystemOptions {
   /** Recorded on every change: `user:<id>` or `agent:<name>`. */
@@ -92,91 +94,102 @@ export class BrainFilesystem extends MastraFilesystem {
   }
 
   async readFile(input: string, options?: ReadOptions): Promise<string | Buffer> {
-    await this.ensureReady();
-    const path = this.#readPath(input);
-    const text = await this.#readText(path);
-    return options?.encoding ? text : Buffer.from(text, "utf8");
-  }
-
-  async writeFile(input: string, content: FileContent, options?: WriteOptions): Promise<void> {
-    await this.ensureReady();
-    const path = this.#notePath(input);
-    const text = toText(path, content);
-    await this.#db.transaction(async (tx) => {
-      const existing = await getNote(tx, path);
-      if (existing && options?.overwrite === false) throw new FileExistsError(input);
-      if (existing && options?.expectedMtime && +existing.updatedAt !== +options.expectedMtime) {
-        throw new StaleFileError(input, options.expectedMtime, existing.updatedAt);
-      }
-      if (!existing && (await this.#isDirectory(path))) throw new IsDirectoryError(input);
-      if (existing?.content === text) return;
-      await putNote(tx, path, text, this.#actor);
+    return this.#serial(async () => {
+      const text = await this.#readText(this.#db, this.#readPath(input));
+      return options?.encoding
+        ? Buffer.from(text, "utf8").toString(options.encoding)
+        : Buffer.from(text, "utf8");
     });
   }
 
-  async appendFile(input: string, content: FileContent): Promise<void> {
-    await this.ensureReady();
+  async writeFile(input: string, content: FileContent, options?: WriteOptions): Promise<void> {
     const path = this.#notePath(input);
-    const existing = await getNote(this.#db, path);
-    await this.writeFile(input, (existing?.content ?? "") + toText(path, content));
+    const text = toText(path, content);
+    await this.#serial(() =>
+      this.#db.transaction(async (tx) => {
+        const existing = await getNote(tx, path);
+        if (existing && options?.overwrite === false) throw new FileExistsError(input);
+        if (existing && options?.expectedMtime && +existing.updatedAt !== +options.expectedMtime) {
+          throw new StaleFileError(input, options.expectedMtime, existing.updatedAt);
+        }
+        if (!existing) await this.#assertCanCreate(tx, path, input);
+        if (existing?.content === text) return;
+        await putNote(tx, path, text, this.#actor);
+      }),
+    );
+  }
+
+  async appendFile(input: string, content: FileContent): Promise<void> {
+    const path = this.#notePath(input);
+    const added = toText(path, content);
+    await this.#serial(() =>
+      this.#db.transaction(async (tx) => {
+        const existing = await getNote(tx, path);
+        if (!existing) await this.#assertCanCreate(tx, path, input);
+        await putNote(tx, path, toText(path, (existing?.content ?? "") + added), this.#actor);
+      }),
+    );
   }
 
   async deleteFile(input: string, options?: RemoveOptions): Promise<void> {
-    await this.ensureReady();
     const path = this.#path(input);
     if (path === INDEX_FILE) throw refused(input, "index.md is built from the notes.");
-    const existing = await getNote(this.#db, path);
-    if (!existing) {
-      if (await this.#isDirectory(path)) throw new IsDirectoryError(input);
-      if (options?.force) return;
-      throw new FileNotFoundError(input);
-    }
-    await putNote(this.#db, path, null, this.#actor);
+    await this.#serial(() =>
+      this.#db.transaction(async (tx) => {
+        if (await getNote(tx, path)) return putNote(tx, path, null, this.#actor);
+        if (await this.#isDirectory(tx, path)) throw new IsDirectoryError(input);
+        if (!options?.force) throw new FileNotFoundError(input);
+      }),
+    );
   }
 
   async copyFile(src: string, dest: string, options?: CopyOptions): Promise<void> {
-    await this.#copy(src, dest, options, false);
+    await this.#serial(() => this.#copy(src, dest, options, false));
   }
 
   async moveFile(src: string, dest: string, options?: CopyOptions): Promise<void> {
-    await this.#copy(src, dest, options, true);
+    await this.#serial(() => this.#copy(src, dest, options, true));
   }
 
   async mkdir(input: string): Promise<void> {
-    await this.ensureReady();
     const path = this.#path(input);
     if (path === "") return;
-    if (await getNote(this.#db, path)) throw new FileExistsError(input);
     try {
       assertFolderPath(path);
     } catch (e) {
       throw asFilesystemError(input, e);
     }
-    // Nothing to store: a folder exists while a note is inside it.
-  }
-
-  async rmdir(input: string, options?: RemoveOptions): Promise<void> {
-    await this.ensureReady();
-    const path = this.#path(input);
-    const inside = (await listNotePaths(this.#db)).filter((n) => isUnder(n.path, path));
-    if (isFixedFolder(path)) {
-      throw refused(input, "The brain's own folders can't be removed. Delete the notes instead.");
-    }
-    if (inside.length === 0) {
-      if (await getNote(this.#db, path)) throw new NotDirectoryError(input);
-      if (options?.force) return;
-      throw new DirectoryNotFoundError(input);
-    }
-    if (!options?.recursive) throw new DirectoryNotEmptyError(input);
-    await this.#db.transaction(async (tx) => {
-      for (const note of inside) await putNote(tx, note.path, null, this.#actor);
+    await this.#serial(async () => {
+      if (await getNote(this.#db, path)) throw new FileExistsError(input);
+      await this.#assertNoNoteAbove(this.#db, path, input);
+      // Nothing to store: a folder exists while a note is inside it.
     });
   }
 
-  async readdir(input: string, options?: ListOptions): Promise<FileEntry[]> {
-    await this.ensureReady();
+  async rmdir(input: string, options?: RemoveOptions): Promise<void> {
     const path = this.#path(input);
-    const entries = await this.#entries(path, options?.recursive ? options.maxDepth : 1);
+    if (isFixedFolder(path)) {
+      throw refused(input, "The brain's own folders can't be removed. Delete the notes instead.");
+    }
+    await this.#serial(() =>
+      this.#db.transaction(async (tx) => {
+        const inside = (await listNotePaths(tx)).filter((n) => isUnder(n.path, path));
+        if (inside.length === 0) {
+          if (await getNote(tx, path)) throw new NotDirectoryError(input);
+          if (options?.force) return;
+          throw new DirectoryNotFoundError(input);
+        }
+        if (!options?.recursive) throw new DirectoryNotEmptyError(input);
+        for (const note of inside) await putNote(tx, note.path, null, this.#actor);
+      }),
+    );
+  }
+
+  async readdir(input: string, options?: ListOptions): Promise<FileEntry[]> {
+    const path = this.#path(input);
+    const entries = await this.#serial(() =>
+      this.#entries(path, options?.recursive ? options.maxDepth : 1),
+    );
     const extensions = [options?.extension ?? []].flat();
     return entries
       .filter(
@@ -192,45 +205,64 @@ export class BrainFilesystem extends MastraFilesystem {
   }
 
   async walk(input: string, options?: { maxDepth?: number }): Promise<WalkEntry[]> {
-    await this.ensureReady();
-    return this.#entries(this.#path(input), options?.maxDepth);
+    const path = this.#path(input);
+    return this.#serial(() => this.#entries(path, options?.maxDepth));
   }
 
   async exists(input: string): Promise<boolean> {
-    await this.ensureReady();
     const path = normalizeOrNull(input);
     if (path === null) return false;
     if (path === INDEX_FILE) return true;
-    return Boolean(await getNote(this.#db, path)) || (await this.#isDirectory(path));
+    return this.#serial(
+      async () =>
+        Boolean(await getNote(this.#db, path)) || (await this.#isDirectory(this.#db, path)),
+    );
   }
 
   async stat(input: string): Promise<FileStat> {
-    await this.ensureReady();
     const path = this.#readPath(input);
     const name = path.split("/").at(-1) ?? "";
     const abs = `/${path}`;
-    if (path === INDEX_FILE) {
-      const text = await this.#readText(path);
-      const now = new Date();
-      const size = Buffer.byteLength(text, "utf8");
-      return { name, path: abs, type: "file", size, createdAt: now, modifiedAt: now };
-    }
-    const note = await getNote(this.#db, path);
-    if (note) {
-      return {
-        name,
-        path: abs,
-        type: "file",
-        size: note.size,
-        createdAt: note.createdAt,
-        modifiedAt: note.updatedAt,
-        mimeType: "text/markdown",
-      };
-    }
-    if (await this.#isDirectory(path)) {
-      return { name, path: abs, type: "directory", size: 0, createdAt: EPOCH, modifiedAt: EPOCH };
-    }
-    throw new FileNotFoundError(input);
+    return this.#serial(async () => {
+      if (path === INDEX_FILE) {
+        const size = Buffer.byteLength(await this.#readText(this.#db, path), "utf8");
+        const now = new Date();
+        return { name, path: abs, type: "file", size, createdAt: now, modifiedAt: now };
+      }
+      const note = await getNote(this.#db, path);
+      if (note) {
+        return {
+          name,
+          path: abs,
+          type: "file",
+          size: note.size,
+          createdAt: note.createdAt,
+          modifiedAt: note.updatedAt,
+          mimeType: "text/markdown",
+        };
+      }
+      if (await this.#isDirectory(this.#db, path)) {
+        return { name, path: abs, type: "directory", size: 0, createdAt: EPOCH, modifiedAt: EPOCH };
+      }
+      throw new FileNotFoundError(input);
+    });
+  }
+
+  /**
+   * Runs one operation at a time per client database. SQLite takes one writer at a time and a
+   * local file database refuses a second one outright, and Mastra runs an agent's tool calls in
+   * parallel; queueing them here is simpler than retrying.
+   */
+  #serial<T>(fn: () => Promise<T>): Promise<T> {
+    const key = this.#db.$client;
+    const run = (queues.get(key) ?? Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        await this.ensureReady();
+        return fn();
+      });
+    queues.set(key, run);
+    return run;
   }
 
   #path(input: string): string {
@@ -258,27 +290,43 @@ export class BrainFilesystem extends MastraFilesystem {
     return path;
   }
 
-  async #readText(path: string): Promise<string> {
-    if (path === INDEX_FILE) return buildIndex(await listNotes(this.#db));
-    const note = await getNote(this.#db, path);
+  /** A new note can't take a folder's name, or sit "inside" another note. */
+  async #assertCanCreate(db: Executor, path: string, input: string): Promise<void> {
+    if (await this.#isDirectory(db, path)) throw new IsDirectoryError(input);
+    await this.#assertNoNoteAbove(db, path, input);
+  }
+
+  async #assertNoNoteAbove(db: Executor, path: string, input: string): Promise<void> {
+    const parts = path.split("/");
+    for (let i = 1; i < parts.length; i++) {
+      if (await getNote(db, parts.slice(0, i).join("/"))) throw new NotDirectoryError(input);
+    }
+  }
+
+  async #readText(db: Executor, path: string): Promise<string> {
+    if (path === INDEX_FILE) return buildIndex(await listNotes(db));
+    const note = await getNote(db, path);
     if (note) return note.content;
-    if (await this.#isDirectory(path)) throw new IsDirectoryError(path);
+    if (await this.#isDirectory(db, path)) throw new IsDirectoryError(path);
     throw new FileNotFoundError(path);
   }
 
-  async #isDirectory(path: string): Promise<boolean> {
+  async #isDirectory(db: Executor, path: string): Promise<boolean> {
     if (isFixedFolder(path)) return true;
-    return (await listNotePaths(this.#db)).some((n) => isUnder(n.path, path));
+    return (await listNotePaths(db)).some((n) => isUnder(n.path, path));
   }
 
   /** Files and folders under `root`, paths relative to it, down to `maxDepth` (1 = children). */
   async #entries(root: string, maxDepth = Number.POSITIVE_INFINITY): Promise<WalkEntry[]> {
     const notes = await listNotePaths(this.#db);
-    if (notes.some((n) => n.path === root)) throw new NotDirectoryError(root);
-    if (!(await this.#isDirectory(root))) throw new DirectoryNotFoundError(root);
+    if (root === INDEX_FILE || notes.some((n) => n.path === root)) {
+      throw new NotDirectoryError(root);
+    }
+    if (!(await this.#isDirectory(this.#db, root))) throw new DirectoryNotFoundError(root);
     const files = new Map(notes.map((n) => [n.path, n.size]));
     if (root === "") {
-      files.set(INDEX_FILE, 0);
+      const index = await this.#readText(this.#db, INDEX_FILE);
+      files.set(INDEX_FILE, Buffer.byteLength(index, "utf8"));
       for (const folder of Object.keys(BRAIN_FOLDERS)) files.set(`${folder}/`, -1);
     }
     const out = new Map<string, WalkEntry>();
@@ -303,39 +351,46 @@ export class BrainFilesystem extends MastraFilesystem {
   }
 
   async #copy(src: string, dest: string, options: CopyOptions | undefined, move: boolean) {
-    await this.ensureReady();
     const from = this.#path(src);
     const to = this.#path(dest);
     if (from === INDEX_FILE) throw refused(src, "index.md is built from the notes.");
     if (move && isFixedFolder(from)) {
       throw refused(src, "The brain's own folders can't be moved. Move the notes inside them.");
     }
-    const notes = await listNotePaths(this.#db);
-    const pairs: [string, string][] = notes.some((n) => n.path === from)
-      ? [[from, to]]
-      : notes
-          .filter((n) => isUnder(n.path, from))
-          .map((n) => [n.path, `${to}/${n.path.slice(from.length + 1)}`]);
-    if (pairs.length === 0) throw new FileNotFoundError(src);
-    if (pairs[0]?.[0] !== from && !options?.recursive) throw new IsDirectoryError(src);
-    for (const [, target] of pairs) {
-      try {
-        assertNotePath(target);
-      } catch (e) {
-        throw asFilesystemError(dest, e);
-      }
+    if (isUnder(to, from) && from !== "") {
+      throw refused(dest, `"${dest}" is inside "${src}". Pick a destination outside it.`);
     }
     await this.#db.transaction(async (tx) => {
+      const notes = await listNotePaths(tx);
+      const pairs: [string, string][] = notes.some((n) => n.path === from)
+        ? [[from, to]]
+        : notes
+            .filter((n) => isUnder(n.path, from))
+            .map((n) => [n.path, `${to}/${n.path.slice(from.length + 1)}`]);
+      if (pairs.length === 0) throw new FileNotFoundError(src);
+      if (pairs[0]?.[0] !== from && !options?.recursive) throw new IsDirectoryError(src);
+      if (from === to) return;
+      for (const [, target] of pairs) {
+        try {
+          assertNotePath(target);
+        } catch (e) {
+          throw asFilesystemError(dest, e);
+        }
+      }
       for (const [source, target] of pairs) {
         const text = (await getNote(tx, source))?.content ?? "";
         const existing = await getNote(tx, target);
         if (existing && options?.overwrite === false) throw new FileExistsError(dest);
+        if (!existing) await this.#assertCanCreate(tx, target, dest);
         if (existing?.content !== text) await putNote(tx, target, text, this.#actor);
         if (move) await putNote(tx, source, null, this.#actor);
       }
     });
   }
 }
+
+/** One queue per client database connection: see `#serial`. */
+const queues = new WeakMap<object, Promise<unknown>>();
 
 function normalizeOrNull(input: string): string | null {
   try {
