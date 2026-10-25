@@ -5,7 +5,8 @@ import { verifyGhlSignature } from "@locus/connect";
 // on here, unchanged, with GHL's signature. That signature is the only credential: no cookie is
 // read, and nothing is done for a body GHL didn't sign. A message from a contact starts a
 // drafted reply (`@locus/agent-api`'s `inbox.ts`) for each client the location belongs to that
-// has drafting on. Nothing of the message is kept: only its ids reach the draft's brief.
+// has drafting on. Only the message's ids reach the draft's brief; the draft itself keeps each
+// message id, so a retried or replayed delivery starts nothing (`inbox.ts`).
 
 export const INBOUND_PATH = "/api/agent/inbound";
 
@@ -18,6 +19,9 @@ const MAX_BODY_BYTES = 256 * 1024;
  */
 const DRAFTED = new Set(["SMS", "Email", "FB", "IG", "WhatsApp", "Live Chat", "Live_Chat"]);
 
+/** A message older than this is not drafted for: GHL's retries come sooner, a replay later. */
+const MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
 export type InboundOutcome = "ignored" | "drafting" | "off";
 
 export interface InboundDeps {
@@ -29,6 +33,8 @@ export interface InboundDeps {
    */
   draft: (ghlLocationId: string, message: InboundMessage) => Promise<boolean>;
   logError: (message: string, error?: unknown) => void;
+  /** The clock, for tests. */
+  now?: () => number;
 }
 
 /** The fields Locus reads from GHL's `InboundMessage` webhook. */
@@ -41,6 +47,7 @@ interface InboundEvent {
   messageId?: unknown;
   messageType?: unknown;
   direction?: unknown;
+  dateAdded?: unknown;
 }
 
 const text = (value: unknown) => (typeof value === "string" && value ? value : undefined);
@@ -77,15 +84,17 @@ async function handle(
   const conversationId = text(event.conversationId);
   const contactId = text(event.contactId);
   const channel = text(event.messageType);
-  if (!ghlLocationId || !conversationId || !contactId || !channel) return "ignored";
-  if (!DRAFTED.has(channel)) return "ignored";
   const messageId = text(event.messageId);
+  if (!ghlLocationId || !conversationId || !contactId || !channel || !messageId) return "ignored";
+  if (!DRAFTED.has(channel)) return "ignored";
+  const added = Date.parse(text(event.dateAdded) ?? "");
+  if (Number.isFinite(added) && (deps.now?.() ?? Date.now()) - added > MAX_AGE_MS) return "ignored";
   try {
     const drafted = await deps.draft(ghlLocationId, {
       conversationId,
       contactId,
       channel,
-      ...(messageId ? { messageId } : {}),
+      messageId,
     });
     return drafted ? "drafting" : "off";
   } catch (error) {

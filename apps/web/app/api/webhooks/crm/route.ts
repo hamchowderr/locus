@@ -41,6 +41,9 @@ export async function POST(request: Request) {
 /** Where the agent server takes new messages (`apps/agent/src/inbound.ts`). */
 const AGENT_INBOUND_PATH = "/api/agent/inbound";
 
+/** Long enough for the agent to start a draft; the forward gives up at 20s. */
+export const maxDuration = 30;
+
 async function forwardToAgent(raw: string, signature: string): Promise<Response> {
   const agent = process.env.LOCUS_AGENT_URL?.replace(/\/+$/, "");
   // No agent server here: nothing drafts replies, and GHL needn't retry.
@@ -50,7 +53,22 @@ async function forwardToAgent(raw: string, signature: string): Promise<Response>
     headers: { "content-type": "application/json", "x-ghl-signature": signature },
     body: raw,
     signal: AbortSignal.timeout(20_000),
-  }).catch(() => null);
+  }).catch((error: unknown) => {
+    console.error("Passing a new GHL message to the agent server failed", error);
+    return null;
+  });
+  // Unreachable or failing: GHL retries, and a retry of a message already drafted starts nothing.
   if (!res) return Response.json({ error: "agent unreachable" }, { status: 502 });
-  return Response.json(await res.json().catch(() => ({})), { status: res.status });
+  if (res.status >= 500) {
+    console.error(`The agent server answered ${res.status} to a new GHL message`);
+    return Response.json({ error: "agent failed" }, { status: 502 });
+  }
+  // Refused (no webhook key there, or a different one): a retry would be refused too.
+  if (!res.ok) {
+    console.error(
+      `The agent server refused a new GHL message (${res.status}); check its GHL_WEBHOOK_PUBLIC_KEY`,
+    );
+    return Response.json({ outcome: "ignored" });
+  }
+  return Response.json(await res.json().catch(() => ({})));
 }

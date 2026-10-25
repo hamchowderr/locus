@@ -11,6 +11,14 @@
  * person, another message in the same conversation starts nothing (the agent reads the latest
  * when it runs, and the person sees the conversation in GHL). Once it has ended, the next
  * message starts a fresh one.
+ *
+ * One draft per message, ever: each draft thread records the GHL message ids it was started for
+ * or absorbed, so a retried or replayed webhook starts nothing. And at most `MAX_OPEN_DRAFTS`
+ * open at once per client, so a burst of messages cannot run up an unbounded bill: past it a
+ * message is skipped (it is still in GHL's inbox).
+ *
+ * What a draft thread keeps is the client's own, in its database: the agent's reply and its
+ * one-line summary of what the contact wants, never the message as GHL sent it.
  */
 
 import type { RequestContext } from "@mastra/core/request-context";
@@ -20,12 +28,17 @@ import type { ThreadAgent, WorkThreads } from "./mastra/lib/work-threads.ts";
 
 /** The thread-metadata key naming the GHL conversation a draft thread answers. */
 export const INBOX_CONVERSATION_KEY = "inboxConversation";
+/** The thread-metadata key listing the GHL message ids a draft thread was started for. */
+export const INBOX_MESSAGES_KEY = "inboxMessages";
+
+/** Open drafts a client may have at once; more messages wait in GHL's inbox. */
+export const MAX_OPEN_DRAFTS = 10;
 
 /** A new message from a contact, as GHL's `InboundMessage` webhook names it. Ids only. */
 export interface InboundMessage {
   conversationId: string;
   contactId: string;
-  messageId?: string | undefined;
+  messageId: string;
   /** GHL's `messageType`, e.g. `SMS`, `Email`, `FB`, `IG`, `Live Chat`, `WhatsApp`. */
   channel: string;
 }
@@ -39,13 +52,13 @@ export function isInboundMessage(value: InboundMessage): boolean {
   return (
     ID.test(value.conversationId) &&
     ID.test(value.contactId) &&
-    (value.messageId === undefined || ID.test(value.messageId)) &&
+    ID.test(value.messageId) &&
     CHANNEL.test(value.channel)
   );
 }
 
 export function draftBrief(message: InboundMessage): string {
-  return `A contact just wrote to the sub-account: a new ${message.channel} message in conversation ${message.conversationId} (contact ${message.contactId}${message.messageId ? `, message ${message.messageId}` : ""}).
+  return `A contact just wrote to the sub-account: a new ${message.channel} message in conversation ${message.conversationId} (contact ${message.contactId}, message ${message.messageId}).
 Read the conversation's latest messages with the conversations skill, then draft a reply and send it on the same channel with conversations.send-a-new-message: it waits for a person to approve it, so draft it as you would send it. Say in one line what the contact wants. If no reply is needed (spam, a thank-you, an automated message, a contact who opted out), send nothing and say why.`;
 }
 
@@ -60,7 +73,7 @@ export interface InboxDrafts {
   draft(
     message: InboundMessage,
     requestContext: RequestContext,
-  ): Promise<{ threadId: string; started: boolean } | { skipped: "invalid" }>;
+  ): Promise<{ threadId: string; started: boolean } | { skipped: "invalid" | "seen" | "busy" }>;
 }
 
 export function createInboxDrafts({
@@ -81,65 +94,71 @@ export function createInboxDrafts({
     if (!store) throw new Error("inbox drafts need a memory store");
     return store;
   };
-  /** One decision per conversation at a time, so two messages at once start one thread. */
-  const turns = new Map<string, Promise<unknown>>();
+  /** One decision at a time per client, so two messages at once start one thread and one chat. */
+  let turn: Promise<unknown> = Promise.resolve();
 
-  /** The sub-account's chat (its newest), which reports go to; made when it has none yet. */
-  async function mainChat(): Promise<string> {
+  const metaOf = (t: { metadata?: unknown }) => (t.metadata ?? {}) as Record<string, unknown>;
+  const messagesOf = (t: { metadata?: unknown }) => {
+    const ids = metaOf(t)[INBOX_MESSAGES_KEY];
+    return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
+  };
+
+  async function decide(message: InboundMessage, requestContext: RequestContext) {
     const store = await memory();
     const { threads: all } = await store.listThreads({ perPage: false, filter: { resourceId } });
+    if (all.some((t) => messagesOf(t).includes(message.messageId))) {
+      return { skipped: "seen" as const };
+    }
+    const drafts = all.filter((t) => {
+      const info = workThreadOf(t);
+      return info && OPEN.has(info.status) && typeof metaOf(t)[INBOX_CONVERSATION_KEY] === "string";
+    });
+    const open = drafts.find((t) => metaOf(t)[INBOX_CONVERSATION_KEY] === message.conversationId);
+    if (open) {
+      await store.updateThreadMetadata({
+        id: open.id,
+        update: (thread) => ({ [INBOX_MESSAGES_KEY]: [...messagesOf(thread), message.messageId] }),
+      });
+      return { threadId: open.id, started: false };
+    }
+    if (drafts.length >= MAX_OPEN_DRAFTS) return { skipped: "busy" as const };
     const chats = all
       .filter((t) => !workThreadOf(t) && siteOf(t) === undefined)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    const newest = chats[0];
-    if (newest) return newest.id;
-    const id = globalThis.crypto.randomUUID();
-    const now = new Date();
-    await store.saveThread({
-      thread: { id, resourceId, title: "Chat", createdAt: now, updatedAt: now, metadata: {} },
-    });
-    return id;
-  }
-
-  async function openDraft(conversationId: string): Promise<string | undefined> {
-    const store = await memory();
-    const { threads: all } = await store.listThreads({ perPage: false, filter: { resourceId } });
-    return all.find((t) => {
-      const info = workThreadOf(t);
-      const tagged = (t.metadata as Record<string, unknown> | undefined)?.[INBOX_CONVERSATION_KEY];
-      return info && tagged === conversationId && OPEN.has(info.status);
-    })?.id;
-  }
-
-  async function decide(message: InboundMessage, requestContext: RequestContext) {
-    const open = await openDraft(message.conversationId);
-    if (open) return { threadId: open, started: false };
     const started = await threads.start({
       resourceId,
-      parentThreadId: await mainChat(),
+      parentThreadId: chats[0]?.id ?? (await newChat()),
       title: `Reply to a new ${message.channel} message`,
       brief: draftBrief(message),
       agent,
       requestContext,
     });
-    await (await memory()).updateThreadMetadata({
+    await store.updateThreadMetadata({
       id: started.threadId,
-      update: () => ({ [INBOX_CONVERSATION_KEY]: message.conversationId }),
+      update: () => ({
+        [INBOX_CONVERSATION_KEY]: message.conversationId,
+        [INBOX_MESSAGES_KEY]: [message.messageId],
+      }),
     });
     return { threadId: started.threadId, started: true };
+  }
+
+  /** The sub-account's chat, which reports go to, when it has none yet. */
+  async function newChat(): Promise<string> {
+    const id = globalThis.crypto.randomUUID();
+    const now = new Date();
+    await (await memory()).saveThread({
+      thread: { id, resourceId, title: "Chat", createdAt: now, updatedAt: now, metadata: {} },
+    });
+    return id;
   }
 
   return {
     draft(message, requestContext) {
       if (!isInboundMessage(message)) return Promise.resolve({ skipped: "invalid" as const });
-      const key = message.conversationId;
       const step = () => decide(message, requestContext);
-      const run = (turns.get(key) ?? Promise.resolve()).then(step, step);
-      const settled = run.catch(() => undefined);
-      turns.set(key, settled);
-      void settled.then(() => {
-        if (turns.get(key) === settled) turns.delete(key);
-      });
+      const run = turn.then(step, step);
+      turn = run.catch(() => undefined);
       return run;
     },
   };
