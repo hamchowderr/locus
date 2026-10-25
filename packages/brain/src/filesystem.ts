@@ -29,7 +29,7 @@ import {
   MAX_NOTE_BYTES,
   normalizeBrainPath,
 } from "./paths.ts";
-import { getNote, listNotePaths, listNotes, putNote } from "./store.ts";
+import { brainStamp, getNote, listNotePaths, listNotes, putNote } from "./store.ts";
 
 /** Mastra's write and walk option shapes, which its index doesn't re-export. */
 type CopyOptions = { overwrite?: boolean; recursive?: boolean };
@@ -87,6 +87,18 @@ export class BrainFilesystem extends MastraFilesystem {
       folders,
       "Keep one note per subject and start each with a `# Title` line and a one-line summary.",
     ].join("\n");
+  }
+
+  /** Every note with its content, by path. Throws when the database can't be read. */
+  async notes(): Promise<{ path: string; content: string }[]> {
+    return this.#serial(async () =>
+      (await listNotes(this.#db)).map(({ path, content }) => ({ path, content })),
+    );
+  }
+
+  /** A number that changes whenever any note does (see `brainStamp`). */
+  async changes(): Promise<number> {
+    return this.#serial(() => brainStamp(this.#db));
   }
 
   override isTextFile(): boolean {

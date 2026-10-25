@@ -30,6 +30,7 @@ import {
   resolveActiveClient,
   type SessionContext,
 } from "@locus/auth";
+import { BRAIN_TOOL_NAMES, createBrainWorkspace } from "@locus/brain";
 import { imagesFromEnv, SITE_BUILDER_AGENT } from "@locus/builder";
 import {
   activeSiteIdForSession,
@@ -58,6 +59,8 @@ import {
   clientResource,
   createComposioConnector,
   createLocusController,
+  hasRefusedBrief,
+  isTainted,
   parseAuthConfigs,
   TAINT_KEY,
 } from "@locus/harness";
@@ -491,6 +494,15 @@ export function createHost({
       // One connector per client, so its Composio session is reused across runs.
       const clientApps = apps ? apps(clientId) : null;
       const appSettings = tenantDbOver(clientDb);
+      // The client's brain, in the same database. A run that read other people's words asks
+      // before it saves a note, as before any other change.
+      const brain = createBrainWorkspace(appSettings, {
+        needsApproval: (context) => isTainted(context) || hasRefusedBrief(context),
+        // The same staff check as GHL, before every brain call.
+        authorize: async (context) => {
+          await runClient(context as { get: (key: string) => unknown } | undefined);
+        },
+      });
       // The main chat hands longer work to threads of their own (`start_thread`), which run in
       // the background and report back. Its result is the new thread's id and title only.
       const workThreads = clientWorkThreads(
@@ -539,7 +551,13 @@ export function createHost({
         // The chat page names the supervisor on every turn, and the server saves it on the chat;
         // work threads keep their agent's mode whatever a turn names.
         modes: [...workThreads.modes, ...(builder?.modes ?? [])],
-        ...(builder ? { processors: builder.processors } : {}),
+        workspace: brain,
+        // Notes are the client's own words about the business, never GHL records.
+        keepResults: BRAIN_TOOL_NAMES,
+        processors: {
+          input: [brain.context],
+          ...(builder ? { output: builder.processors.output } : {}),
+        },
       });
       workThreads.attach(controller);
       inboxes.set(
