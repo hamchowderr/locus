@@ -159,6 +159,17 @@ describe("an app-style site's files", () => {
     expect(text(withBackend(withAuth(beforeCookies)), "lib/auth.ts")).toBe(
       text(app, "lib/auth.ts"),
     );
+    // lib/auth.ts as sites got it before Better Auth's address warning was left out of the logs.
+    expect(text(app, "lib/auth.ts")).toContain(
+      'if (message.includes("Base URL is not set")) return;',
+    );
+    const beforeQuiet = text(app, "lib/auth.ts").replace(
+      /\n {2}\/\/ Better Auth warns[\s\S]*?\n {2}\},(?=\n\}\);)/,
+      "",
+    );
+    expect(beforeQuiet).not.toContain("logger");
+    expect(beforeQuiet).toContain("partitioned: true");
+    expect(text(withBackend(withAuth(beforeQuiet)), "lib/auth.ts")).toBe(text(app, "lib/auth.ts"));
     const custom = `${before}// magic links\n`;
     expect(text(app, "lib/auth.ts")).toContain("partitioned: true");
     // Until then, the preview runs such a site with the current file; the draft keeps its own.
