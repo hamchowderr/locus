@@ -42,6 +42,7 @@ packages/sandbox  the isolated runtime where Site Studio builds and previews a s
 packages/db       Drizzle schema (control DB + per-client DB) and migrations
 packages/studio   generated sites' source, versions, design brief and templates
 packages/builder  the site-builder agent: its tools, instructions and AgentController mode
+packages/brain    each client's notes (the second brain) as a Mastra workspace over its database
 packages/ui       shared shadcn components for web and desktop
 ```
 

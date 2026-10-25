@@ -120,6 +120,8 @@ export interface LocusControllerConfig extends Omit<ToolDeps, "session"> {
   threadTextTools?: LocusAgentConfig["threadTextTools"];
   /** The client's connected apps (see `LocusAgentConfig`). */
   apps?: LocusAgentConfig["apps"];
+  /** The client's brain as a workspace (see `LocusAgentConfig`). */
+  workspace?: LocusAgentConfig["workspace"];
 }
 
 export async function createLocusController({
@@ -135,6 +137,7 @@ export async function createLocusController({
   ownTextTools,
   threadTextTools,
   apps,
+  workspace,
   ...deps
 }: LocusControllerConfig): Promise<AgentController> {
   refuseOwnTextCollisions(ownTextTools ?? [], CONTROLLER_BUILTINS);
@@ -157,6 +160,7 @@ export async function createLocusController({
     ...(ownTextTools ? { ownTextTools } : {}),
     ...(threadTextTools ? { threadTextTools } : {}),
     ...(apps ? { apps } : {}),
+    ...(workspace ? { workspace } : {}),
     ...(tools ? { runTools: tools } : {}),
   });
   const controller = new AgentController({
@@ -164,7 +168,7 @@ export async function createLocusController({
     agent,
     storage,
     resourceId,
-    modes: [...LOCUS_MODES, ...modes],
+    modes: withWorkspaceTools([...LOCUS_MODES, ...modes], workspace),
     defaultModeId: "act",
     // The agent's own question and its progress checklist change nothing, so they need no yes
     // first. GHL tools keep their own approval rule (`requireApproval` on each tool).
@@ -181,6 +185,31 @@ export async function createLocusController({
   clientOf.set(controller, locationId);
   storageOf.set(controller, storage);
   return controller;
+}
+
+/**
+ * Adds the workspace's tools to every mode that lists its tools; Ask mode, which changes
+ * nothing, gets only the ones that read. A mode that lists none already has every tool.
+ */
+function withWorkspaceTools(
+  modes: AgentControllerMode[],
+  workspace: LocusControllerConfig["workspace"],
+): AgentControllerMode[] {
+  if (!workspace) return modes;
+  const all = Object.keys(workspace.approvals);
+  return modes.map((mode) =>
+    mode.availableTools
+      ? {
+          ...mode,
+          availableTools: [
+            ...new Set([
+              ...mode.availableTools,
+              ...(mode.id === "ask" ? workspace.readTools : all),
+            ]),
+          ],
+        }
+      : mode,
+  );
 }
 
 /**
