@@ -1,4 +1,5 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
+import { INSTRUCTIONS_FILE } from "@locus/brain";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Button, Field, Notice, Page } from "@/app/ui";
@@ -10,6 +11,7 @@ import {
   brainNote,
   brainOverview,
   changedBy,
+  notePath,
 } from "@/lib/brain";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { createNote, deleteNote, restoreNote, saveNote } from "./actions";
@@ -34,9 +36,12 @@ const DONE: Record<string, string> = {
 export default async function Brain({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const params = await searchParams;
+  // A repeated parameter (?note=a&note=b) arrives as a list: the first one counts.
+  const params = Object.fromEntries(
+    Object.entries(await searchParams).map(([k, v]) => [k, Array.isArray(v) ? v[0] : v]),
+  );
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fbrain");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
@@ -145,6 +150,15 @@ export default async function Brain({
   );
 }
 
+/** The note a link names, as the brain stores it, or null when it names none. */
+function normalizedOrNull(path: string): string | null {
+  try {
+    return notePath(path);
+  } catch {
+    return null;
+  }
+}
+
 function NoteLink({
   path,
   name,
@@ -177,12 +191,12 @@ function OpenNote({
   note: BrainNoteView | null;
   userId: string;
 }) {
-  const isInstructions = path === "instructions.md";
+  const isInstructions = normalizedOrNull(path) === INSTRUCTIONS_FILE;
   // instructions.md can be written before it exists; any other note is started with the form.
   if (!note && !isInstructions) {
     return <p className="text-sm text-neutral-600">There&apos;s no note called {path}.</p>;
   }
-  const shown = note?.path ?? path;
+  const shown = note?.path ?? (isInstructions ? INSTRUCTIONS_FILE : path);
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -201,6 +215,7 @@ function OpenNote({
       ) : (
         <form action={saveNote} className="space-y-3">
           <input type="hidden" name="path" value={shown} />
+          <input type="hidden" name="seen" value={note?.updatedAt?.getTime() ?? ""} />
           <label className="block text-sm">
             <span className="sr-only">Note</span>
             <textarea
