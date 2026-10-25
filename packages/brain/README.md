@@ -50,3 +50,11 @@ agent: Mastra's file and search tools over the brain, named `brain_read`, `brain
 - Every brain call, and putting the brain in context, runs the host's staff check first
   (`authorize`). The context is read again whenever the brain changes during a run.
 - Ask mode gets the read tools only; every other mode gets them all.
+
+## People
+
+The chat's **Brain** tab (beside Library) lists the sub-account's notes by folder; each opens on
+the Brain page (`/brain`, `apps/web/lib/brain.ts`), where a person reads, edits, starts or
+deletes a note, and puts any earlier version back. People's changes are saved as `user:<id>`,
+so a note's history says who changed what, and agents see a change from their next step. A
+restore is a new version, so it can be undone too.
