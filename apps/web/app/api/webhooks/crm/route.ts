@@ -9,7 +9,8 @@ import { NotConfigured } from "@/lib/locus";
  * an unsigned or wrongly signed request changes nothing. Install and uninstall are handled here;
  * a new message from a contact goes on to the agent server, unchanged and with GHL's signature,
  * which checks it again and drafts a reply where that is on. With `LOCUS_GHL_RELAY_URL` set, a
- * copy of each new message also goes to another Locus (staging), after this one has answered.
+ * copy of each new message in a listed location also goes to another Locus (staging), after
+ * this one has answered.
  */
 export async function POST(request: Request) {
   const publicKey = process.env.GHL_WEBHOOK_PUBLIC_KEY;
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
   }
   if ((event as { type?: unknown } | null)?.type === "InboundMessage") {
     const signature = request.headers.get("x-ghl-signature") ?? "";
-    const relay = relayTarget();
+    const relay = relayTarget((event as { locationId?: unknown }).locationId);
     if (relay && !request.headers.has(RELAYED_HEADER)) {
       after(() => relayToTarget(relay, raw, signature));
     }
