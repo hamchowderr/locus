@@ -175,9 +175,13 @@ describe("the brain in context", () => {
     await expect(
       tools[BRAIN_TOOLS.read]?.execute({ path: "/business/x.md" }, { workspace: brain.workspace }),
     ).rejects.toThrow("no access");
-    const messageList = { getSystemMessages: () => [], clearSystemMessages() {}, addSystem() {} };
-    await expect(brain.context.processInputStep({ messageList } as never)).rejects.toThrow(
-      "no access",
-    );
+    const added: unknown[] = [];
+    const messageList = {
+      getSystemMessages: () => [],
+      clearSystemMessages() {},
+      addSystem: (m: unknown) => added.push(m),
+    };
+    await brain.context.processInputStep({ messageList } as never);
+    expect(added).toEqual([]);
   });
 });
