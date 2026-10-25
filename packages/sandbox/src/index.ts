@@ -18,6 +18,8 @@ export type { FakeCall, FakeCommandHandler, FakeFiles, FakeRuntimeOptions } from
 export { FakeRuntime, FakeRuntimeProvider } from "./fake.ts";
 export type { SandboxHandlerOptions } from "./handler.ts";
 export { handleSandboxRequest } from "./handler.ts";
+export type { SandboxLog } from "./logged.ts";
+export { LoggedRuntimeProvider } from "./logged.ts";
 export { DEFAULT_MAX_OUTPUT_CHARS, truncateTail } from "./output.ts";
 export { InvalidPathError, validatePath } from "./paths.ts";
 export type { RemoteSandboxConfig } from "./remote.ts";

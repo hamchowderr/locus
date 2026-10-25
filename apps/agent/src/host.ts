@@ -61,6 +61,7 @@ import {
   parseAuthConfigs,
   TAINT_KEY,
 } from "@locus/harness";
+import { LoggedRuntimeProvider } from "@locus/sandbox";
 import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { RequestContext } from "@mastra/core/request-context";
@@ -183,7 +184,8 @@ export function siteSandboxes(
     let runtimes: ReturnType<typeof runtimesFromEnv> | undefined;
     return {
       runtimes: () => {
-        runtimes ??= local();
+        // Logged here, where the agent itself drives the sandboxes (`logged.ts`).
+        runtimes ??= new LoggedRuntimeProvider(local());
         return runtimes;
       },
     };
