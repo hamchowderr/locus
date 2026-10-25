@@ -155,5 +155,26 @@ describe("the brain as people see it", () => {
     await saveBrainNote(deps, clientA, "owner", "instructions.md", "Ask Maria first.");
     expect((await brainOverview(deps, clientA)).instructions?.summary).toBe("Ask Maria first.");
     expect(await brainNote(deps, clientA, "business/missing.md")).toBeNull();
+    // A name every object has is no folder, and refusals from the brain itself read as such.
+    expect(() => newNotePath("constructor", "x")).toThrow(BrainInputError);
+    await expect(saveBrainNote(deps, clientA, "owner", "toString/x.md", "x")).rejects.toThrow(
+      BrainInputError,
+    );
+    await expect(
+      saveBrainNote(deps, clientA, "owner", "business/big.md", "x".repeat(300 * 1024)),
+    ).rejects.toThrow(BrainInputError);
+  });
+
+  it("never saves over a change made after the person opened the note", async () => {
+    await saveBrainNote(deps, clientA, "owner", "business/hours.md", "# Hours\n\nOpen 8 to 5.");
+    const seen = (await brainNote(deps, clientA, "business/hours.md"))?.updatedAt ?? undefined;
+    await new Promise((r) => setTimeout(r, 5));
+    const agent = new BrainFilesystem(await deps.openClientDb(clientA), { actor: AGENT_ACTOR });
+    await agent.writeFile("/business/hours.md", "# Hours\n\nOpen 8 to 6.");
+
+    await expect(
+      saveBrainNote(deps, clientA, "owner", "business/hours.md", "# Hours\n\nMine.", seen),
+    ).rejects.toThrow(/changed this note while you had it open/);
+    expect((await brainNote(deps, clientA, "business/hours.md"))?.content).toContain("8 to 6");
   });
 });

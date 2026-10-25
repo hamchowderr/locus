@@ -66,6 +66,8 @@ export async function saveNote(form: FormData) {
       userId,
       text(form, "path"),
       text(form, "content"),
+      // The change the person was looking at, so a newer one (the agent's) isn't overwritten.
+      Number(text(form, "seen")) > 0 ? new Date(Number(text(form, "seen"))) : undefined,
     ),
     done: "saved=1",
   }));

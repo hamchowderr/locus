@@ -62,6 +62,27 @@ export class BrainInputError extends Error {
   }
 }
 
+/**
+ * The brain's refusals (a bad path, a note too long, a name taken, a note changed meanwhile) as
+ * something the person can fix. They arrive as Mastra filesystem errors, which carry a `code`
+ * and the path; anything else is a bug and stays as it is.
+ */
+function asInput(e: unknown, name: string): unknown {
+  if (e instanceof BrainPathError) return new BrainInputError(e.message);
+  if (!(e instanceof Error) || typeof (e as { code?: unknown }).code !== "string") return e;
+  if (!("path" in e)) return e;
+  if (e.name === "StaleFileError") {
+    return new BrainInputError(
+      "Someone changed this note while you had it open. Your text wasn't saved; copy it, reload the note and try again.",
+    );
+  }
+  if (e.name === "FileExistsError") {
+    return new BrainInputError(`There's already a note called "${name}" in that folder.`);
+  }
+  if (e.name === "FileNotFoundError") return new BrainInputError("That note is already gone.");
+  return new BrainInputError(e.message);
+}
+
 /** Who made a change, in words: the agent, the person looking, or someone else on the team. */
 export function changedBy(actor: string | null, userId: string): string {
   if (actor === null) return "Locus";
@@ -91,7 +112,7 @@ export function notePath(input: string): string {
     const path = normalizeBrainPath(input);
     if (path === INSTRUCTIONS_FILE) return path;
     const [top, ...rest] = path.split("/");
-    if (!top || !(top in BRAIN_FOLDERS) || rest.length === 0 || !path.endsWith(".md")) {
+    if (!top || !Object.hasOwn(BRAIN_FOLDERS, top) || rest.length === 0 || !path.endsWith(".md")) {
       throw new BrainPathError(`"${input}" isn't a note in one of the brain's folders.`);
     }
     return path;
@@ -103,7 +124,8 @@ export function notePath(input: string): string {
 
 /** A new note's path from the folder and name in the form: "Opening hours" → business/opening-hours.md. */
 export function newNotePath(folder: string, name: string): string {
-  if (!(folder in BRAIN_FOLDERS)) throw new BrainInputError("Choose one of the brain's folders.");
+  if (!Object.hasOwn(BRAIN_FOLDERS, folder))
+    throw new BrainInputError("Choose one of the brain's folders.");
   const slug = name
     .trim()
     .toLowerCase()
@@ -171,15 +193,20 @@ export async function saveBrainNote(
   userId: string,
   input: string,
   content: string,
+  /** When the note was last changed as the person saw it; a newer change is never overwritten. */
+  seen?: Date,
 ): Promise<string> {
   const path = notePath(input);
   await withTenant(deps, client, async (db) => {
     const brain = new BrainFilesystem(db, { actor: personActor(userId) });
     try {
-      await brain.writeFile(path, content.replace(/\r\n/g, "\n"));
+      await brain.writeFile(
+        path,
+        content.replace(/\r\n/g, "\n"),
+        seen ? { expectedMtime: seen } : undefined,
+      );
     } catch (e) {
-      if (e instanceof BrainPathError) throw new BrainInputError(e.message);
-      throw e;
+      throw asInput(e, path);
     }
   });
   return path;
@@ -199,11 +226,7 @@ export async function createBrainNote(
     try {
       await brain.writeFile(path, `# ${name.trim()}\n\n`, { overwrite: false });
     } catch (e) {
-      if (e instanceof Error && e.name === "FileExistsError") {
-        throw new BrainInputError(`There's already a note called "${name.trim()}" in that folder.`);
-      }
-      if (e instanceof BrainPathError) throw new BrainInputError(e.message);
-      throw e;
+      throw asInput(e, name.trim());
     }
   });
   return path;
@@ -222,10 +245,7 @@ export async function deleteBrainNote(
     try {
       await brain.deleteFile(path);
     } catch (e) {
-      // Mastra's FileNotFoundError, which this app doesn't import.
-      if (e instanceof Error && e.name === "FileNotFoundError")
-        throw new BrainInputError("That note is already gone.");
-      throw e;
+      throw asInput(e, path);
     }
   });
 }
