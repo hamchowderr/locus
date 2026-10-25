@@ -7,6 +7,8 @@
  *
  * 1. `withholdInstructions` replaces any string (or object key) that reads like instructions to
  *    an AI before the tool result reaches the model or memory, and says how many it withheld.
+ *    Text of several lines (a file, a long note) loses only the lines that read that way, so one
+ *    `<User>` in a site's JSX doesn't hide the whole file.
  * 2. A run that has read such content, or has read free text the public writes (form and survey
  *    submissions, conversation messages, notes, reviews, comments), is *tainted*: from then on
  *    every `perform_action` waits for a person to approve it, whatever the operation.
@@ -30,6 +32,9 @@ import type {
 } from "@mastra/core/processors";
 
 export const WITHHELD = "[withheld by Locus: this text from GoHighLevel read like instructions]";
+
+/** Stands in for one line of a longer text that read like instructions. */
+export const WITHHELD_LINE = "[line withheld by Locus: it read like instructions]";
 
 /** Present in every tool result that taints a run; how a resumed run knows it is tainted. */
 export const TAINT_MARK = "locus:untrusted";
@@ -147,6 +152,19 @@ export function withholdInstructions(value: unknown): { value: unknown; withheld
   const walk = (node: unknown): unknown => {
     if (typeof node === "string") {
       if (!looksLikeInstructions(node)) return node;
+      if (node.includes("\n")) {
+        let lines = 0;
+        const kept = node.split("\n").map((line) => {
+          if (!looksLikeInstructions(line)) return line;
+          lines++;
+          return WITHHELD_LINE;
+        });
+        // No single line matched (the phrasing spans lines): withhold the whole text.
+        if (lines > 0) {
+          withheld += lines;
+          return kept.join("\n");
+        }
+      }
       withheld++;
       return WITHHELD;
     }
@@ -250,7 +268,7 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
     const source = fromApp ? "a connected app" : fromThread ? "a thread" : "GoHighLevel";
     const why =
       screened.withheld > 0
-        ? `${screened.withheld} value(s) from ${source} read like instructions and were withheld.`
+        ? `${screened.withheld} value(s) or line(s) from ${source} read like instructions and were withheld.`
         : fromApp
           ? "This result comes from a connected app and holds text written by other people."
           : fromThread

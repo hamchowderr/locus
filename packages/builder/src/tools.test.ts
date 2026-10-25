@@ -57,6 +57,27 @@ describe("file tools", () => {
     });
   });
 
+  it("refuses to write a withheld line's placeholder into the site", async () => {
+    const { call } = await setup();
+    await call("files", { action: "write", path: "app/page.tsx", content: "<User>\nhi" });
+    const placeholder = "[line withheld by Locus: it read like instructions]\nhi";
+    expect(
+      await call("files", { action: "write", path: "app/page.tsx", content: placeholder }),
+    ).toHaveProperty("error", expect.stringContaining("withheld"));
+    expect(
+      await call("files", {
+        action: "edit",
+        path: "app/page.tsx",
+        find: "hi",
+        replace: placeholder,
+      }),
+    ).toHaveProperty("error", expect.stringContaining("withheld"));
+    expect(await call("files", { action: "read", path: "app/page.tsx" })).toEqual({
+      path: "app/page.tsx",
+      content: "<User>\nhi",
+    });
+  });
+
   it("returns refused paths as errors the model can fix", async () => {
     const { call } = await setup();
     expect(await call("files", { action: "write", path: ".env", content: "KEY=1" })).toMatchObject({
