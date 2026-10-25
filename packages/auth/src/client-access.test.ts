@@ -17,6 +17,7 @@ import {
   type AuthorizedClient,
   authorizeClient,
   authorizeMemberClient,
+  brainAutoSaveFor,
   ClientAccessDenied,
   inboxDraftsFor,
   listAccessibleClients,
@@ -25,6 +26,7 @@ import {
   resolveActiveClient,
   type SessionContext,
   selectClient,
+  setBrainAutoSave,
   setInboxDrafts,
   setMemberClients,
 } from "./client-access.ts";
@@ -197,6 +199,22 @@ describe("staff client access", () => {
       (await listTeam(db, owner)).find((m) => m.memberId === "staff@agency-a")?.locationIds,
     ).toEqual([a1]);
   });
+  it("only owners and admins turn the brain's auto-save on, for their own agency's clients", async () => {
+    const owner = await signedIn("owner", "agency-a");
+    const staff = await signedIn("staff", "agency-a");
+    await denied(setBrainAutoSave(db, staff, [a1], true));
+    await denied(setBrainAutoSave(db, owner, [a1, b1], true));
+    expect(await brainAutoSaveFor(db, a1)).toBe(false);
+
+    expect(await setBrainAutoSave(db, owner, [a1, a1], true)).toBe(1);
+    expect(await setBrainAutoSave(db, owner, [a1], true)).toBe(0);
+    expect(await brainAutoSaveFor(db, a1)).toBe(true);
+    expect(await brainAutoSaveFor(db, a2)).toBe(false);
+
+    expect(await setBrainAutoSave(db, owner, [a1], false)).toBe(1);
+    expect(await brainAutoSaveFor(db, a1)).toBe(false);
+  });
+
   it("drafts run as the owner who turned them on, through the same check, and stop with it", async () => {
     const owner = await signedIn("owner", "agency-a");
     const staff = await signedIn("staff", "agency-a");
