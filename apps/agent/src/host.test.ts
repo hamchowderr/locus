@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, sign as cryptoSign, generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,7 @@ import {
   authorizeClient,
   chatKitKey,
   type SessionContext,
+  setInboxDrafts,
   verifyAgentToWebToken,
 } from "@locus/auth";
 import { chooseActiveSite, openClientDb, remoteSiteRuntimes } from "@locus/builder/host";
@@ -1225,5 +1226,200 @@ describe("the site builder's sandboxes", () => {
   test("an unknown provider is no crash: it stays on the web app, and the settings check says so", () => {
     const sandboxes = siteSandboxes({ LOCUS_SANDBOX_PROVIDER: "dayton" }, webApp);
     expect(sandboxes.openRuntime).toBeTypeOf("function");
+  });
+});
+
+describe("new messages from GHL", () => {
+  const keys = generateKeyPairSync("ed25519");
+  const publicKey = keys.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+  const sign = (body: string) =>
+    cryptoSign(null, Buffer.from(body), keys.privateKey).toString("base64");
+
+  async function inboxHost() {
+    const { connect, client, sessions } = await agency();
+    const ghl = createFakeGhl({
+      "GET /conversations/conv-9/messages": {
+        body: {
+          messages: {
+            lastMessageId: "msg-9",
+            nextPage: false,
+            messages: [
+              {
+                id: "msg-9",
+                body: "Is the open house still on Sunday?",
+                direction: "inbound",
+                messageType: "TYPE_SMS",
+              },
+            ],
+          },
+        },
+      },
+      "*": { body: {} },
+    });
+    const host = createHost({
+      db,
+      session: async () => sessions.owner ?? null,
+      connect,
+      model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
+      fetch: ghl.fetch,
+      origin: "http://locus.test",
+      ghlWebhookKey: publicKey,
+    });
+    const deliver = (event: Record<string, unknown>, signature?: string) => {
+      const body = JSON.stringify(event);
+      return host.fetch(
+        new Request(`http://agent.test${PREFIX}/inbound`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-ghl-signature": signature ?? sign(body),
+          },
+          body,
+        }),
+      );
+    };
+    const threads = async () => {
+      const res = await host.fetch(
+        new Request(`http://agent.test${PREFIX}/kit/agent-controller/threads`),
+      );
+      return (
+        (await res.json()) as {
+          threads: {
+            id: string;
+            parentThreadId?: string;
+            status?: string;
+            agent?: { id: string };
+          }[];
+        }
+      ).threads.filter((t) => t.parentThreadId);
+    };
+    const message = {
+      type: "InboundMessage",
+      locationId: client.ghlLocationId,
+      conversationId: "conv-9",
+      contactId: "contact-9",
+      messageId: "msg-9",
+      messageType: "SMS",
+      direction: "inbound",
+      body: "Is the open house still on Sunday?",
+    };
+    return { host, ghl, client, sessions, deliver, threads, message };
+  }
+
+  test("a message GHL didn't sign changes nothing; one for another app is ignored", async () => {
+    const { deliver, message, threads } = await inboxHost();
+    expect((await deliver(message, sign("something else"))).status).toBe(401);
+    expect((await deliver(message, "")).status).toBe(401);
+    expect(await (await deliver({ ...message, appId: "another-app" })).json()).toEqual({
+      outcome: "ignored",
+    });
+    expect(await (await deliver({ ...message, direction: "outbound" })).json()).toEqual({
+      outcome: "ignored",
+    });
+    expect(await (await deliver({ ...message, messageType: "CALL" })).json()).toEqual({
+      outcome: "ignored",
+    });
+    // Drafting is off until an owner or admin turns it on.
+    expect(await (await deliver(message)).json()).toEqual({ outcome: "off" });
+    expect(await threads()).toEqual([]);
+  });
+
+  test("with drafting on, the Conversations agent drafts a reply that waits for a yes", async () => {
+    mock().llm.on(
+      { userMessage: /new SMS message in conversation conv-9/, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "in-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [
+                {
+                  as: "m",
+                  operation: "conversations.get-messages",
+                  params: { path: { conversationId: "conv-9" } },
+                  rowsField: "messages.messages",
+                },
+              ],
+              sql: "SELECT body FROM m",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "in-read" },
+      {
+        toolCalls: [
+          {
+            id: "in-send",
+            name: "perform_action",
+            arguments: JSON.stringify({
+              operation: "conversations.send-a-new-message",
+              params: {
+                body: {
+                  type: "SMS",
+                  contactId: "contact-9",
+                  message: "Yes, Sunday 1-4pm. See you there!",
+                  status: "pending",
+                },
+              },
+            }),
+          },
+        ],
+      },
+    );
+    const { host, ghl, deliver, threads, message, sessions, client } = await inboxHost();
+    await setInboxDrafts(db, sessions.owner as SessionContext, client.id, true);
+
+    const res = await deliver(message);
+    expect(await res.json()).toEqual({ outcome: "drafting" });
+    let work = (await threads())[0];
+    for (let i = 0; i < 200 && work?.status !== "needs_you"; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      work = (await threads())[0];
+    }
+    expect(work).toMatchObject({ status: "needs_you", agent: { id: "conversations" } });
+    // The brief names ids only: what the contact wrote reaches the agent from GHL, as data.
+    const first = mock()
+      .llm.getRequests()
+      .find((r) => /conv-9/.test(JSON.stringify(r.body)));
+    const firstUser = JSON.stringify(
+      (first?.body as { messages?: { role: string }[] } | undefined)?.messages?.filter(
+        (m) => m.role === "user",
+      ),
+    );
+    expect(firstUser).toContain("conv-9");
+    expect(firstUser).not.toContain("open house");
+    expect(ghl.requests.map((r) => `${r.method} ${r.url.pathname}`)).not.toContain(
+      "POST /conversations/messages",
+    );
+
+    // Another message in the same conversation starts nothing while the draft waits.
+    expect(await (await deliver({ ...message, messageId: "msg-10" })).json()).toEqual({
+      outcome: "drafting",
+    });
+    expect(await threads()).toHaveLength(1);
+
+    // The owner approves it in the thread: the reply goes out.
+    const approved = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "approve", toolCallId: "in-send", threadId: work?.id }),
+      }),
+    );
+    expect(approved.status).toBe(200);
+    for (let i = 0; i < 200 && !ghl.requests.some((r) => r.method === "POST"); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const sent = ghl.requests.find((r) => r.url.pathname === "/conversations/messages");
+    expect(sent?.body).toMatchObject({ type: "SMS", contactId: "contact-9" });
+
+    // Turned off: the next message drafts nothing.
+    await setInboxDrafts(db, sessions.owner as SessionContext, client.id, false);
+    expect(await (await deliver({ ...message, conversationId: "conv-10" })).json()).toEqual({
+      outcome: "off",
+    });
   });
 });
