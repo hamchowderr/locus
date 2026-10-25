@@ -262,7 +262,16 @@ export function extractRows(payload: unknown, rowsField: string | undefined, opI
   const record = payload as Row;
 
   if (rowsField !== undefined) {
-    const value = record[rowsField];
+    // A dotted name reaches a nested list: `messages.messages` for a conversation's messages.
+    const value =
+      rowsField in record
+        ? record[rowsField]
+        : rowsField
+            .split(".")
+            .reduce<unknown>(
+              (at, key) => (at && typeof at === "object" ? (at as Row)[key] : undefined),
+              record,
+            );
     if (Array.isArray(value)) return value.map(asRow);
     if (value && typeof value === "object") return [value as Row];
     throw new QueryError(

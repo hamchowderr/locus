@@ -8,6 +8,7 @@
 import { createClient } from "@libsql/client";
 import {
   CONNECTORS_OFF_KEY,
+  CONVERSATIONS_AGENT,
   clientSiteThreads,
   clientWorkThreads,
   createAgentApi,
@@ -449,7 +450,9 @@ export function createHost({
       // the background and report back. Its result is the new thread's id and title only.
       const workThreads = clientWorkThreads(
         storage,
-        builder ? [OPERATOR_AGENT, SITE_BUILDER_AGENT] : [OPERATOR_AGENT],
+        builder
+          ? [OPERATOR_AGENT, CONVERSATIONS_AGENT, SITE_BUILDER_AGENT]
+          : [OPERATOR_AGENT, CONVERSATIONS_AGENT],
       );
       const controller = await createLocusController({
         model,
@@ -490,7 +493,7 @@ export function createHost({
         threadTextTools: workThreads.threadTextTools,
         // The chat page names the supervisor on every turn, and the server saves it on the chat;
         // work threads keep their agent's mode whatever a turn names.
-        modes: [workThreads.supervisor, ...(builder?.modes ?? [])],
+        modes: [...workThreads.modes, ...(builder?.modes ?? [])],
         ...(builder ? { processors: builder.processors } : {}),
       });
       workThreads.attach(controller);
