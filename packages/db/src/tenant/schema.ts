@@ -128,3 +128,36 @@ export const appAccess = sqliteTable("app_access", {
   updatedByUserId: text("updated_by_user_id"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+/**
+ * The client's brain: markdown notes the agents read for context, holding what GoHighLevel
+ * can't tell us (offers, voice, rules, decisions, work done). Never copies of GHL records.
+ * One row per note, keyed by its path inside the brain (`business/pricing.md`).
+ */
+export const brainFile = sqliteTable("brain_file", {
+  path: text("path").primaryKey(),
+  content: text("content").notNull(),
+  /** UTF-8 bytes of `content`. */
+  size: integer("size").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  /** Who wrote the latest change: `user:<id>` or `agent:<name>`. */
+  updatedBy: text("updated_by"),
+});
+
+/**
+ * Every change to a note, numbered per path from 1, so any write can be undone. A deletion is
+ * a version with no content. History only grows: restoring writes a new version.
+ */
+export const brainFileVersion = sqliteTable(
+  "brain_file_version",
+  {
+    path: text("path").notNull(),
+    number: integer("number").notNull(),
+    /** Null when this version deleted the note. */
+    content: text("content"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    createdBy: text("created_by"),
+  },
+  (t) => [primaryKey({ columns: [t.path, t.number] })],
+);
