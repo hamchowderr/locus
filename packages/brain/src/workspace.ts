@@ -224,7 +224,14 @@ export class BrainContextProcessor implements Processor<"locus-brain-context"> {
   }
 
   async processInputStep({ messageList, requestContext }: ProcessInputStepArgs) {
-    await this.#authorize(requestContext);
+    try {
+      await this.#authorize(requestContext);
+    } catch {
+      // A member who lost the client sees none of its brain. The run itself is the host's to
+      // stop: its own checks refuse every tool call that follows.
+      messageList.clearSystemMessages(CONTEXT_TAG);
+      return;
+    }
     const now = await this.#filesystem.changes();
     const shown = messageList.getSystemMessages(CONTEXT_TAG).length > 0;
     if (shown && this.#readAt.get(messageList) === now) return;
