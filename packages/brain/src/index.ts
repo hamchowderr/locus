@@ -13,7 +13,14 @@ export {
   MAX_NOTE_BYTES,
   normalizeBrainPath,
 } from "./paths.ts";
-export { listNoteVersions, type NoteVersion, restoreNoteVersion } from "./store.ts";
+export {
+  getNote,
+  listNotes,
+  listNoteVersions,
+  type NoteRow,
+  type NoteVersion,
+  restoreNoteVersion,
+} from "./store.ts";
 export {
   AGENT_ACTOR,
   BRAIN_READ_TOOLS,
