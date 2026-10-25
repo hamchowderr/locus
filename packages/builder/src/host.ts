@@ -188,6 +188,10 @@ export function editorOrigins(locusUrl: string): string[] {
 export const siteRuntimeKey = (client: AuthorizedClient, siteId: string) =>
   `${client.location.id}/${siteId}`;
 
+/** The sandbox that shows a site's saved versions, apart from the one the builder works in. */
+export const versionPreviewKey = (client: AuthorizedClient, siteId: string) =>
+  `${siteRuntimeKey(client, siteId)}/versions`;
+
 /**
  * The control `site` row for `siteId`, only if it is this client's. Refuses (403, saying no
  * more) a missing site and another client's site alike.
@@ -306,7 +310,8 @@ export function usageMeter(
 
 /**
  * Publishing refusals Locus itself writes for the person, which may reach the model. Anything
- * else (notably `GitHub: <GitHub's own text>`) is logged and replaced by a generic message.
+ * else (notably `GitHub: <GitHub's own text>` or `Vercel: <Vercel's>`) is logged and replaced by
+ * a generic message that names the service that refused.
  */
 const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^Give the site a GitHub repository first\.$/,
@@ -330,7 +335,11 @@ const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^The site's database wasn't saved\. Try again\.$/,
   /^Locus couldn't make the site's database\. Try again\.$/,
   /^This site's database was removed, so Locus won't make a new one on its own\. Take the db\/migrations files out to publish it as a plain website\.$/,
-  /^Vercel didn't (show|take|remove) the site's (database )?settings\. Try again\.$/,
+  /^Vercel didn't (show|take|remove|change) the site's (database )?settings\. Try again\.$/,
+  /^Vercel isn't set up on this deployment yet\.$/,
+  /^Vercel needs to be connected again\.$/,
+  /^Connect your Vercel team on the Integrations page first\.$/,
+  /^Your Vercel team already has projects named [\w.-]+ and [\w.-]+\. Rename or remove one on Vercel, then try again\.$/,
   /^Vercel refused\. Reconnect Vercel on the Integrations page and allow access to all projects\.$/,
 ];
 
@@ -340,6 +349,19 @@ const GENERIC_PUBLISH_ERROR =
 const SITES_PAGE_PUBLISH_ERROR =
   "GitHub refused the publish. Check that the Locus app can still reach the site's " +
   "repository, then publish again.";
+// Vercel refuses the site's project settings, e.g. "Project not found" when the integration
+// may not change environment variables.
+const GENERIC_VERCEL_PUBLISH_ERROR =
+  "The version is saved, but Vercel refused the site's project settings. Check that Vercel is " +
+  "connected on the Integrations page with access to project environment variables, then save " +
+  "again.";
+const SITES_PAGE_VERCEL_PUBLISH_ERROR =
+  "Vercel refused the publish. Check that Vercel is connected on the Integrations page with " +
+  "access to project environment variables, then publish again.";
+const SITES_PAGE_PUBLISH_ERRORS = new Map([
+  [GENERIC_PUBLISH_ERROR, SITES_PAGE_PUBLISH_ERROR],
+  [GENERIC_VERCEL_PUBLISH_ERROR, SITES_PAGE_VERCEL_PUBLISH_ERROR],
+]);
 
 /**
  * The address a published site goes by, for its sitemap, links and structured data: its own
@@ -368,7 +390,9 @@ export function publishMessage(error: ConnectError): string {
     return error.message;
   }
   console.error(`Publishing a site version failed: ${error.message}`);
-  return GENERIC_PUBLISH_ERROR;
+  return error.message.startsWith("Vercel: ")
+    ? GENERIC_VERCEL_PUBLISH_ERROR
+    : GENERIC_PUBLISH_ERROR;
 }
 
 /**
@@ -461,9 +485,7 @@ export async function publishLatestVersion(
         published = await hook(version, files);
       } catch (error) {
         if (error instanceof PublishError) {
-          throw new SiteInputError(
-            error.message === GENERIC_PUBLISH_ERROR ? SITES_PAGE_PUBLISH_ERROR : error.message,
-          );
+          throw new SiteInputError(SITES_PAGE_PUBLISH_ERRORS.get(error.message) ?? error.message);
         }
         throw error;
       }
@@ -1353,10 +1375,13 @@ export async function deleteClientSite(
     action: "site.delete",
     detail: { siteId },
   });
-  try {
-    await deps.runtimes?.().destroy?.(siteRuntimeKey(client, siteId));
-  } catch (error) {
-    console.error("The deleted site's sandbox wasn't removed", { siteId, error });
+  // Both of its sandboxes: the builder's and the one showing its saved versions.
+  for (const key of [siteRuntimeKey(client, siteId), versionPreviewKey(client, siteId)]) {
+    try {
+      await deps.runtimes?.().destroy?.(key);
+    } catch (error) {
+      console.error("The deleted site's sandbox wasn't removed", { siteId, key, error });
+    }
   }
 }
 
