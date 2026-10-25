@@ -306,7 +306,8 @@ export function usageMeter(
 
 /**
  * Publishing refusals Locus itself writes for the person, which may reach the model. Anything
- * else (notably `GitHub: <GitHub's own text>`) is logged and replaced by a generic message.
+ * else (notably `GitHub: <GitHub's own text>` or `Vercel: <Vercel's>`) is logged and replaced by
+ * a generic message that names the service that refused.
  */
 const PERSON_FACING_PUBLISH_ERRORS: RegExp[] = [
   /^Give the site a GitHub repository first\.$/,
@@ -340,6 +341,18 @@ const GENERIC_PUBLISH_ERROR =
 const SITES_PAGE_PUBLISH_ERROR =
   "GitHub refused the publish. Check that the Locus app can still reach the site's " +
   "repository, then publish again.";
+// Vercel refuses the site's project settings, e.g. "Project not found" when the integration
+// may not change environment variables.
+const GENERIC_VERCEL_PUBLISH_ERROR =
+  "The version is saved, but Vercel refused the site's project settings. Reconnect Vercel on " +
+  "the Integrations page and allow it to change project environment variables, then save again.";
+const SITES_PAGE_VERCEL_PUBLISH_ERROR =
+  "Vercel refused the publish. Reconnect Vercel on the Integrations page and allow it to " +
+  "change project environment variables, then publish again.";
+const SITES_PAGE_PUBLISH_ERRORS = new Map([
+  [GENERIC_PUBLISH_ERROR, SITES_PAGE_PUBLISH_ERROR],
+  [GENERIC_VERCEL_PUBLISH_ERROR, SITES_PAGE_VERCEL_PUBLISH_ERROR],
+]);
 
 /**
  * The address a published site goes by, for its sitemap, links and structured data: its own
@@ -368,7 +381,7 @@ export function publishMessage(error: ConnectError): string {
     return error.message;
   }
   console.error(`Publishing a site version failed: ${error.message}`);
-  return GENERIC_PUBLISH_ERROR;
+  return error.message.startsWith("Vercel") ? GENERIC_VERCEL_PUBLISH_ERROR : GENERIC_PUBLISH_ERROR;
 }
 
 /**
@@ -461,9 +474,7 @@ export async function publishLatestVersion(
         published = await hook(version, files);
       } catch (error) {
         if (error instanceof PublishError) {
-          throw new SiteInputError(
-            error.message === GENERIC_PUBLISH_ERROR ? SITES_PAGE_PUBLISH_ERROR : error.message,
-          );
+          throw new SiteInputError(SITES_PAGE_PUBLISH_ERRORS.get(error.message) ?? error.message);
         }
         throw error;
       }
