@@ -188,6 +188,10 @@ export function editorOrigins(locusUrl: string): string[] {
 export const siteRuntimeKey = (client: AuthorizedClient, siteId: string) =>
   `${client.location.id}/${siteId}`;
 
+/** The sandbox that shows a site's saved versions, apart from the one the builder works in. */
+export const versionPreviewKey = (client: AuthorizedClient, siteId: string) =>
+  `${siteRuntimeKey(client, siteId)}/versions`;
+
 /**
  * The control `site` row for `siteId`, only if it is this client's. Refuses (403, saying no
  * more) a missing site and another client's site alike.
@@ -1371,10 +1375,13 @@ export async function deleteClientSite(
     action: "site.delete",
     detail: { siteId },
   });
-  try {
-    await deps.runtimes?.().destroy?.(siteRuntimeKey(client, siteId));
-  } catch (error) {
-    console.error("The deleted site's sandbox wasn't removed", { siteId, error });
+  // Both of its sandboxes: the builder's and the one showing its saved versions.
+  for (const key of [siteRuntimeKey(client, siteId), versionPreviewKey(client, siteId)]) {
+    try {
+      await deps.runtimes?.().destroy?.(key);
+    } catch (error) {
+      console.error("The deleted site's sandbox wasn't removed", { siteId, key, error });
+    }
   }
 }
 
