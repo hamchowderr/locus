@@ -1,5 +1,6 @@
 import type { ControlDb, TenantProvisioner } from "@locus/db";
 import {
+  inboxDrafts,
   location,
   member,
   memberLocation,
@@ -120,6 +121,31 @@ export async function authorizeClient(
   const authorized: AuthorizedClient = Object.freeze({ location: loc, memberId: m.id });
   issued.add(authorized);
   return authorized;
+}
+
+/**
+ * The same check for a member acting without a session of theirs: drafting replies to a
+ * client's new messages, which they turned on. Their membership, role and client list are
+ * read now, as at a sign-in, so a member removed or restricted since stops drafting at once.
+ * Only owners and admins turn drafting on, so only they draft: one demoted since stops too,
+ * even with the client on their list.
+ */
+export async function authorizeMemberClient(
+  db: ControlDb,
+  memberId: string,
+  locationId: string,
+): Promise<AuthorizedClient> {
+  const [row] = await db
+    .select({ userId: member.userId, organizationId: member.organizationId, role: member.role })
+    .from(member)
+    .where(eq(member.id, memberId));
+  if (!row) throw new ClientAccessDenied("no such member");
+  if (!unrestricted(row.role)) throw new ClientAccessDenied("only owners and admins draft");
+  return authorizeClient(
+    db,
+    { id: `member:${memberId}`, userId: row.userId, activeOrganizationId: row.organizationId },
+    locationId,
+  );
 }
 
 /** The active clients this session may work on, for a client picker. */
@@ -453,4 +479,35 @@ export async function setSiteBuilder(
     await db.insert(siteBuilderOff).values(changing.map((locationId) => ({ locationId })));
   }
   return changing.length;
+}
+
+/**
+ * Turns drafting replies to a client's new GHL messages on or off. Owners and admins only:
+ * every draft is a model run the agency pays for. Drafts run as the member who turned it on.
+ */
+export async function setInboxDrafts(
+  db: ControlDb,
+  ctx: SessionContext,
+  locationId: string,
+  on: boolean,
+): Promise<void> {
+  await requireAgencyManager(db, ctx);
+  const client = await authorizeClient(db, ctx, locationId);
+  if (!on) {
+    await db.delete(inboxDrafts).where(eq(inboxDrafts.locationId, client.location.id));
+    return;
+  }
+  await db
+    .insert(inboxDrafts)
+    .values({ locationId: client.location.id, memberId: client.memberId })
+    .onConflictDoUpdate({ target: inboxDrafts.locationId, set: { memberId: client.memberId } });
+}
+
+/** The member drafts run as for a client (Locus's own id for it), or null when drafting is off. */
+export async function inboxDraftsFor(db: ControlDb, locationId: string): Promise<string | null> {
+  const [row] = await db
+    .select({ memberId: inboxDrafts.memberId })
+    .from(inboxDrafts)
+    .where(eq(inboxDrafts.locationId, locationId));
+  return row?.memberId ?? null;
 }

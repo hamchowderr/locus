@@ -254,6 +254,16 @@ export function createAgentApi({
   };
 
   return {
+    /**
+     * The client's controller, made as a request would make it. For the host's own work with no
+     * request behind it (a drafted reply to a new message); the host runs its checks first.
+     */
+    async controller(member: AgentApiMember): Promise<AgentController> {
+      const mastra = await mastraOf(member);
+      const controller = mastra.getAgentController(CONTROLLER_ID);
+      if (!controller) throw new Error("no controller for this client");
+      return controller;
+    },
     async fetch(request: Request): Promise<Response> {
       const url = new URL(request.url);
       if (url.pathname.startsWith(`${kitBase}/`)) return kitFetch(request, url);
@@ -385,3 +395,12 @@ function withHostContext(body: Record<string, unknown>, context: Record<string, 
   const { requestContext: _dropped, ...rest } = body;
   return Object.keys(context).length > 0 ? { ...rest, requestContext: context } : rest;
 }
+
+export {
+  createInboxDrafts,
+  draftBrief,
+  INBOX_CONVERSATION_KEY,
+  type InboundMessage,
+  type InboxDrafts,
+  isInboundMessage,
+} from "./inbox.ts";
