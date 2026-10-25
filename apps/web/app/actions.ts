@@ -13,6 +13,7 @@ import {
   resolveActiveClient,
   selectClient,
   setComped,
+  setInboxDrafts,
   setMemberClients,
   setSiteAccess,
   setSiteBuilder,
@@ -617,6 +618,26 @@ export async function switchSiteBuilder(form: FormData) {
   }
   revalidatePath("/clients");
   redirect(`/clients?builder=${on ? "on" : "off"}&changed=${changed}`);
+}
+
+/**
+ * Turns drafted replies to new GHL messages on or off for the sub-accounts ticked on the
+ * Clients page. Owners and admins only; drafts then run as the one who turned them on
+ * (`setInboxDrafts`).
+ */
+export async function switchInboxDrafts(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fclients");
+  const on = form.get("on") === "yes";
+  const ids = [...new Set(form.getAll("locationId").map(String))];
+  try {
+    for (const id of ids) await setInboxDrafts(locus().db, sessionContext(current), id, on);
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) back("/clients", error);
+    throw error;
+  }
+  revalidatePath("/clients");
+  redirect(`/clients?drafts=${on ? "on" : "off"}&changed=${ids.length}`);
 }
 
 /** Files one of the active client's sites under a folder, or under none. */

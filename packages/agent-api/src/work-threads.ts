@@ -194,6 +194,8 @@ export function clientWorkThreads(
         return mode ? [mode] : [];
       }),
     ],
+    /** Starts a thread without a tool call (a drafted reply to a new message, `inbox.ts`). */
+    start: threads.start,
     /** Binds the work threads to the controller made with `tool`. */
     attach(made: AgentController) {
       attached.set(made, threads);
