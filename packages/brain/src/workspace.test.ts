@@ -120,6 +120,8 @@ describe("the brain workspace", () => {
   });
 });
 
+type Rule = (args: unknown, ctx: unknown) => Promise<boolean>;
+
 describe("notes the agent works out itself", () => {
   const note = {
     path: "/playbooks/follow-ups.md",
@@ -127,7 +129,10 @@ describe("notes the agent works out itself", () => {
     why: "x",
   };
   const asks = (brain: ReturnType<typeof createBrainWorkspace>, args: unknown, rc: unknown) =>
-    brain.approvals[BRAIN_TOOLS.propose].requireApproval(args, { requestContext: rc });
+    (brain.tools[BRAIN_TOOLS.propose] as unknown as { requireApproval: Rule }).requireApproval(
+      args,
+      { requestContext: rc },
+    );
 
   it("wait for a person unless auto-save is on, and never past the rules every write keeps", async () => {
     const clean = new RequestContext();
@@ -150,11 +155,10 @@ describe("notes the agent works out itself", () => {
       },
     });
     expect(await asks(broken, note, clean)).toBe(true);
-    // The tool Mastra runs carries the same rule.
-    const tool = auto.tools[BRAIN_TOOLS.propose] as unknown as Tool;
-    on = true;
-    const rule = tool.requireApproval as (args: unknown, ctx: unknown) => Promise<boolean>;
-    expect(await rule(note, { requestContext: clean })).toBe(false);
+    // Code that must know which calls may pause (ForgetGhlData) counts every proposal.
+    expect(
+      auto.approvals[BRAIN_TOOLS.propose].requireApproval(note, { requestContext: clean }),
+    ).toBe(true);
   });
 
   it("saves the note as the agent once it runs", async () => {
@@ -166,6 +170,15 @@ describe("notes the agent works out itself", () => {
     );
     const [version] = await listNoteVersions(db, "playbooks/follow-ups.md");
     expect(version?.createdBy).toBe(AGENT_ACTOR);
+
+    // Never over a note someone already has: that is brain_edit's job, after a read.
+    const again = (await tool.execute({ ...note, content: "# Follow-ups\n\nCall." }, {})) as {
+      error?: string;
+    };
+    expect(again.error).toBeTypeOf("string");
+    expect(await brain.filesystem.readFile(note.path, { encoding: "utf8" })).toContain(
+      "Text first.",
+    );
   });
 
   it("is refused when the host's staff check refuses", async () => {

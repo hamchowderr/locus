@@ -507,7 +507,10 @@ export async function setBrainAutoSave(
   const changing = found.filter((l) => (l.on !== null) !== on).map((l) => l.id);
   if (changing.length === 0) return 0;
   if (on) {
-    await db.insert(brainAutoSave).values(changing.map((locationId) => ({ locationId })));
+    await db
+      .insert(brainAutoSave)
+      .values(changing.map((locationId) => ({ locationId })))
+      .onConflictDoNothing();
   } else {
     await db.delete(brainAutoSave).where(inArray(brainAutoSave.locationId, changing));
   }

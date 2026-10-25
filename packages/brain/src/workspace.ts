@@ -189,9 +189,12 @@ export function createBrainWorkspace(
   const propose = createTool({
     id: BRAIN_TOOLS.propose,
     description:
-      "Save a note you worked out yourself, rather than one the person told you. A person " +
+      "Save a new note you worked out yourself, rather than one the person told you. A person " +
       "approves it on a card first, unless the client's owners turned on auto-save. Give the " +
-      "whole note, and one line on what you saw that makes you think so.",
+      "whole note, and one line on what you saw that makes you think so. It never replaces a " +
+      "note: to change one, read it and use " +
+      BRAIN_TOOLS.edit +
+      ".",
     inputSchema: z.object({
       path: z.string().describe("Where the note goes, e.g. /playbooks/follow-ups.md"),
       content: z.string().describe("The whole note, starting with a # Title line"),
@@ -201,7 +204,7 @@ export function createBrainWorkspace(
     execute: async ({ path, content }, context) => {
       await authorize(context?.requestContext);
       try {
-        await filesystem.writeFile(path, content);
+        await filesystem.writeFile(path, content, { overwrite: false });
         return { saved: normalizeBrainPath(path) };
       } catch (e) {
         return { error: e instanceof Error ? e.message : String(e) };
@@ -219,9 +222,9 @@ export function createBrainWorkspace(
       [BRAIN_TOOLS.write]: { requireApproval: (input, c) => writeWaits(input, c.requestContext) },
       [BRAIN_TOOLS.edit]: { requireApproval: (input, c) => writeWaits(input, c.requestContext) },
       [BRAIN_TOOLS.delete]: { requireApproval: always },
-      [BRAIN_TOOLS.propose]: {
-        requireApproval: (input, c) => proposeWaits(input, c.requestContext),
-      },
+      // The tool reads the auto-save switch when it decides; a second read here could disagree
+      // with it and leave GoHighLevel data in a paused run, so here a proposal always may wait.
+      [BRAIN_TOOLS.propose]: { requireApproval: always },
     },
     tools: { [BRAIN_TOOLS.propose]: propose },
     readTools: BRAIN_READ_TOOLS,
