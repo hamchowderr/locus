@@ -1316,6 +1316,13 @@ describe("new messages from GHL", () => {
     expect(await (await deliver({ ...message, direction: "outbound" })).json()).toEqual({
       outcome: "ignored",
     });
+    expect(await (await deliver({ ...message, messageId: undefined })).json()).toEqual({
+      outcome: "ignored",
+    });
+    // Old: GHL's retries come sooner, so this is a replay.
+    expect(
+      await (await deliver({ ...message, dateAdded: "2020-01-01T00:00:00.000Z" })).json(),
+    ).toEqual({ outcome: "ignored" });
     expect(await (await deliver({ ...message, messageType: "CALL" })).json()).toEqual({
       outcome: "ignored",
     });
@@ -1415,6 +1422,13 @@ describe("new messages from GHL", () => {
     }
     const sent = ghl.requests.find((r) => r.url.pathname === "/conversations/messages");
     expect(sent?.body).toMatchObject({ type: "SMS", contactId: "contact-9" });
+
+    // The same message again (a retry or a replay) starts nothing, even with the draft done.
+    expect(await (await deliver(message)).json()).toEqual({ outcome: "off" });
+    expect(await (await deliver({ ...message, messageId: "msg-10" })).json()).toEqual({
+      outcome: "off",
+    });
+    expect(await threads()).toHaveLength(1);
 
     // Turned off: the next message drafts nothing.
     await setInboxDrafts(db, sessions.owner as SessionContext, client.id, false);

@@ -127,6 +127,8 @@ export async function authorizeClient(
  * The same check for a member acting without a session of theirs: drafting replies to a
  * client's new messages, which they turned on. Their membership, role and client list are
  * read now, as at a sign-in, so a member removed or restricted since stops drafting at once.
+ * Only owners and admins turn drafting on, so only they draft: one demoted since stops too,
+ * even with the client on their list.
  */
 export async function authorizeMemberClient(
   db: ControlDb,
@@ -134,10 +136,11 @@ export async function authorizeMemberClient(
   locationId: string,
 ): Promise<AuthorizedClient> {
   const [row] = await db
-    .select({ userId: member.userId, organizationId: member.organizationId })
+    .select({ userId: member.userId, organizationId: member.organizationId, role: member.role })
     .from(member)
     .where(eq(member.id, memberId));
   if (!row) throw new ClientAccessDenied("no such member");
+  if (!unrestricted(row.role)) throw new ClientAccessDenied("only owners and admins draft");
   return authorizeClient(
     db,
     { id: `member:${memberId}`, userId: row.userId, activeOrganizationId: row.organizationId },

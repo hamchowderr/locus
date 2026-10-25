@@ -211,15 +211,16 @@ describe("staff client access", () => {
     expect((await authorizeMemberClient(db, drafter as string, a1)).location.id).toBe(a1);
     // The member's own agency decides, never the client named: another agency's is refused.
     await denied(authorizeMemberClient(db, drafter as string, b1));
-    // A restricted member is held to their list, as at a sign-in.
-    await denied(authorizeMemberClient(db, "staff@agency-a", a2));
-    expect((await authorizeMemberClient(db, "staff@agency-a", a1)).location.id).toBe(a1);
+    // Staff never draft, not even for a client on their list.
+    await denied(authorizeMemberClient(db, "staff@agency-a", a1));
 
-    // Demoted: the next draft is refused at once.
+    // Demoted: the next draft is refused at once, even with the client on their list.
     await db.update(member).set({ role: "member" }).where(eq(member.id, "owner@agency-a"));
+    await db.insert(memberLocation).values({ memberId: "owner@agency-a", locationId: a1 });
     await denied(authorizeMemberClient(db, "owner@agency-a", a1));
     await denied(authorizeMemberClient(db, "nobody", a1));
 
+    await db.delete(memberLocation).where(eq(memberLocation.memberId, "owner@agency-a"));
     await db.update(member).set({ role: "owner" }).where(eq(member.id, "owner@agency-a"));
     await setInboxDrafts(db, owner, a1, false);
     expect(await inboxDraftsFor(db, a1)).toBeNull();
