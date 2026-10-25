@@ -17,10 +17,18 @@ const CONSOLE_LOG: SandboxLog = {
   error: (message, fields) => console.error(message, fields),
 };
 
-/** A failure's kind and message, never its stack or a cause that may hold a response body. */
+/**
+ * A failure's kind and the start of its message: providers append a command's stderr after a
+ * colon ("Preparing the sandbox failed (exit 1): …"), so only what comes before one is kept.
+ */
 function why(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : "unknown error";
+  if (!(error instanceof Error)) return "unknown error";
+  const summary = error.message.split(/:\s|\n/)[0]?.slice(0, 160) ?? "";
+  return `${error.name}: ${summary}`;
 }
+
+/** The program alone: the model writes `command`, and may put arguments in it. */
+const program = (command: string) => command.trim().split(/\s/)[0] ?? "";
 
 async function timed<T>(
   log: SandboxLog,
@@ -74,26 +82,23 @@ class LoggedRuntime implements SiteRuntime {
 
   async run(command: string, args?: string[], opts?: { timeoutMs?: number }) {
     // Commands are frequent: only a failing one gets a line, by program name alone.
-    const result = await this.#quiet("command", () => this.#inner.run(command, args, opts), {
-      command,
-    });
+    const fields = { command: program(command) };
+    const result = await this.#quiet("command", () => this.#inner.run(command, args, opts), fields);
     if (result.exitCode !== 0 || result.timedOut) {
-      this.#log.error("sandbox command failed", { ...this.#fields, command, ...exit(result) });
+      this.#log.error("sandbox command failed", { ...this.#fields, ...fields, ...exit(result) });
     }
     return result;
   }
 
   async install(opts?: { timeoutMs?: number }) {
-    const result = await timed(
-      this.#log,
-      "install",
-      this.#fields,
-      () => this.#inner.install(opts),
-      exit,
-    );
-    if (result.exitCode !== 0 || result.timedOut) {
-      this.#log.error("sandbox install failed", { ...this.#fields, ...exit(result) });
-    }
+    const started = Date.now();
+    const result = await this.#quiet("install", () => this.#inner.install(opts));
+    const failed = result.exitCode !== 0 || result.timedOut;
+    this.#log[failed ? "error" : "info"](failed ? "sandbox install failed" : "sandbox install", {
+      ...this.#fields,
+      ms: Date.now() - started,
+      ...exit(result),
+    });
     return result;
   }
 

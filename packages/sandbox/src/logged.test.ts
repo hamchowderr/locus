@@ -18,14 +18,14 @@ describe("sandbox step logs", () => {
       new FakeRuntimeProvider({
         files: { "package.json": "{}" },
         handler: (command) =>
-          command === "npx" ? { exitCode: 2, stdout: "secret output" } : undefined,
+          command.startsWith("npx") ? { exitCode: 2, stdout: "secret output" } : undefined,
       }),
       log,
     );
     const runtime = await provider.open("loc/site");
     await runtime.install();
     await runtime.run("ls");
-    await runtime.run("npx", ["tsc", "--token=abc"]);
+    await runtime.run("npx --token=abc", ["tsc"]);
     const { url } = await runtime.startPreview();
     await runtime.stop();
     await provider.destroy?.("loc/site");
@@ -55,17 +55,34 @@ describe("sandbox step logs", () => {
     const { lines, log } = recorder();
     const inner = new FakeRuntimeProvider();
     inner.open = async () => {
-      throw new Error("E2B is down");
+      throw new Error("Preparing the sandbox failed (exit 1): mkdir: /site/app/secret-path");
     };
     const provider = new LoggedRuntimeProvider(inner, log);
-    await expect(provider.open("loc/site")).rejects.toThrow("E2B is down");
+    await expect(provider.open("loc/site")).rejects.toThrow("Preparing the sandbox failed");
     expect(lines).toEqual([
       {
         level: "error",
         message: "sandbox open failed",
-        fields: { key: "loc/site", ms: expect.any(Number), error: "Error: E2B is down" },
+        fields: {
+          key: "loc/site",
+          ms: expect.any(Number),
+          error: "Error: Preparing the sandbox failed (exit 1)",
+        },
       },
     ]);
+  });
+
+  test("a failed install is one error line", async () => {
+    const { lines, log } = recorder();
+    const provider = new LoggedRuntimeProvider(
+      new FakeRuntimeProvider({
+        files: { "package.json": "{}" },
+        handler: () => ({ exitCode: 1 }),
+      }),
+      log,
+    );
+    await (await provider.open("loc/site")).install();
+    expect(lines.map((line) => line.message)).toEqual(["sandbox open", "sandbox install failed"]);
   });
 
   test("a provider that can't delete sandboxes stays that way", () => {
