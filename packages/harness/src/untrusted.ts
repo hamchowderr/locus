@@ -166,11 +166,12 @@ export function withholdInstructions(value: unknown): { value: unknown; withheld
 }
 
 /**
- * Read operations whose rows carry free text written by the public. Reading any of them taints
- * the run even when nothing matched a pattern.
+ * Operations whose results carry free text written by the public. Reading any of them taints
+ * the run even when nothing matched a pattern. Every conversations operation does: a search or
+ * an update answers with the last message's body, an export with every message's.
  */
 const PUBLIC_TEXT =
-  /(submissions|\.get-messages?$|message-transcription|get-email-by-id|notes?$|reviews|comment-list)/;
+  /(^conversations\.|submissions|\.get-messages?$|message-transcription|get-email-by-id|notes?$|reviews|comment-list)/;
 
 export function readsPublicText(operationId: string): boolean {
   return PUBLIC_TEXT.test(operationId);

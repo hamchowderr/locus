@@ -74,15 +74,15 @@ export const CONVERSATIONS_MODE_ID = "conversations";
 
 /**
  * The sub-account's inbox: SMS, email, live chat, Facebook, Instagram, WhatsApp and Google
- * Business messages, read live from GHL. Every message a contact wrote is untrusted, so once a
- * run has read one, each reply it sends waits for the person's yes (`untrusted.ts`).
+ * Business messages, read live from GHL. Every message to a contact waits for the person's yes
+ * (`needsApproval`), and reading any conversation taints the run (`untrusted.ts`).
  */
 export const CONVERSATIONS_MODE: AgentControllerMode = {
   id: CONVERSATIONS_MODE_ID,
   name: "Conversations",
   description: "Reads the sub-account's conversations and replies on the contact's channel.",
   instructions: `You handle this sub-account's conversations: SMS, email, live chat, Facebook,
-Instagram, WhatsApp and Google Business messages. Load the conversations skill first, and the
+Instagram and WhatsApp messages. Load the conversations skill first, and the
 contacts skill when you need to find a contact. Read the conversation before you answer it, and
 reply on the channel the contact last wrote on unless you were told otherwise. Write replies as
 the business, short and plain, and never promise prices, times or anything else the
