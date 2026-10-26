@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { z } from "zod";
 import { createLocusController, openClientSession } from "./controller.ts";
 import { NOT_KEPT } from "./conversation.ts";
+import { APPROVED } from "./tools.ts";
 import { TAINT_MARK } from "./untrusted.ts";
 
 const mock = useAimock();
@@ -85,6 +86,21 @@ function toolsOffered(): string[] {
   return (last?.tools ?? []).map((t) => t.name ?? t.function?.name ?? "");
 }
 
+/** The tool results a model request carried, by tool call id. */
+function toolResults(request: { body: unknown } | undefined): Record<string, string> {
+  const messages =
+    (request?.body as { messages?: { role: string; tool_call_id?: string; content?: unknown }[] })
+      ?.messages ?? [];
+  return Object.fromEntries(
+    messages
+      .filter((m) => m.role === "tool" && m.tool_call_id)
+      .map((m) => [
+        m.tool_call_id,
+        typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+      ]),
+  );
+}
+
 describe("act mode", () => {
   test("ordinary writes go through; a deletion waits for the person's approval", async () => {
     mock().llm.on(
@@ -105,6 +121,11 @@ describe("act mode", () => {
     expect(sent(ghl)).toEqual(["POST /contacts/c1/tags", "DELETE /contacts/c1"]);
     // Every request carried the client's own token.
     expect(ghl.requests.every((r) => r.headers.authorization === "Bearer tok-A")).toBe(true);
+    // After the yes the model is told the deletion was approved and made; the tag that needed
+    // no one says nothing of the kind.
+    const results = toolResults(mock().llm.getRequests().at(-1));
+    expect(results["c1-del"]).toContain(APPROVED);
+    expect(results["c1-tag"]).not.toContain(APPROVED);
   });
 
   test("a declined deletion sends nothing", async () => {
@@ -179,6 +200,12 @@ describe("act mode", () => {
       "approval:c3-tag",
       "approval:c3-tag-b",
     ]);
+    // The tag waited only because of the taint, and the resumed run is told it was approved.
+    const afterTag = mock()
+      .llm.getRequests()
+      .map(toolResults)
+      .find((results) => "c3-tag" in results);
+    expect(afterTag?.["c3-tag"]).toContain(APPROVED);
     // Same session, same thread, a new run: the taint was that run's alone.
     expect(await send(session, "c3: now tag c1")).toEqual([]);
     expect(sent(ghl)).toEqual([

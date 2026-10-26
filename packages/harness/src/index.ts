@@ -87,7 +87,7 @@ export {
   TEST_TAG_PREFIX,
   type WriteGuard,
 } from "./test-mode.ts";
-export { createLocusTools, type RunContext, type ToolDeps } from "./tools.ts";
+export { APPROVED, createLocusTools, type RunContext, type ToolDeps } from "./tools.ts";
 export {
   hasRefusedBrief,
   isTainted,
