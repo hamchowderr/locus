@@ -2,9 +2,10 @@
 
 import { MousePointerClick } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps, useEffect, useState } from "react";
 import { SitePreview } from "@/components/site-preview/site-preview";
 import { Button } from "@/components/ui/button";
+import { storedCount } from "@/components/visual-edits/use-visual-edits";
 import { VisualEditor } from "@/components/visual-edits/visual-editor";
 import { lastCheckFailure } from "@/lib/builder-steps";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,9 @@ export function SiteWorkspace({
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  // Unsaved visual edits, which wait (in this tab) when the panel is closed.
+  const [unsaved, setUnsaved] = useState(0);
+  useEffect(() => setUnsaved(storedCount(siteId)), [siteId]);
   const [reloads, setReloads] = useState(0);
   const mode = "mode" in setting ? setting.mode : null;
   const refusal = "mode" in setting ? setting.refusal : setting.off;
@@ -96,6 +100,14 @@ export function SiteWorkspace({
             >
               <MousePointerClick data-icon="inline-start" />
               Visual edits
+              {unsaved > 0 && (
+                <span
+                  title={`${unsaved} not saved yet`}
+                  className="rounded-full bg-amber-400 px-1.5 text-[11px] text-black leading-4"
+                >
+                  {unsaved}
+                </span>
+              )}
             </Button>
           )
         }
@@ -108,6 +120,9 @@ export function SiteWorkspace({
           ask={chat.send}
           asking={chat.busy}
           editable={preview.version === null}
+          onPendingChange={setUnsaved}
+          // The new version shows in the version picker and on Versions.
+          onSaved={() => router.refresh()}
           className="w-full border-t p-3 lg:w-80 lg:border-t-0 lg:border-l"
         />
       )}
