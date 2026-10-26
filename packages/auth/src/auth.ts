@@ -40,6 +40,12 @@ export interface LocusAuthConfig {
    * one saved while the deletion ran (a token renewal that finished meanwhile).
    */
   afterAgencyDeleted?: ((organizationId: string) => Promise<void>) | undefined;
+  /**
+   * Runs when Stripe says an agency's subscription is paid up (checkout finished, a plan change,
+   * an overdue payment settled). The web app adds the sub-accounts that were waiting for a plan
+   * here, so nobody has to sync again by hand. A failure is logged, never sent back to Stripe.
+   */
+  onAgencyPaid?: ((organizationId: string) => Promise<void>) | undefined;
 }
 
 // Without billing the plugin still loads, so the schema and the API's types are the same
@@ -62,6 +68,14 @@ const NO_STRIPE = { secretKey: "sk_test_billing_is_off", webhookSecret: "" };
 export function createAuth(config: LocusAuthConfig) {
   const stripeClient = new Stripe((config.billing ?? NO_STRIPE).secretKey);
   const { sendEmail } = config;
+  const agencyPaid = async (row: { referenceId: string; status?: string | null }) => {
+    if (!config.onAgencyPaid || (row.status !== "active" && row.status !== "trialing")) return;
+    try {
+      await config.onAgencyPaid(row.referenceId);
+    } catch (error) {
+      console.error("[locus] waiting sub-accounts not added after payment:", error);
+    }
+  };
   const auth = betterAuth({
     baseURL: config.baseURL,
     secret: config.secret,
@@ -246,6 +260,15 @@ export function createAuth(config: LocusAuthConfig) {
           // active organisation, and only its owners and admins manage billing.
           // Extra usage stops once the plan is set to end (`usage.ts`); send what is waiting now,
           // while the subscription still has an invoice to put it on.
+          onSubscriptionComplete: async ({ subscription }) => {
+            await agencyPaid(subscription);
+          },
+          onSubscriptionCreated: async ({ subscription }) => {
+            await agencyPaid(subscription);
+          },
+          onSubscriptionUpdate: async ({ subscription }) => {
+            await agencyPaid(subscription);
+          },
           onSubscriptionCancel: async ({ subscription }) => {
             if (!config.billing) return;
             try {

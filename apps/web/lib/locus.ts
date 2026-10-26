@@ -61,6 +61,11 @@ function build() {
       await offboardClients(db, organizationId);
       await removeAgencySecrets(db, organizationId);
     },
+    // Imported when first needed: the connect module builds on this one.
+    onAgencyPaid: async (organizationId) => {
+      const { addWaitingClients } = await import("./connect.ts");
+      await addWaitingClients(organizationId);
+    },
     afterAgencyDeleted: (organizationId) =>
       removeAgencySecrets(db, organizationId).catch((error: unknown) => {
         console.error("Removing a deleted agency's credentials failed", error);
