@@ -80,6 +80,17 @@ function loadStored(siteId: string): Pending {
   }
 }
 
+/** Each site's undo history, kept while the page is open so closing the panel keeps it. */
+const histories = new Map<string, EditHistory>();
+function historyOf(siteId: string): EditHistory {
+  let history = histories.get(siteId);
+  if (!history) {
+    history = new EditHistory();
+    histories.set(siteId, history);
+  }
+  return history;
+}
+
 /** How many changes to a site wait unsaved in this browser tab. */
 export function storedCount(siteId: string): number {
   return typeof window === "undefined" ? 0 : loadStored(siteId).size;
@@ -123,7 +134,7 @@ export function useVisualEdits({
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [failures, setFailures] = useState<string[]>([]);
-  const history = useRef(new EditHistory()).current;
+  const history = historyOf(siteId);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const pendingRef = useRef(pending);
@@ -297,8 +308,11 @@ export function useVisualEdits({
   }, [frame]);
 
   const discard = useCallback(() => {
+    // Discard is a step like any other, so Undo brings the changes back.
+    const before = pendingRef.current;
+    if (before.size === 0) return;
+    history.step(before, "discard");
     commit(new Map());
-    history.clear();
     setSelection([]);
     setFailures([]);
     reload();
