@@ -992,7 +992,15 @@
           "default": "(cast(unixepoch('subsecond') * 1000 as integer))"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "agency_onboarding_main_location_idx": {
+          "name": "agency_onboarding_main_location_idx",
+          "columns": [
+            "main_location_id"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {
         "agency_onboarding_organization_id_organization_id_fk": {
           "name": "agency_onboarding_organization_id_organization_id_fk",
