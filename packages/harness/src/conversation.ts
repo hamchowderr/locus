@@ -36,14 +36,18 @@ export const HISTORY_TOKENS = 24_000;
  * concluded it had invented the contacts it had just read (`apps/agent/fixtures/recorded/ask-back`),
  * so the note says the result was real. A run that resumed after an approval saw its own read
  * blanked and said it had drafted a reply before reading the conversation, so the note also says
- * the later steps were taken with the result in view. It still sends the model back to GHL for
- * current data.
+ * the later steps were taken with the result in view. Told that, a resumed run still decided it
+ * had made up the summary it wrote from the read, and took it back (staging, 2026-10-26), so the
+ * note also says outright that a missing result is no sign of that. It still sends the model
+ * back to GHL for current data.
  */
 export const NOT_KEPT =
   "Not kept: this tool really ran and returned a result, which was removed afterwards because " +
   "it may hold data from GoHighLevel or a connected app, and that is not stored. You had the " +
   "whole result when you took the steps after it, so what you did and said then was based on " +
-  "it. It may have changed since: read it again before you rely on its details.";
+  "it. Its absence now is no sign that you did not see it or that you made up what you said " +
+  "from it: do not take any of that back. It may have changed since: read it again before you " +
+  "rely on its details.";
 
 export function createLocusMemory(storage: ConversationStore): Memory {
   return new Memory({
