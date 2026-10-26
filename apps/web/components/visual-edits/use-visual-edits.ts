@@ -2,7 +2,7 @@
 
 import { VISUAL_EDITS_MESSAGE } from "@locus/studio/visual-edits-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { differences, EditHistory, type Pending, readStored, withEdit } from "./history";
+import { differences, EditHistory, type Pending, readStored, sameAt, withEdit } from "./history";
 
 /** What the preview reports about one selected element. */
 export interface SelectedItem {
@@ -130,6 +130,9 @@ export function useVisualEdits({
   pendingRef.current = pending;
   /** The draft the preview's page was made from, as its script reported it. */
   const draftRef = useRef("");
+  const savingRef = useRef(false);
+  /** Goes up on every undo and redo, so the panel's fields show the value they went back to. */
+  const [generation, setGeneration] = useState(0);
 
   const send = useCallback(
     (message: Record<string, unknown>) => {
@@ -153,6 +156,7 @@ export function useVisualEdits({
     (edit: PendingEdit) => {
       const before = pendingRef.current;
       const { next, key } = withEdit(before, edit);
+      if (sameAt(before, next, key)) return;
       history.step(before, key);
       commit(next);
       setFailures([]);
@@ -163,6 +167,8 @@ export function useVisualEdits({
   /** Goes back (or forward) to another set of unsaved changes and shows it in the page. */
   const travel = useCallback(
     (direction: "undo" | "redo") => {
+      // The save is sending these changes: going back now would change what it saves.
+      if (savingRef.current) return;
       const current = pendingRef.current;
       const to = direction === "undo" ? history.undo(current) : history.redo(current);
       if (!to) return;
@@ -170,11 +176,19 @@ export function useVisualEdits({
       commit(to);
       setFailures([]);
       for (const edit of changed) send({ type: "show", change: shown(edit) });
+      // A text change is one copy's (the one showing its old text); attributes are every copy's.
       setSelection((items) =>
         items.map((item) =>
-          changed.reduce((it, edit) => (edit.target === it.target ? applied(it, edit) : it), item),
+          changed.reduce(
+            (it, edit) =>
+              edit.target === it.target && (edit.kind !== "text" || it.text === edit.from)
+                ? applied(it, edit)
+                : it,
+            item,
+          ),
         ),
       );
+      setGeneration((n) => n + 1);
     },
     [commit, history, send],
   );
@@ -256,15 +270,6 @@ export function useVisualEdits({
     return () => window.removeEventListener("keydown", onKey);
   }, [travel]);
 
-  // Leaving the page with unsaved changes asks first.
-  const unsaved = pending.size > 0;
-  useEffect(() => {
-    if (!unsaved) return;
-    const onLeave = (e: BeforeUnloadEvent) => e.preventDefault();
-    window.addEventListener("beforeunload", onLeave);
-    return () => window.removeEventListener("beforeunload", onLeave);
-  }, [unsaved]);
-
   /** Records a change made in the panel and shows it in the page right away. */
   const change = useCallback(
     (edit: PendingEdit) => {
@@ -304,6 +309,7 @@ export function useVisualEdits({
     const sent = [...pendingRef.current.entries()];
     const edits = sent.map(([, edit]) => toRequest(edit));
     if (edits.length === 0) return null;
+    savingRef.current = true;
     setSaving(true);
     setProblem(null);
     try {
@@ -338,6 +344,7 @@ export function useVisualEdits({
       setProblem("The changes couldn't be saved. Check your connection and try again.");
       return null;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }, [siteId, onSaved, send, commit, history]);
@@ -361,6 +368,7 @@ export function useVisualEdits({
     redo,
     canUndo: history.canUndo,
     canRedo: history.canRedo,
+    generation,
     saving,
     problem,
     failures,
@@ -378,8 +386,22 @@ export function undoKey(e: {
   if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
   const key = e.key.toLowerCase();
   if (key === "z") return e.shiftKey ? "redo" : "undo";
-  if (key === "y" && !e.shiftKey) return "redo";
+  // Ctrl+Y only: Cmd+Y is the browser's history on a Mac.
+  if (key === "y" && e.ctrlKey && !e.metaKey && !e.shiftKey) return "redo";
   return null;
+}
+
+/** Asks before the page is left while a site has unsaved changes. */
+export function useLeaveWarning(unsaved: boolean) {
+  useEffect(() => {
+    if (!unsaved) return;
+    const onLeave = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onLeave);
+    return () => window.removeEventListener("beforeunload", onLeave);
+  }, [unsaved]);
 }
 
 /** How the page shows an unsaved change. */
