@@ -12,6 +12,7 @@ export {
   type Entitlement,
   mayManageBilling,
   newClientRefusal,
+  seatRefusal,
   startTrial,
   TRIAL_DAYS,
   trialDaysLeft,
