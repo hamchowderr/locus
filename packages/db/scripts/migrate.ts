@@ -59,23 +59,20 @@ try {
       console.warn(`control database skipped: main's migrations could not be read (${e})`);
     }
     if (mainFolder) {
-      // A slow or unreachable staging database isn't this branch's fault either: give it a
-      // minute, then build without it (main's own deploy and the next build bring it up).
+      // A staging database that doesn't answer isn't this branch's fault either: give it a
+      // minute, then build without it (main's own deploy and the next build bring it up). An
+      // error it does answer with still fails the build.
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const outcome = await Promise.race([
-        migrateControlDb(db, mainFolder).then(
-          () => "migrated" as const,
-          (e: unknown) => e,
-        ),
-        new Promise<"timeout">((done) =>
-          setTimeout(() => done("timeout"), SHARED_DB_WAIT_MS).unref(),
-        ),
-      ]);
+        migrateControlDb(db, mainFolder).then(() => "migrated" as const),
+        new Promise<"timeout">((done) => {
+          timer = setTimeout(() => done("timeout"), SHARED_DB_WAIT_MS);
+        }),
+      ]).finally(() => clearTimeout(timer));
       if (outcome === "migrated") {
         console.log(`control database migrated to main: ${url}`);
       } else {
-        console.warn(
-          `control database skipped: ${outcome === "timeout" ? `no answer within ${SHARED_DB_WAIT_MS / 1000} s` : String(outcome)}`,
-        );
+        console.warn(`control database skipped: no answer within ${SHARED_DB_WAIT_MS / 1000} s`);
         // The unanswered request would keep this process waiting; nothing else is left to do.
         abandoned = true;
       }
