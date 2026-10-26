@@ -1,16 +1,27 @@
 import { ClientAccessDenied } from "@locus/auth";
-import { ConnectError, connectAgency, refusedQuery } from "@locus/connect";
+import {
+  ConnectError,
+  connectAgency,
+  exchangeCode,
+  HELD_GRANT_MS,
+  holdGrant,
+  refusedQuery,
+} from "@locus/connect";
 import { GhlError } from "@locus/ghl";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { baseUrl, connectDeps, STATE_COOKIE } from "@/lib/connect";
+import { baseUrl, connectDeps, HELD_GRANT_COOKIE, STATE_COOKIE } from "@/lib/connect";
 import { currentSession, sessionContext } from "@/lib/locus";
 import { createAgencyFromGhl, integrationsReturn } from "@/lib/onboarding";
 
 const back = async (query: string) =>
   NextResponse.redirect(new URL(await integrationsReturn(query), baseUrl()));
 
-/** GHL sends the agency back here with a code. The state must match the one we set. */
+/**
+ * GHL sends the agency back here with a code. When the connect started in Locus, the state must
+ * match the one we set. An install started from the GoHighLevel marketplace carries no state: its
+ * grant is held and the installer is asked to sign in and confirm before anything is connected.
+ */
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const jar = await cookies();
@@ -18,6 +29,7 @@ export async function GET(request: Request) {
   jar.delete({ name: STATE_COOKIE, path: "/api/connect/crm" });
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
+  if (!state && !expected && code) return await fromMarketplace(code);
   if (!expected || !state || state !== expected || !code) return await back("error=state");
 
   const current = await currentSession();
@@ -32,6 +44,24 @@ export async function GET(request: Request) {
     if (error instanceof ConnectError || error instanceof ClientAccessDenied) {
       return await back(`error=${encodeURIComponent(error.message)}`);
     }
+    if (error instanceof GhlError) return await back("error=ghl");
+    throw error;
+  }
+}
+
+async function fromMarketplace(code: string) {
+  const deps = connectDeps();
+  try {
+    const id = await holdGrant(deps, await exchangeCode(deps.ghl, code, deps.http));
+    (await cookies()).set(HELD_GRANT_COOKIE, id, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      maxAge: HELD_GRANT_MS / 1000,
+    });
+    return NextResponse.redirect(new URL("/onboarding/install", baseUrl()));
+  } catch (error) {
     if (error instanceof GhlError) return await back("error=ghl");
     throw error;
   }
