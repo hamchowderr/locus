@@ -41,6 +41,7 @@ export {
   handleGithubWebhook,
   verifyGithubSignature,
 } from "./github.ts";
+export { HELD_GRANT_MS, holdGrant, peekHeldGrant, takeHeldGrant } from "./held-grant.ts";
 export { INBOX_PAGE, type InboxConversation, listInbox } from "./inbox.ts";
 export {
   beginOnboarding,

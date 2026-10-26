@@ -2,6 +2,7 @@ import { ClientAccessDenied, listAccessibleClients, TRIAL_DAYS } from "@locus/au
 import { ONBOARDING_STEPS, type OnboardingStep } from "@locus/connect";
 import { redirect } from "next/navigation";
 import { connectMessage } from "@/lib/connect-messages";
+import { hasHeldInstall } from "@/lib/ghl-install";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { setupStepFor } from "@/lib/onboarding";
 import { chooseMainClient, skipSetupStep } from "../actions";
@@ -34,6 +35,8 @@ export default async function Onboarding({
   // Members who aren't owners or admins can't do the setup, so they go on to the chat.
   const step = await setupStepFor(current);
   if (!step) redirect("/chat");
+  // A GoHighLevel marketplace install is waiting for this person: finish that first.
+  if (step === "ghl" && (await hasHeldInstall())) redirect("/onboarding/install");
 
   const number = ONBOARDING_STEPS.indexOf(step) + 1;
   return (

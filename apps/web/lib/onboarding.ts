@@ -1,5 +1,6 @@
 import { ClientAccessDenied, rememberAgency, requireAgencyManager, startTrial } from "@locus/auth";
 import {
+  type AgencyGrant,
   beginOnboarding,
   ConnectError,
   connectAgencyGrant,
@@ -68,10 +69,15 @@ const slugOf = (name: string) =>
  * its owner can invite this person instead.
  */
 export async function createAgencyFromGhl(code: string): Promise<SyncResult> {
+  const deps = connectDeps();
+  return createAgencyFromGrant(await exchangeCode(deps.ghl, code, deps.http));
+}
+
+/** `createAgencyFromGhl` with a grant already exchanged, such as one held from the marketplace. */
+export async function createAgencyFromGrant(grant: AgencyGrant): Promise<SyncResult> {
   const current = await currentSession();
   if (!current) throw new ConnectError("Sign in first.");
   const deps = connectDeps();
-  const grant = await exchangeCode(deps.ghl, code, deps.http);
   const { companyName, claimedBy } = await inspectGrant(deps, grant);
   const requestHeaders = await headers();
   if (claimedBy) {

@@ -34,14 +34,17 @@ import {
   syncLocations,
   unlinkHostProject,
 } from "@locus/connect";
+import { GhlError } from "@locus/ghl";
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { baseUrl, connectDeps } from "@/lib/connect";
 import { prepareExtraUsage, sendExtraUsage } from "@/lib/extra-usage";
+import { finishHeldInstall } from "@/lib/ghl-install";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext, sitesReturn } from "@/lib/next-path";
+import { integrationsReturn } from "@/lib/onboarding";
 import {
   ACTIVE_SITE_COOKIE,
   chooseActiveSite,
@@ -170,6 +173,23 @@ export async function chooseMainClient(form: FormData) {
   }
   revalidatePath("/", "layout");
   redirect("/onboarding");
+}
+
+/**
+ * Confirms a GoHighLevel marketplace install held for this browser: into the agency the page
+ * offered, or a new one. Lands on the setup (new or unfinished agencies) or Integrations.
+ */
+export async function finishGhlInstall(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fonboarding%2Finstall");
+  let query: string;
+  try {
+    query = await finishHeldInstall(text(form, "choice") === "join" ? "join" : "new");
+  } catch (error) {
+    query = `error=${encodeURIComponent(error instanceof GhlError ? "ghl" : messageOf(error))}`;
+  }
+  revalidatePath("/", "layout");
+  redirect(await integrationsReturn(query));
 }
 
 /** "Do this later" on the setup's GitHub or Vercel step. */
