@@ -43,7 +43,8 @@ export interface LocusAuthConfig {
   /**
    * Runs when Stripe says an agency's subscription is paid up (checkout finished, a plan change,
    * an overdue payment settled). The web app adds the sub-accounts that were waiting for a plan
-   * here, so nobody has to sync again by hand. A failure is logged, never sent back to Stripe.
+   * here, so nobody has to sync again by hand. It should hand the work off rather than hold up
+   * Stripe's webhook. A failure is logged, never sent back to Stripe.
    */
   onAgencyPaid?: ((organizationId: string) => Promise<void>) | undefined;
 }
@@ -266,7 +267,12 @@ export function createAuth(config: LocusAuthConfig) {
           onSubscriptionCreated: async ({ subscription }) => {
             await agencyPaid(subscription);
           },
-          onSubscriptionUpdate: async ({ subscription }) => {
+          // Every renewal is an update too; only a change of status or of plan can let in
+          // sub-accounts that were refused.
+          onSubscriptionUpdate: async ({ event, subscription }) => {
+            const changed = (event.data as { previous_attributes?: Record<string, unknown> })
+              .previous_attributes;
+            if (changed && !("status" in changed) && !("items" in changed)) return;
             await agencyPaid(subscription);
           },
           onSubscriptionCancel: async ({ subscription }) => {
