@@ -9,6 +9,7 @@ import {
   authorizeClient,
   chatKitKey,
   type SessionContext,
+  setBrainAutoSave,
   setInboxDrafts,
   verifyAgentToWebToken,
 } from "@locus/auth";
@@ -1590,6 +1591,62 @@ describe("the client's brain", () => {
     const { brain, close } = await notes(setup);
     try {
       expect(await brain.exists("/instructions.md")).toBe(false);
+    } finally {
+      close();
+    }
+  });
+  const PROPOSAL = {
+    path: "/playbooks/follow-ups.md",
+    content: "# Follow-ups\n\nLeads reply best to a text the next morning.",
+    why: "Every reply in the last month came the morning after.",
+  };
+  function proposes(id: string) {
+    mock().llm.on(
+      { userMessage: /what have you noticed/i, hasToolResult: false },
+      { toolCalls: [{ id, name: "brain_propose", arguments: JSON.stringify(PROPOSAL) }] },
+    );
+    mock().llm.on({ toolCallId: id }, { content: "Noted." });
+  }
+
+  test("a note the agent worked out waits on a card, and a no saves nothing", async () => {
+    proposes("bp-1");
+    const setup = await hostFor({ as: "owner" });
+
+    const events = await say(setup, "What have you noticed about follow-ups?", () => false);
+    expect(events.map((e) => e.type)).toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.exists(PROPOSAL.path)).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  test("a yes on the card saves the agent's note", async () => {
+    proposes("bp-3");
+    const setup = await hostFor({ as: "owner" });
+
+    const events = await say(setup, "What have you noticed about follow-ups?", () => true);
+    expect(events.map((e) => e.type)).toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.readFile(PROPOSAL.path, { encoding: "utf8" })).toContain("next morning");
+    } finally {
+      close();
+    }
+  });
+
+  test("with the owners' auto-save on, the agent's own notes save without a card", async () => {
+    proposes("bp-2");
+    const setup = await hostFor({ as: "owner" });
+    const owner = { id: "s", userId: "owner", activeOrganizationId: "org" } as SessionContext;
+    await setBrainAutoSave(db, owner, [setup.client.id], true);
+
+    const events = await say(setup, "What have you noticed about follow-ups?");
+    expect(events.map((e) => e.type)).not.toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.exists(PROPOSAL.path)).toBe(true);
     } finally {
       close();
     }

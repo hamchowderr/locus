@@ -23,7 +23,7 @@ afterEach(() => close());
 
 type Tool = {
   execute: (input: unknown, ctx: unknown) => Promise<unknown>;
-  requireApproval?: boolean;
+  requireApproval?: boolean | ((args: unknown, ctx: unknown) => Promise<boolean>);
   needsApprovalFn?: (args: unknown, ctx: unknown) => Promise<boolean>;
 };
 
@@ -39,8 +39,9 @@ const tainted = (ctx: unknown) =>
 
 describe("the brain workspace", () => {
   it("offers only the brain tools, by their brain names", async () => {
-    const { tools } = await brainTools();
-    expect(Object.keys(tools).sort()).toEqual([...BRAIN_TOOL_NAMES].sort());
+    const { brain, tools } = await brainTools();
+    const all = [...Object.keys(tools), ...Object.keys(brain.tools)];
+    expect(all.sort()).toEqual([...BRAIN_TOOL_NAMES].sort());
   });
 
   it("records the agent as the writer", async () => {
@@ -116,6 +117,79 @@ describe("the brain workspace", () => {
     await expect(search("gutter")).rejects.toThrow("database unreachable");
     brain.filesystem.notes = notes;
     expect(await search("gutter")).toContain("gutters.md");
+  });
+});
+
+type Rule = (args: unknown, ctx: unknown) => Promise<boolean>;
+
+describe("notes the agent works out itself", () => {
+  const note = {
+    path: "/playbooks/follow-ups.md",
+    content: "# Follow-ups\n\nText first.",
+    why: "x",
+  };
+  const asks = (brain: ReturnType<typeof createBrainWorkspace>, args: unknown, rc: unknown) =>
+    (brain.tools[BRAIN_TOOLS.propose] as unknown as { requireApproval: Rule }).requireApproval(
+      args,
+      { requestContext: rc },
+    );
+
+  it("wait for a person unless auto-save is on, and never past the rules every write keeps", async () => {
+    const clean = new RequestContext();
+    const dirty = new RequestContext([["tainted", true]]);
+    const off = createBrainWorkspace(db, { needsApproval: tainted });
+    expect(await asks(off, note, clean)).toBe(true);
+
+    let on = true;
+    const auto = createBrainWorkspace(db, { needsApproval: tainted, autoSave: async () => on });
+    expect(await asks(auto, note, clean)).toBe(false);
+    expect(await asks(auto, note, dirty)).toBe(true);
+    expect(await asks(auto, { ...note, path: "instructions.md" }, clean)).toBe(true);
+    // Read on every proposal: turning it off takes effect at once.
+    on = false;
+    expect(await asks(auto, note, clean)).toBe(true);
+
+    const broken = createBrainWorkspace(db, {
+      autoSave: async () => {
+        throw new Error("control database unreachable");
+      },
+    });
+    expect(await asks(broken, note, clean)).toBe(true);
+    // Code that must know which calls may pause (ForgetGhlData) counts every proposal.
+    expect(
+      auto.approvals[BRAIN_TOOLS.propose].requireApproval(note, { requestContext: clean }),
+    ).toBe(true);
+  });
+
+  it("saves the note as the agent once it runs", async () => {
+    const brain = createBrainWorkspace(db);
+    const tool = brain.tools[BRAIN_TOOLS.propose] as unknown as Tool;
+    expect(await tool.execute(note, {})).toEqual({ saved: "playbooks/follow-ups.md" });
+    expect(await brain.filesystem.readFile(note.path, { encoding: "utf8" })).toContain(
+      "Text first.",
+    );
+    const [version] = await listNoteVersions(db, "playbooks/follow-ups.md");
+    expect(version?.createdBy).toBe(AGENT_ACTOR);
+
+    // Never over a note someone already has: that is brain_edit's job, after a read.
+    const again = (await tool.execute({ ...note, content: "# Follow-ups\n\nCall." }, {})) as {
+      error?: string;
+    };
+    expect(again.error).toBeTypeOf("string");
+    expect(await brain.filesystem.readFile(note.path, { encoding: "utf8" })).toContain(
+      "Text first.",
+    );
+  });
+
+  it("is refused when the host's staff check refuses", async () => {
+    const brain = createBrainWorkspace(db, {
+      authorize: async () => {
+        throw new Error("no access");
+      },
+    });
+    const tool = brain.tools[BRAIN_TOOLS.propose] as unknown as Tool;
+    await expect(tool.execute(note, {})).rejects.toThrow("no access");
+    expect(await brain.filesystem.exists(note.path)).toBe(false);
   });
 });
 

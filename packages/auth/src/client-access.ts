@@ -1,5 +1,6 @@
 import type { ControlDb, TenantProvisioner } from "@locus/db";
 import {
+  brainAutoSave,
   inboxDrafts,
   location,
   member,
@@ -479,6 +480,50 @@ export async function setSiteBuilder(
     await db.insert(siteBuilderOff).values(changing.map((locationId) => ({ locationId })));
   }
   return changing.length;
+}
+
+/**
+ * Lets the agents of the ticked clients save the notes they work out themselves straight into
+ * the brain, or makes each such note wait for a person's yes again (the default). Owners and
+ * admins only; every client must be the agency's. Returns how many changed.
+ */
+export async function setBrainAutoSave(
+  db: ControlDb,
+  ctx: SessionContext,
+  locationIds: string[],
+  on: boolean,
+): Promise<number> {
+  const { organizationId } = await requireAgencyManager(db, ctx);
+  const wanted = [...new Set(locationIds)];
+  if (wanted.length === 0) return 0;
+  const found = await db
+    .select({ id: location.id, on: brainAutoSave.locationId })
+    .from(location)
+    .leftJoin(brainAutoSave, eq(brainAutoSave.locationId, location.id))
+    .where(and(eq(location.organizationId, organizationId), inArray(location.id, wanted)));
+  if (found.length !== wanted.length) {
+    throw new ClientAccessDenied("no such client in the session's agency");
+  }
+  const changing = found.filter((l) => (l.on !== null) !== on).map((l) => l.id);
+  if (changing.length === 0) return 0;
+  if (on) {
+    await db
+      .insert(brainAutoSave)
+      .values(changing.map((locationId) => ({ locationId })))
+      .onConflictDoNothing();
+  } else {
+    await db.delete(brainAutoSave).where(inArray(brainAutoSave.locationId, changing));
+  }
+  return changing.length;
+}
+
+/** Whether a client's agents save the notes they work out themselves without asking first. */
+export async function brainAutoSaveFor(db: ControlDb, locationId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: brainAutoSave.locationId })
+    .from(brainAutoSave)
+    .where(eq(brainAutoSave.locationId, locationId));
+  return row !== undefined;
 }
 
 /**

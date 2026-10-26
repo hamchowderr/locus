@@ -306,6 +306,9 @@ importers:
       drizzle-orm:
         specifier: 0.45.4
         version: 0.45.4(@libsql/client@0.18.0)(@opentelemetry/api@1.10.0)(kysely@0.29.6)
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
     devDependencies:
       '@libsql/client':
         specifier: 0.18.0
