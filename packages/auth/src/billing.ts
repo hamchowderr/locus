@@ -174,7 +174,15 @@ export async function seatRefusal(
   opts: { accepting?: boolean; now?: Date } = {},
 ): Promise<string | null> {
   const now = opts.now ?? new Date();
-  const { limits, plan, trialEndsAt } = await agencyEntitlement(db, organizationId, { now });
+  const { status, limits, plan, trialEndsAt } = await agencyEntitlement(db, organizationId, {
+    now,
+  });
+  // No plan (never chosen, or the trial ended): no new invitations, as no new sub-accounts.
+  if (!opts.accepting && (status === "none" || status === "trial_ended")) {
+    return status === "trial_ended"
+      ? "Your free trial has ended. Once an owner chooses a plan on the Billing page, you can invite people."
+      : "Once an owner chooses a plan on the Billing page, you can invite people.";
+  }
   const seats = limits?.seats;
   const what = trialEndsAt ? "free trial" : `${plan?.title ?? "current"} plan`;
   if (seats === null || seats === undefined) return null;
@@ -199,5 +207,5 @@ export async function seatRefusal(
       ),
     );
   if (inAgency + (open?.n ?? 0) < seats) return null;
-  return `Your ${what} includes ${seatsText(seats)}, and ${seats === 1 ? "it's" : "they're all"} taken (people in the agency and invitations not yet accepted both count). Choose a bigger plan on the Billing page, or cancel an open invitation, to invite someone else.`;
+  return `Your ${what} includes ${seatsText(seats)}, and ${seats === 1 ? "it's" : "they're all"} taken (people in the agency and invitations not yet accepted both count). To invite someone else, cancel an open invitation, or have an owner choose a bigger plan on the Billing page.`;
 }

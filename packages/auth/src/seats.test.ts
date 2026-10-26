@@ -129,4 +129,13 @@ describe("a plan's seats", () => {
       a.api.createInvitation({ body: { email: "new@agency.test", role: "member" }, headers }),
     ).resolves.toMatchObject({ email: "new@agency.test" });
   });
+
+  it("refuses invitations with no plan at all, and says why", async () => {
+    const a = auth(true);
+    const { headers, agencyId } = await ownerWithAgency(a);
+    expect(await seatRefusal(db, agencyId)).toMatch(/^Once an owner chooses a plan/);
+    await expect(
+      a.api.createInvitation({ body: { email: "new@agency.test", role: "member" }, headers }),
+    ).rejects.toMatchObject({ status: "FORBIDDEN" });
+  });
 });
