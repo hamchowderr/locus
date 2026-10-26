@@ -391,6 +391,14 @@ describe("forgetResult", () => {
     expect(
       forgetResult("perform_action", { approved: APPROVED, messageId: "m1", msg: "Hi Ann" }),
     ).toEqual({ notKept: NOT_KEPT, approved: APPROVED });
+    // The send that started this: a conversations write, wrapped by the untrusted-content screen.
+    expect(
+      forgetResult(
+        "perform_action",
+        { warning: "w", taint: TAINT_MARK, result: { approved: APPROVED, messageId: "m1" } },
+        { keepTaint: true },
+      ),
+    ).toEqual({ notKept: NOT_KEPT, approved: APPROVED, taint: TAINT_MARK });
     expect(forgetResult("perform_action", { approved: "something else" })).toEqual({
       notKept: NOT_KEPT,
     });

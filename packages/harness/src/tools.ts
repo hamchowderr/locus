@@ -42,11 +42,14 @@ export interface ToolDeps {
 export const APPROVED =
   "A person approved this change before it ran, and it has been made: it is not waiting for anyone.";
 
-/** A successful result with `APPROVED` beside it; failures are left as they are. */
+/**
+ * A successful result with `APPROVED` beside it, after GHL's fields so none of them can replace
+ * it; failures are left as they are.
+ */
 function markApproved(result: unknown): unknown {
   if (result && typeof result === "object" && "error" in result) return result;
   if (result && typeof result === "object" && !Array.isArray(result)) {
-    return { approved: APPROVED, ...result };
+    return { ...result, approved: APPROVED };
   }
   return { approved: APPROVED, result };
 }
