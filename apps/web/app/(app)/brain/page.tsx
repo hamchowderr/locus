@@ -12,6 +12,7 @@ import {
   brainOverview,
   changedBy,
   notePath,
+  versionHint,
 } from "@/lib/brain";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { createNote, deleteNote, restoreNote, saveNote } from "./actions";
@@ -252,19 +253,12 @@ function OpenNote({
                   </span>
                   <span className="block text-xs text-neutral-500">
                     {when.format(v.createdAt)} UTC
-                    {v.content
-                      ? ` · ${
-                          v.content
-                            .split("\n")
-                            .find((l) => l.trim() && !l.startsWith("#"))
-                            ?.slice(0, 80) ?? ""
-                        }`
-                      : ""}
+                    {v.content ? ` · ${versionHint(v.content, note.versions[i + 1]?.content)}` : ""}
                   </span>
                 </span>
                 {i === 0 ? (
                   <span className="text-xs text-neutral-500">Current</span>
-                ) : (
+                ) : v.content === null ? null : (
                   <form action={restoreNote}>
                     <input type="hidden" name="path" value={shown} />
                     <input type="hidden" name="version" value={v.number} />
