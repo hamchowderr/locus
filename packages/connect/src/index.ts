@@ -24,6 +24,7 @@ export {
   mintLocationToken,
   NEUTRAL_AUTHORIZE_BASE,
   readLocationName,
+  readLocationWebsite,
   refreshGrant,
 } from "./ghl-oauth.ts";
 export { GHL_SCOPES } from "./ghl-scopes.ts";

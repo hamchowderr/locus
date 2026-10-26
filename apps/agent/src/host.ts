@@ -31,7 +31,12 @@ import {
   resolveActiveClient,
   type SessionContext,
 } from "@locus/auth";
-import { BRAIN_TOOL_NAMES, createBrainWorkspace } from "@locus/brain";
+import {
+  BRAIN_TOOL_NAMES,
+  createBrainWorkspace,
+  createWebsiteReader,
+  type WebsiteReaderOptions,
+} from "@locus/brain";
 import { imagesFromEnv, SITE_BUILDER_AGENT } from "@locus/builder";
 import {
   activeSiteIdForSession,
@@ -44,7 +49,13 @@ import {
   SITE_ID_KEY,
   type SiteBuilderDeps,
 } from "@locus/builder/host";
-import { type ConnectDeps, clientGhl, clientGhlSession, siteCrm } from "@locus/connect";
+import {
+  type ConnectDeps,
+  clientGhl,
+  clientGhlSession,
+  readLocationWebsite,
+  siteCrm,
+} from "@locus/connect";
 import {
   type ControlDb,
   DbSecretStore,
@@ -134,6 +145,8 @@ export interface HostDeps {
   model: MastraModelConfig;
   /** GHL's API; tests pass a fake. */
   fetch?: typeof fetch;
+  /** How the client's website is reached (`read_client_website`); tests pass fakes. */
+  website?: Pick<WebsiteReaderOptions, "fetch" | "resolve">;
   /** The web app's origin, the only one whose pages may post to the agent. */
   origin: string;
   /** How often an open event stream re-checks access; tests shorten it. */
@@ -336,6 +349,7 @@ export function createHost({
   connect,
   model,
   fetch,
+  website: websiteAccess = {},
   origin,
   streamCheckMs = STREAM_CHECK_MS,
   logError = (message, error) =>
@@ -506,6 +520,18 @@ export function createHost({
         // The owners' switch on the Sub-accounts page, read on every proposal.
         autoSave: () => brainAutoSaveFor(db, location.id),
       });
+      // The client's own website, for drafting starter notes. Its address is read live from the
+      // sub-account's profile, after the same staff check; its text taints the run, so every note
+      // drafted from it waits for a person.
+      const website = createWebsiteReader({
+        siteUrl: async (context) =>
+          readLocationWebsite(
+            await clientGhlSession(connect, await runClient(context as never)),
+            // GHL's API as every other tool reaches it.
+            fetch ? { fetch } : {},
+          ),
+        ...websiteAccess,
+      });
       // The main chat hands longer work to threads of their own (`start_thread`), which run in
       // the background and report back. Its result is the new thread's id and title only.
       const workThreads = clientWorkThreads(
@@ -543,6 +569,7 @@ export function createHost({
           [workThreads.tool.id]: workThreads.tool,
           ...workThreads.steering,
           ...brain.tools,
+          [website.id]: website,
         },
         ownTextTools: [
           ...(builder?.ownTextTools ?? []),

@@ -192,6 +192,18 @@ export async function readLocationName(session: GhlSession, http: GhlHttp = {}):
   return res.location?.name ?? "";
 }
 
+/** The business's website from the sub-account's profile, read live; null when none is set. */
+export async function readLocationWebsite(
+  session: GhlSession,
+  http: GhlHttp = {},
+): Promise<string | null> {
+  const res = await ghlRequest<{
+    location?: { website?: string; business?: { website?: string } };
+  }>(operation("locations.get-location"), session, {}, http);
+  const site = res.location?.business?.website?.trim() || res.location?.website?.trim();
+  return site || null;
+}
+
 export interface InstalledLocation {
   ghlLocationId: string;
   name: string;
