@@ -329,9 +329,10 @@ export function visualEditsScript(origins: string[], draft = ""): string {
   }, true);
 
   document.addEventListener("keydown", function (e) {
-    // Undo and redo belong to the editor, unless a field of the page is being typed in.
+    // In select mode undo and redo belong to the editor, unless a page field is typed in.
     var key = (e.key || "").toLowerCase();
-    if (!editing && (e.ctrlKey || e.metaKey) && !e.altKey && (key === "z" || (key === "y" && !e.shiftKey)) &&
+    if (enabled && !editing && (e.ctrlKey || e.metaKey) && !e.altKey &&
+        (key === "z" || (key === "y" && e.ctrlKey && !e.metaKey && !e.shiftKey)) &&
         !(e.target && e.target.closest && e.target.closest("input, textarea, select, [contenteditable]"))) {
       e.preventDefault();
       post({ type: key === "z" && !e.shiftKey ? "undo" : "redo" });
@@ -370,18 +371,20 @@ export function visualEditsScript(origins: string[], draft = ""): string {
     }
   }
 
-  // Shows a change before it is saved. Text changes the selected copy (one element in a list
-  // can render many times), or after a reload the copy still showing the old text; attributes
+  // Shows a change before it is saved. Text changes one copy (an element in a list can render
+  // many times): the one showing the text being replaced, a selected one first; attributes
   // change every copy, as saving them would. Only the editor's own fields can be set.
   function show(change) {
     if (typeof change.target !== "string") return;
     if (change.kind === "text") {
       var value = String(change.value);
-      var picked = selected.filter(function (el) { return el.getAttribute(SRC) === change.target; });
+      // The copy showing the text being replaced: a selected one first.
+      var showing = function (el) {
+        return el.getAttribute(SRC) === change.target && plainText(el) !== null && el.textContent === change.from;
+      };
+      var picked = selected.filter(showing).slice(0, 1);
       if (picked.length === 0) {
-        each(change.target, function (el) {
-          if (picked.length === 0 && plainText(el) !== null && el.textContent === change.from) picked.push(el);
-        });
+        each(change.target, function (el) { if (picked.length === 0 && showing(el)) picked.push(el); });
       }
       picked.forEach(function (el) { if (plainText(el) !== null) el.textContent = value; });
       return;

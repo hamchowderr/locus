@@ -92,7 +92,12 @@ export function VisualEditor({
           selects more than one. Changes made here are free and don't use AI.
         </p>
       ) : edits.selection.length === 1 && edits.selection[0] ? (
-        <ItemControls item={edits.selection[0]} theme={edits.theme} onChange={edits.change} />
+        <ItemControls
+          item={edits.selection[0]}
+          theme={edits.theme}
+          generation={edits.generation}
+          onChange={edits.change}
+        />
       ) : (
         <p className="text-neutral-600">
           {edits.selection.length} items selected. Describe a change for all of them below.
@@ -220,10 +225,13 @@ const tagName = (item: SelectedItem) =>
 function ItemControls({
   item,
   theme,
+  generation,
   onChange,
 }: {
   item: SelectedItem;
   theme: Record<string, string>;
+  /** Changes on undo and redo, so the fields below start again from the item's value. */
+  generation: number;
   onChange: (edit: PendingEdit) => void;
 }) {
   const attr = (name: "src" | "alt" | "href" | "className" | "placeholder", to: string) =>
@@ -252,7 +260,7 @@ function ItemControls({
       {item.src !== null && (
         <Labeled label="Image link">
           <input
-            key={`${item.target}-src`}
+            key={`${item.target}-src-${generation}`}
             className={field}
             defaultValue={item.src}
             placeholder="https://"
@@ -263,7 +271,7 @@ function ItemControls({
       {item.alt !== null && (
         <Labeled label="Describe the image (for screen readers and search)">
           <input
-            key={`${item.target}-alt`}
+            key={`${item.target}-alt-${generation}`}
             className={field}
             defaultValue={item.alt}
             onChange={(e) => attr("alt", e.target.value)}
@@ -274,7 +282,7 @@ function ItemControls({
         <>
           <Labeled label="Link goes to">
             <input
-              key={`${item.target}-href`}
+              key={`${item.target}-href-${generation}`}
               className={field}
               defaultValue={item.href}
               placeholder="/contact or https://"
@@ -301,7 +309,7 @@ function ItemControls({
       {item.placeholder !== null && (
         <Labeled label="Hint shown in the empty field">
           <input
-            key={`${item.target}-ph`}
+            key={`${item.target}-ph-${generation}`}
             className={field}
             defaultValue={item.placeholder}
             onChange={(e) => attr("placeholder", e.target.value)}

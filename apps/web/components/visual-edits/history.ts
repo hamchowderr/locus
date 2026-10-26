@@ -93,15 +93,23 @@ export class EditHistory {
 
 /**
  * What the page has to show to go from `from` to `to`: each change that is new or different,
- * and for each one that went away, its element's value from before it.
+ * and for each one that went away, its element's value from before it. A text change's `from`
+ * is the text the page shows now, which is how the page finds the copy to change.
  */
 export function differences(from: Pending, to: Pending): PendingEdit[] {
   const out: PendingEdit[] = [];
-  for (const [key, edit] of to) if (from.get(key) !== edit) out.push(edit);
+  for (const [key, edit] of to) {
+    const was = from.get(key);
+    if (was === edit) continue;
+    if (edit.kind === "text") {
+      out.push({ ...edit, from: was?.kind === "text" ? was.to : edit.from });
+    } else {
+      out.push(edit);
+    }
+  }
   for (const [key, edit] of from) {
     if (to.has(key)) continue;
     if (edit.kind === "text") {
-      // The page shows `edit.to`; put back what the copy had.
       out.push({ kind: "text", target: edit.target, from: edit.to, to: edit.from });
     } else if (edit.kind === "newTab") {
       out.push({ ...edit, from: edit.on, on: edit.from });
@@ -110,6 +118,11 @@ export function differences(from: Pending, to: Pending): PendingEdit[] {
     }
   }
   return out;
+}
+
+/** Whether `next` holds the same change under `key` as `before` (nothing really changed). */
+export function sameAt(before: Pending, next: Pending, key: string): boolean {
+  return JSON.stringify(before.get(key) ?? null) === JSON.stringify(next.get(key) ?? null);
 }
 
 const KINDS = new Set(["text", "attr", "newTab"]);

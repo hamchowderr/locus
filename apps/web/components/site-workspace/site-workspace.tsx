@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { type ComponentProps, useEffect, useState } from "react";
 import { SitePreview } from "@/components/site-preview/site-preview";
 import { Button } from "@/components/ui/button";
-import { storedCount } from "@/components/visual-edits/use-visual-edits";
+import { storedCount, useLeaveWarning } from "@/components/visual-edits/use-visual-edits";
 import { VisualEditor } from "@/components/visual-edits/visual-editor";
 import { lastCheckFailure } from "@/lib/builder-steps";
 import { cn } from "@/lib/utils";
@@ -44,6 +44,8 @@ export function SiteWorkspace({
   // Unsaved visual edits, which wait (in this tab) when the panel is closed.
   const [unsaved, setUnsaved] = useState(0);
   useEffect(() => setUnsaved(storedCount(siteId)), [siteId]);
+  // Leaving with unsaved visual edits asks first, whether or not the panel is open.
+  useLeaveWarning(unsaved > 0);
   const [reloads, setReloads] = useState(0);
   const mode = "mode" in setting ? setting.mode : null;
   const refusal = "mode" in setting ? setting.refusal : setting.off;

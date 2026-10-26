@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { differences, EditHistory, type Pending, readStored, withEdit } from "./history";
+import { differences, EditHistory, type Pending, readStored, sameAt, withEdit } from "./history";
 import { type PendingEdit, undoKey } from "./use-visual-edits";
 
 const text = (from: string, to: string): PendingEdit => ({
@@ -65,6 +65,23 @@ describe("visual edits undo", () => {
     expect(differences(new Map(), styled)).toEqual([color("text-sm", "text-lg")]);
   });
 
+  it("finds the copy to change by the text the page shows now", () => {
+    const history = new EditHistory();
+    const hi = make(history, new Map(), text("Hello", "Hi"), 0);
+    const hey = make(history, hi, text("Hi", "Hey"), 5_000);
+    expect([...hey.values()]).toEqual([text("Hello", "Hey")]);
+    const back = history.undo(hey) as Pending;
+    // The page shows "Hey" and must go back to "Hi".
+    expect(differences(hey, back)).toEqual([text("Hey", "Hi")]);
+    expect(differences(back, hey)).toEqual([text("Hi", "Hey")]);
+  });
+
+  it("adds no step for a change that changes nothing", () => {
+    const styled = withEdit(new Map(), color("text-sm", "text-lg"));
+    const again = withEdit(styled.next, color("text-lg", "text-lg"));
+    expect(sameAt(styled.next, again.next, again.key)).toBe(true);
+  });
+
   it("knows the undo and redo keys", () => {
     const k = (key: string, more: Partial<Parameters<typeof undoKey>[0]> = {}) =>
       undoKey({ key, ctrlKey: true, metaKey: false, shiftKey: false, altKey: false, ...more });
@@ -72,6 +89,7 @@ describe("visual edits undo", () => {
     expect(k("Z", { shiftKey: true })).toBe("redo");
     expect(k("y")).toBe("redo");
     expect(k("z", { ctrlKey: false, metaKey: true })).toBe("undo");
+    expect(k("y", { ctrlKey: false, metaKey: true })).toBeNull();
     expect(k("z", { ctrlKey: false })).toBeNull();
     expect(k("s")).toBeNull();
   });
