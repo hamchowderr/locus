@@ -190,6 +190,38 @@ describe("act mode", () => {
   });
 });
 
+describe("a run that waited for an approval", () => {
+  test("resumes with its own words and the note, not the data it read", async () => {
+    mock().llm.on(
+      { userMessage: /c9: delete the duplicate/i, hasToolResult: false },
+      read("c9-read", "contacts.get-contact", "SELECT name FROM t"),
+    );
+    mock().llm.on(
+      { toolCallId: "c9-read" },
+      {
+        content: "c9 summary: the duplicate is c1.",
+        ...perform("c9-del", "contacts.delete-contact", { path: { contactId: "c1" } }),
+      },
+    );
+    mock().llm.on({ toolCallId: "c9-del" }, { content: "Deleted c1." });
+    const { controller } = await controllerFor({
+      "GET /contacts/c1": { body: { contact: { id: "c1", firstName: "Private Pat" } } },
+      "*": { body: {} },
+    });
+    const session = await openClientSession(controller, { memberId: "m1" });
+
+    expect(await send(session, "c9: delete the duplicate")).toEqual(["approval:c9-del"]);
+
+    // The request after the yes: the run's own words are there, and the note says its later
+    // steps were taken with the read's result in view.
+    const resumed = JSON.stringify(mock().llm.getRequests().at(-1)?.body);
+    expect(resumed).toContain("c9 summary: the duplicate is c1.");
+    expect(resumed).toContain(NOT_KEPT);
+    expect(resumed).not.toContain("Private Pat");
+    expect(NOT_KEPT).toContain("You had the whole result when you took your next steps");
+  });
+});
+
 describe("ask mode", () => {
   test("only reads are offered", async () => {
     mock().llm.on({ userMessage: /c4: how many forms/i }, { content: "I can check that." });

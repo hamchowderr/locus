@@ -59,7 +59,7 @@ export function isInboundMessage(value: InboundMessage): boolean {
 
 export function draftBrief(message: InboundMessage): string {
   return `A contact just wrote to the sub-account: a new ${message.channel} message in conversation ${message.conversationId} (contact ${message.contactId}, message ${message.messageId}).
-Read the conversation's latest messages with the conversations skill, then draft a reply and send it on the same channel with conversations.send-a-new-message: it waits for a person to approve it, so draft it as you would send it. Say in one line what the contact wants. If no reply is needed (spam, a thank-you, an automated message, a contact who opted out), send nothing and say why.`;
+Read the conversation's latest messages with the conversations skill. Then, before you send anything, say in one line what the contact wants: your own words are kept while the send waits, and what you read is not. Draft a reply and send it on the same channel with conversations.send-a-new-message: it waits for a person to approve it, so draft it as you would send it. If no reply is needed (spam, a thank-you, an automated message, a contact who opted out), send nothing and say why.`;
 }
 
 const OPEN = new Set(["queued", "working", "needs_you"]);
