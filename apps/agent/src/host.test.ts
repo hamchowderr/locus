@@ -50,6 +50,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   connectorsOffIn,
   createHost,
+  type HostDeps,
   PREFIX,
   reportFailure,
   sessionFromKitToken,
@@ -166,16 +167,21 @@ async function secondAgencyFor(
   return { id: "s3", userId: "owner2", activeOrganizationId: "org2", activeLocationId: "client-b" };
 }
 
-async function hostFor(signedIn: { as: string | null }, model?: MastraModelConfig) {
+async function hostFor(
+  signedIn: { as: string | null },
+  model?: MastraModelConfig,
+  extra: { routes?: Parameters<typeof createFakeGhl>[0]; website?: HostDeps["website"] } = {},
+) {
   const { connect, client, sessions } = await agency();
   sessions.owner2 = await secondAgencyFor(connect, client.ghlLocationId);
-  const ghl = createFakeGhl({ "*": { body: {} } });
+  const ghl = createFakeGhl({ "*": { body: {} }, ...extra.routes });
   const host = createHost({
     db,
     session: async () => (signedIn.as ? (sessions[signedIn.as] ?? null) : null),
     connect,
     model: model ?? { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
     fetch: ghl.fetch,
+    ...(extra.website ? { website: extra.website } : {}),
     origin: "http://locus.test",
   });
   const chat = new MastraClient({
@@ -1631,6 +1637,56 @@ describe("the client's brain", () => {
     const { brain, close } = await notes(setup);
     try {
       expect(await brain.readFile(PROPOSAL.path, { encoding: "utf8" })).toContain("next morning");
+    } finally {
+      close();
+    }
+  });
+
+  test("notes drafted from the client's website wait for a yes, and the site is read live", async () => {
+    mock().llm.on(
+      { userMessage: /draft notes from our website/i, hasToolResult: false },
+      { toolCalls: [{ id: "web-1", name: "read_client_website", arguments: "{}" }] },
+    );
+    mock().llm.on(
+      { toolCallId: "web-1" },
+      {
+        toolCalls: [
+          {
+            id: "web-2",
+            name: "brain_write",
+            arguments: JSON.stringify({
+              path: "/business/services.md",
+              content: "# Services\n\nRoof repair from $450.",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "web-2" }, { content: "Drafted your services note." });
+    const asked: string[] = [];
+    const setup = await hostFor({ as: "owner" }, undefined, {
+      routes: {
+        // Any GHL read answers with the sub-account's profile, as get-location does.
+        "*": { body: { location: { business: { website: "bright.test" } } } },
+      },
+      website: {
+        fetch: (async (url: URL | string) => {
+          asked.push(String(url));
+          return new Response("<h1>Services</h1><p>Roof repair from $450.</p>", {
+            headers: { "content-type": "text/html" },
+          });
+        }) as typeof fetch,
+        resolve: async () => ["93.184.216.34"],
+      },
+    });
+
+    const events = await say(setup, "Draft notes from our website", () => false);
+    expect(asked).toEqual(["https://bright.test/"]);
+    // The site's text is other people's words: the note waits, and a no saves nothing.
+    expect(events.map((e) => e.type)).toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.exists("/business/services.md")).toBe(false);
     } finally {
       close();
     }
