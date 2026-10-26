@@ -136,6 +136,18 @@ export function newNotePath(folder: string, name: string): string {
   return `${folder}/${slug}.md`;
 }
 
+/**
+ * A line that tells one version from the one before it: the first line it added, or else its
+ * first line of text. Headings are skipped, so most notes don't all read as their title.
+ */
+export function versionHint(content: string, older: string | null | undefined): string {
+  const lines = content.split("\n").map((l) => l.trim());
+  const text = lines.filter((l) => l && !l.startsWith("#"));
+  const before = new Set((older ?? "").split("\n").map((l) => l.trim()));
+  const added = text.find((l) => !before.has(l));
+  return (added ?? text[0] ?? "").slice(0, 80);
+}
+
 const listed = (n: {
   path: string;
   content: string;
@@ -262,9 +274,10 @@ export async function restoreBrainNote(
   if (!Number.isInteger(number) || number < 1) throw new BrainInputError("Choose a version.");
   await withTenant(deps, client, async (db) => {
     const versions = await listNoteVersions(db, path);
-    if (!versions.some((v) => v.number === number)) {
-      throw new BrainInputError("That version isn't in this note's history.");
-    }
+    const version = versions.find((v) => v.number === number);
+    if (!version) throw new BrainInputError("That version isn't in this note's history.");
+    // Putting back a deletion would only delete the note again.
+    if (version.content === null) throw new BrainInputError("Choose a version that has text.");
     await restoreNoteVersion(db, path, number, personActor(userId));
   });
 }

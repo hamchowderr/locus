@@ -24,6 +24,7 @@ import {
   newNotePath,
   restoreBrainNote,
   saveBrainNote,
+  versionHint,
 } from "./brain.ts";
 
 let dir: string;
@@ -127,9 +128,23 @@ describe("the brain as people see it", () => {
       deleteBrainNote(deps, clientA, "owner", "playbooks/follow-ups.md"),
     ).rejects.toThrow(BrainInputError);
 
+    // Version 2 is the deletion: putting it back would only delete the note again.
+    await expect(
+      restoreBrainNote(deps, clientA, "owner", "playbooks/follow-ups.md", 2),
+    ).rejects.toThrow("Choose a version that has text.");
     await restoreBrainNote(deps, clientA, "owner", "playbooks/follow-ups.md", 1);
     note = await brainNote(deps, clientA, "playbooks/follow-ups.md");
     expect(note?.content).toContain("Text.");
+  });
+
+  it("tells versions apart by the line each one added", () => {
+    const first = "# Test\n\nTest line one.";
+    const second = "# Test\n\nTest line one.\nTest line two.";
+    expect(versionHint(first, undefined)).toBe("Test line one.");
+    expect(versionHint(second, first)).toBe("Test line two.");
+    // A version that only took lines out has nothing new: its first line stands for it.
+    expect(versionHint(first, second)).toBe("Test line one.");
+    expect(versionHint("# Only a title", null)).toBe("");
   });
 
   it("starts a note from a folder and a name, and never over one that exists", async () => {
