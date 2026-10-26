@@ -252,8 +252,11 @@ export type Allowance =
     };
 
 function entitlementRefusal(e: Entitlement): string {
-  return e.status === "past_due" || e.status === "unpaid"
-    ? "Your Locus payment is overdue. Update it on the Billing page to keep generating sites."
+  if (e.status === "past_due" || e.status === "unpaid") {
+    return "Your Locus payment is overdue. Update it on the Billing page to keep generating sites.";
+  }
+  return e.status === "trial_ended"
+    ? "Your free trial has ended. Choose a Locus plan on the Billing page to keep going."
     : "Choose a Locus plan on the Billing page to generate sites.";
 }
 
@@ -277,7 +280,7 @@ export async function checkAllowance(
 ): Promise<Allowance> {
   const { organizationId, locationId } = idsOf(client);
   const now = opts.now ?? new Date();
-  const entitlement = await agencyEntitlement(db, organizationId);
+  const entitlement = await agencyEntitlement(db, organizationId, { now });
   if (!entitlement.entitled) return { ok: false, reason: entitlementRefusal(entitlement) };
 
   const limit = await limitRow(db, locationId);
@@ -412,7 +415,7 @@ export async function recordUsage(
   const credits = creditsFor(record.usage);
   const { kind, ...detail } = record.usage;
   const id = randomUUID();
-  const { limits } = await agencyEntitlement(db, organizationId);
+  const { limits } = await agencyEntitlement(db, organizationId, { now });
   const overage = await overageInEffect(db, organizationId);
   const included = overage ? (limits?.creditsPerMonth ?? null) : null;
   const inMonth = and(eq(usageMonth.organizationId, organizationId), eq(usageMonth.month, period));
