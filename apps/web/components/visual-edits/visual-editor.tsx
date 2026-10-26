@@ -19,7 +19,8 @@ const field = "w-full rounded-md border border-neutral-300 px-2 py-1 text-sm";
  * Visual edits for a site's preview, like HighLevel's: open it and click anything on the page
  * to select it (Shift-click for more), double-click text to type over it, or change it in this
  * panel. Changes show in the preview at once and cost nothing; Ctrl+Z undoes them, Save keeps
- * them as a new version, Discard throws them away. They survive closing the panel until then. "Ask the site builder" sends the selection and a request
+ * them as a new version, Discard throws them away (Undo brings them back). Closing the panel
+ * keeps them, and their undo history, until then. "Ask the site builder" sends the selection and a request
  * to the site's chat beside the preview, which uses AI credits.
  */
 export function VisualEditor({
