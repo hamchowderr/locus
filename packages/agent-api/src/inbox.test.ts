@@ -25,8 +25,10 @@ describe("a drafted reply's brief", () => {
 
   test("says a returned send was approved and went out", () => {
     // A run resumed after the yes said the reply was still waiting for approval.
-    expect(brief).toMatch(/once it returns, the reply has been sent/);
+    expect(brief).toMatch(/approved it and it was made, the reply has been sent/);
     // The next one took back its own summary, as if it had never read the conversation.
     expect(brief).toMatch(/do not review or correct what you wrote before the yes/);
+    // A send GHL refused returns an error rather than the approved note: it was not sent.
+    expect(brief).toMatch(/If it returns an error, say in one line that it was not sent/);
   });
 });
