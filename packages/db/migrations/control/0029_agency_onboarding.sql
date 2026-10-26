@@ -8,3 +8,5 @@ CREATE TABLE IF NOT EXISTS `agency_onboarding` (
 	FOREIGN KEY (`organization_id`) REFERENCES `organization`(`id`) ON UPDATE no action ON DELETE cascade,
 	FOREIGN KEY (`main_location_id`) REFERENCES `location`(`id`) ON UPDATE no action ON DELETE set null
 );
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS `agency_onboarding_main_location_idx` ON `agency_onboarding` (`main_location_id`);
