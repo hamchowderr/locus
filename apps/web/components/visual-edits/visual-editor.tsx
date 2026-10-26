@@ -1,6 +1,6 @@
 "use client";
 
-import { MousePointerClick, Save, Sparkles, Undo2 } from "lucide-react";
+import { MousePointerClick, Redo2, Save, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -16,10 +16,10 @@ import {
 const field = "w-full rounded-md border border-neutral-300 px-2 py-1 text-sm";
 
 /**
- * Visual edits for a site's preview, like HighLevel's: turn it on, click anything on the page
+ * Visual edits for a site's preview, like HighLevel's: open it and click anything on the page
  * to select it (Shift-click for more), double-click text to type over it, or change it in this
- * panel. Changes show in the preview at once and cost nothing; Save keeps them as a new
- * version, Discard throws them away. "Ask the site builder" sends the selection and a request
+ * panel. Changes show in the preview at once and cost nothing; Ctrl+Z undoes them, Save keeps
+ * them as a new version, Discard throws them away. They survive closing the panel until then. "Ask the site builder" sends the selection and a request
  * to the site's chat beside the preview, which uses AI credits.
  */
 export function VisualEditor({
@@ -30,6 +30,7 @@ export function VisualEditor({
   asking: chatBusy,
   editable,
   onSaved,
+  onPendingChange,
   className,
 }: {
   siteId: string;
@@ -42,6 +43,8 @@ export function VisualEditor({
   /** False when the preview shows an older version, which can't be edited in place. */
   editable: boolean;
   onSaved?: (result: SaveResult) => void;
+  /** How many changes aren't saved yet, whenever that changes. */
+  onPendingChange?: (count: number) => void;
   className?: string;
 }) {
   const edits = useVisualEdits({ siteId, frame, previewUrl, onSaved });
@@ -53,6 +56,7 @@ export function VisualEditor({
     if (edits.selection.length > 0) setAsking(true);
   }, [edits.selection.length]);
   const count = edits.pending.length;
+  useEffect(() => onPendingChange?.(count), [count, onPendingChange]);
 
   return (
     <aside className={cn("flex w-80 shrink-0 flex-col gap-3 overflow-y-auto text-sm", className)}>
@@ -67,7 +71,7 @@ export function VisualEditor({
           onClick={() => edits.setMode(!edits.enabled)}
         >
           <MousePointerClick data-icon="inline-start" />
-          {edits.enabled ? "Selecting" : "Select items"}
+          {edits.enabled ? "Selecting" : "Select"}
         </Button>
       </div>
       {!editable ? (
@@ -79,12 +83,13 @@ export function VisualEditor({
         <p className="text-neutral-600">Visual edits start once the preview has loaded.</p>
       ) : !edits.enabled ? (
         <p className="text-neutral-600">
-          Turn on <strong>Select items</strong>, then click anything on the page to change it.
-          Double-click text to type over it. Changes made here are free and don't use AI.
+          The page works as usual, so you can follow links and open menus. Turn on{" "}
+          <strong>Select</strong> to change items again.
         </p>
       ) : edits.selection.length === 0 ? (
         <p className="text-neutral-600">
-          Click an item on the page. Shift-click to select more than one.
+          Click anything on the page to change it, or double-click text to type over it. Shift-click
+          selects more than one. Changes made here are free and don't use AI.
         </p>
       ) : edits.selection.length === 1 && edits.selection[0] ? (
         <ItemControls item={edits.selection[0]} theme={edits.theme} onChange={edits.change} />
@@ -108,14 +113,40 @@ export function VisualEditor({
       )}
 
       {(count > 0 || edits.problem || edits.failures.length > 0 || saved) && <Separator />}
-      {count > 0 && (
+      {(count > 0 || edits.canUndo || edits.canRedo) && (
         <div className="flex flex-col gap-2">
-          <p>{count === 1 ? "1 change" : `${count} changes`} not saved yet.</p>
-          <div className="flex gap-2">
+          <p>
+            {count === 0
+              ? "No changes waiting to be saved."
+              : `${count === 1 ? "1 change" : `${count} changes`} not saved yet.`}
+          </p>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               size="sm"
-              disabled={edits.saving}
+              variant="outline"
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+              disabled={edits.saving || !edits.canUndo}
+              onClick={edits.undo}
+            >
+              <Undo2 />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              title="Redo (Ctrl+Shift+Z)"
+              aria-label="Redo"
+              disabled={edits.saving || !edits.canRedo}
+              onClick={edits.redo}
+            >
+              <Redo2 />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={edits.saving || count === 0}
               onClick={async () => {
                 setSaved(null);
                 setSaved(await edits.save());
@@ -128,10 +159,10 @@ export function VisualEditor({
               type="button"
               size="sm"
               variant="outline"
-              disabled={edits.saving}
+              disabled={edits.saving || count === 0}
               onClick={edits.discard}
             >
-              <Undo2 data-icon="inline-start" />
+              <Trash2 data-icon="inline-start" />
               Discard
             </Button>
           </div>

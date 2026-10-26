@@ -120,7 +120,7 @@ export function editorOrigin(url: string | null | undefined): string | null {
 /**
  * Runs inside the preview page. It does nothing until the Locus editor framing the page sends
  * `enable`; then hovering outlines elements, a click selects one (Shift or Ctrl/Cmd adds more),
- * and a double-click edits plain text in place. It only reports what was clicked and shows
+ * and a double-click edits plain text in place; Ctrl+Z and Ctrl+Y go to the editor. It only reports what was clicked and shows
  * changes the editor sends (text and a few attributes, never anything that runs); saving
  * happens in Locus. It holds no credentials and only talks to the window that framed it, and
  * only when that window is one of `origins` (the Locus web app).
@@ -329,6 +329,14 @@ export function visualEditsScript(origins: string[], draft = ""): string {
   }, true);
 
   document.addEventListener("keydown", function (e) {
+    // Undo and redo belong to the editor, unless a field of the page is being typed in.
+    var key = (e.key || "").toLowerCase();
+    if (!editing && (e.ctrlKey || e.metaKey) && !e.altKey && (key === "z" || (key === "y" && !e.shiftKey)) &&
+        !(e.target && e.target.closest && e.target.closest("input, textarea, select, [contenteditable]"))) {
+      e.preventDefault();
+      post({ type: key === "z" && !e.shiftKey ? "undo" : "redo" });
+      return;
+    }
     if (!enabled) return;
     if (editing) {
       if (e.key === "Escape") { e.preventDefault(); finishEditing(true); }
