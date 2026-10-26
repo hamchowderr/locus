@@ -24,6 +24,7 @@ import {
   writeAppAccess,
 } from "@locus/db";
 import {
+  agencyTrial,
   session as authSession,
   location,
   member,
@@ -724,6 +725,25 @@ describe("the chat kit", () => {
     const text = await res.text();
     expect(text).toContain(SCRIPTED_REPLY);
     expect(text).toContain('"type":"__done__"');
+  });
+
+  test("once the agency's free trial ends unpaid, a message is refused with the reason", async () => {
+    const { host } = await hostFor({ as: "owner" }, await scriptedModel());
+    await db.insert(agencyTrial).values({
+      organizationId: "org",
+      startedByUserId: "owner",
+      startedAt: new Date(Date.now() - 4 * 86_400_000),
+      endsAt: new Date(Date.now() - 86_400_000),
+    });
+    const res = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/stream`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "Hello there" }),
+      }),
+    );
+    expect(res.status).toBe(402);
+    expect(((await res.json()) as { error: string }).error).toMatch(/free trial has ended/);
   });
 
   test("a message may carry attachments larger than other posts", async () => {
