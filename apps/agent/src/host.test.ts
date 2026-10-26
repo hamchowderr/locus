@@ -9,9 +9,11 @@ import {
   authorizeClient,
   chatKitKey,
   type SessionContext,
+  setBrainAutoSave,
   setInboxDrafts,
   verifyAgentToWebToken,
 } from "@locus/auth";
+import { BrainFilesystem } from "@locus/brain";
 import { chooseActiveSite, openClientDb, remoteSiteRuntimes } from "@locus/builder/host";
 import { connectAgency, createStubGhl, STUB_CODE } from "@locus/connect";
 import {
@@ -37,6 +39,7 @@ import {
   E2BRuntimeProvider,
   FakeRuntimeProvider,
   handleSandboxRequest,
+  LoggedRuntimeProvider,
 } from "@locus/sandbox";
 import { MemorySecretStore } from "@locus/secrets";
 import { createFakeGhl, useAimock } from "@locus/testing";
@@ -47,6 +50,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   connectorsOffIn,
   createHost,
+  type HostDeps,
   PREFIX,
   reportFailure,
   sessionFromKitToken,
@@ -163,16 +167,21 @@ async function secondAgencyFor(
   return { id: "s3", userId: "owner2", activeOrganizationId: "org2", activeLocationId: "client-b" };
 }
 
-async function hostFor(signedIn: { as: string | null }, model?: MastraModelConfig) {
+async function hostFor(
+  signedIn: { as: string | null },
+  model?: MastraModelConfig,
+  extra: { routes?: Parameters<typeof createFakeGhl>[0]; website?: HostDeps["website"] } = {},
+) {
   const { connect, client, sessions } = await agency();
   sessions.owner2 = await secondAgencyFor(connect, client.ghlLocationId);
-  const ghl = createFakeGhl({ "*": { body: {} } });
+  const ghl = createFakeGhl({ "*": { body: {} }, ...extra.routes });
   const host = createHost({
     db,
     session: async () => (signedIn.as ? (sessions[signedIn.as] ?? null) : null),
     connect,
     model: model ?? { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
     fetch: ghl.fetch,
+    ...(extra.website ? { website: extra.website } : {}),
     origin: "http://locus.test",
   });
   const chat = new MastraClient({
@@ -181,7 +190,7 @@ async function hostFor(signedIn: { as: string | null }, model?: MastraModelConfi
     retries: 0,
     fetch: (input, init) => host.fetch(new Request(input, init)),
   });
-  return { host, chat, ghl, client };
+  return { host, chat, ghl, client, connect };
 }
 
 describe("the agent server", () => {
@@ -1213,14 +1222,19 @@ describe("the site builder's sandboxes", () => {
     const env = { LOCUS_SANDBOX_PROVIDER: "daytona", DAYTONA_API_KEY: "k" };
     const sandboxes = siteSandboxes(env, webApp);
     expect(sandboxes.openRuntime).toBeUndefined();
-    expect(sandboxes.runtimes()).toBeInstanceOf(DaytonaRuntimeProvider);
+    expect(sandboxes.runtimes()).toBeInstanceOf(LoggedRuntimeProvider);
+    expect((sandboxes.runtimes() as LoggedRuntimeProvider).inner).toBeInstanceOf(
+      DaytonaRuntimeProvider,
+    );
     expect(sandboxes.runtimes()).toBe(sandboxes.runtimes());
   });
 
   test("open here on E2B when LOCUS_SANDBOX_PROVIDER says so", () => {
     const sandboxes = siteSandboxes({ LOCUS_SANDBOX_PROVIDER: "e2b", E2B_API_KEY: "k" }, webApp);
     expect(sandboxes.openRuntime).toBeUndefined();
-    expect(sandboxes.runtimes()).toBeInstanceOf(E2BRuntimeProvider);
+    expect((sandboxes.runtimes() as LoggedRuntimeProvider).inner).toBeInstanceOf(
+      E2BRuntimeProvider,
+    );
   });
 
   test("an unknown provider is no crash: it stays on the web app, and the settings check says so", () => {
@@ -1435,5 +1449,262 @@ describe("new messages from GHL", () => {
     expect(await (await deliver({ ...message, conversationId: "conv-10" })).json()).toEqual({
       outcome: "off",
     });
+  });
+});
+
+describe("the client's brain", () => {
+  /** Sends one message on the owner's chat and waits for the run to end, answering approvals. */
+  async function say(
+    setup: Awaited<ReturnType<typeof hostFor>>,
+    text: string,
+    approve?: (toolCallId: string) => boolean,
+  ) {
+    const session = setup.chat
+      .getAgentController("locus")
+      .session(`client:${setup.client.ghlLocationId}`);
+    await session.create();
+    const events: { type: string; toolCallId?: string }[] = [];
+    const done = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("the run never ended")), 10_000);
+      void session.subscribe({
+        onEvent: (event) => {
+          const e = event as { type: string; toolCallId?: string };
+          events.push(e);
+          if (e.type === "tool_approval_required" && e.toolCallId) {
+            void session.approveTool(e.toolCallId, approve?.(e.toolCallId) ?? false);
+          }
+          if (e.type === "agent_end") {
+            clearTimeout(timer);
+            resolve();
+          }
+        },
+      });
+    });
+    await session.sendMessage(text);
+    await done;
+    return events;
+  }
+
+  async function notes(setup: Awaited<ReturnType<typeof hostFor>>) {
+    const owner = { id: "s", userId: "owner", activeOrganizationId: "org" } as SessionContext;
+    const tenant = await openClientDb(
+      setup.connect.provisioner,
+      await authorizeClient(db, owner, setup.client.id),
+    );
+    return { brain: new BrainFilesystem(tenant), close: () => tenant.$client.close() };
+  }
+
+  const systemOf = (request: { body: unknown } | undefined) =>
+    JSON.stringify(
+      (request?.body as { messages?: { role: string }[] } | undefined)?.messages?.filter(
+        (m) => m.role === "system",
+      ) ?? (request?.body as { system?: unknown } | undefined)?.system,
+    );
+
+  test("a fact the person gives is saved at once, and the next run sees it listed", async () => {
+    mock().llm.on(
+      { userMessage: /we close at 5/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "br-1",
+            name: "brain_write",
+            arguments: JSON.stringify({
+              path: "/business/hours.md",
+              content: "# Hours\n\nOpen 8 to 5, Monday to Friday.",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "br-1" }, { content: "Saved your hours." });
+    mock().llm.on({ userMessage: /when are we open/i }, { content: "8 to 5 on weekdays." });
+    const setup = await hostFor({ as: "owner" });
+
+    const events = await say(setup, "Remember we close at 5 on weekdays");
+    expect(events.map((e) => e.type)).not.toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.readFile("/business/hours.md", { encoding: "utf8" })).toContain(
+        "Open 8 to 5",
+      );
+    } finally {
+      close();
+    }
+
+    await say(setup, "When are we open?");
+    const asked = mock()
+      .llm.getRequests()
+      .filter((r) => /when are we open/i.test(JSON.stringify(r.body)))
+      .at(-1);
+    expect(systemOf(asked)).toContain("business/hours.md: Open 8 to 5, Monday to Friday.");
+  });
+
+  test("reading and searching the brain never asks", async () => {
+    mock().llm.on(
+      { userMessage: /what do our notes say/i, hasToolResult: false },
+      {
+        toolCalls: [
+          { id: "br-3", name: "brain_search", arguments: JSON.stringify({ query: "hours" }) },
+          {
+            id: "br-4",
+            name: "brain_read",
+            arguments: JSON.stringify({ path: "/business/hours.md" }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "br-4" }, { content: "Open 8 to 5." });
+    const setup = await hostFor({ as: "owner" });
+    const { brain, close } = await notes(setup);
+    try {
+      await brain.writeFile("/business/hours.md", "# Hours\n\nOpen 8 to 5.");
+    } finally {
+      close();
+    }
+
+    const events = await say(setup, "What do our notes say about hours?");
+    expect(events.map((e) => e.type)).not.toContain("tool_approval_required");
+    const searched = mock()
+      .llm.getRequests()
+      .find(
+        (r) => /br-4/.test(JSON.stringify(r.body)) && /Open 8 to 5/.test(JSON.stringify(r.body)),
+      );
+    expect(JSON.stringify(searched?.body)).toContain("/business/hours.md: # Hours");
+  });
+
+  test("changing the client's instructions waits for a yes", async () => {
+    mock().llm.on(
+      { userMessage: /from now on/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "br-2",
+            name: "brain_write",
+            arguments: JSON.stringify({
+              path: "/instructions.md",
+              content: "Never offer discounts.",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "br-2" }, { content: "Okay." });
+    const setup = await hostFor({ as: "owner" });
+
+    const events = await say(setup, "From now on never offer discounts", () => false);
+    expect(events.map((e) => e.type)).toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.exists("/instructions.md")).toBe(false);
+    } finally {
+      close();
+    }
+  });
+  const PROPOSAL = {
+    path: "/playbooks/follow-ups.md",
+    content: "# Follow-ups\n\nLeads reply best to a text the next morning.",
+    why: "Every reply in the last month came the morning after.",
+  };
+  function proposes(id: string) {
+    mock().llm.on(
+      { userMessage: /what have you noticed/i, hasToolResult: false },
+      { toolCalls: [{ id, name: "brain_propose", arguments: JSON.stringify(PROPOSAL) }] },
+    );
+    mock().llm.on({ toolCallId: id }, { content: "Noted." });
+  }
+
+  test("a note the agent worked out waits on a card, and a no saves nothing", async () => {
+    proposes("bp-1");
+    const setup = await hostFor({ as: "owner" });
+
+    const events = await say(setup, "What have you noticed about follow-ups?", () => false);
+    expect(events.map((e) => e.type)).toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.exists(PROPOSAL.path)).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  test("a yes on the card saves the agent's note", async () => {
+    proposes("bp-3");
+    const setup = await hostFor({ as: "owner" });
+
+    const events = await say(setup, "What have you noticed about follow-ups?", () => true);
+    expect(events.map((e) => e.type)).toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.readFile(PROPOSAL.path, { encoding: "utf8" })).toContain("next morning");
+    } finally {
+      close();
+    }
+  });
+
+  test("notes drafted from the client's website wait for a yes, and the site is read live", async () => {
+    mock().llm.on(
+      { userMessage: /draft notes from our website/i, hasToolResult: false },
+      { toolCalls: [{ id: "web-1", name: "read_client_website", arguments: "{}" }] },
+    );
+    mock().llm.on(
+      { toolCallId: "web-1" },
+      {
+        toolCalls: [
+          {
+            id: "web-2",
+            name: "brain_write",
+            arguments: JSON.stringify({
+              path: "/business/services.md",
+              content: "# Services\n\nRoof repair from $450.",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "web-2" }, { content: "Drafted your services note." });
+    const asked: string[] = [];
+    const setup = await hostFor({ as: "owner" }, undefined, {
+      routes: {
+        // Any GHL read answers with the sub-account's profile, as get-location does.
+        "*": { body: { location: { business: { website: "bright.test" } } } },
+      },
+      website: {
+        fetch: (async (url: URL | string) => {
+          asked.push(String(url));
+          return new Response("<h1>Services</h1><p>Roof repair from $450.</p>", {
+            headers: { "content-type": "text/html" },
+          });
+        }) as typeof fetch,
+        resolve: async () => ["93.184.216.34"],
+      },
+    });
+
+    const events = await say(setup, "Draft notes from our website", () => false);
+    expect(asked).toEqual(["https://bright.test/"]);
+    // The site's text is other people's words: the note waits, and a no saves nothing.
+    expect(events.map((e) => e.type)).toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.exists("/business/services.md")).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  test("with the owners' auto-save on, the agent's own notes save without a card", async () => {
+    proposes("bp-2");
+    const setup = await hostFor({ as: "owner" });
+    const owner = { id: "s", userId: "owner", activeOrganizationId: "org" } as SessionContext;
+    await setBrainAutoSave(db, owner, [setup.client.id], true);
+
+    const events = await say(setup, "What have you noticed about follow-ups?");
+    expect(events.map((e) => e.type)).not.toContain("tool_approval_required");
+    const { brain, close } = await notes(setup);
+    try {
+      expect(await brain.exists(PROPOSAL.path)).toBe(true);
+    } finally {
+      close();
+    }
   });
 });

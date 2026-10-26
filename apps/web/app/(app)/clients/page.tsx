@@ -1,4 +1,5 @@
 import {
+  brainAutoSaveFor,
   ClientAccessDenied,
   inboxDraftsFor,
   listAccessibleClients,
@@ -6,7 +7,12 @@ import {
   resolveActiveClient,
 } from "@locus/auth";
 import { redirect } from "next/navigation";
-import { chooseClient, switchInboxDrafts, switchSiteBuilder } from "@/app/actions";
+import {
+  chooseClient,
+  switchBrainAutoSave,
+  switchInboxDrafts,
+  switchSiteBuilder,
+} from "@/app/actions";
 import { Button, Notice, Page } from "@/app/ui";
 import { checkClientConnection } from "@/lib/connect";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
@@ -14,12 +20,18 @@ import { currentSession, locus, sessionContext } from "@/lib/locus";
 export default async function Clients({
   searchParams,
 }: {
-  searchParams: Promise<{ error?: string; builder?: string; drafts?: string; changed?: string }>;
+  searchParams: Promise<{
+    error?: string;
+    builder?: string;
+    drafts?: string;
+    notes?: string;
+    changed?: string;
+  }>;
 }) {
   const current = await currentSession();
   if (!current) redirect("/sign-in");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
-  const { error, builder, drafts, changed } = await searchParams;
+  const { error, builder, drafts, notes, changed } = await searchParams;
   const ctx = sessionContext(current);
   const clients = await listAccessibleClients(locus().db, ctx).catch((e) => {
     // Removed from the agency: nothing to choose, rather than an error page.
@@ -44,6 +56,15 @@ export default async function Clients({
       ? (
           await Promise.all(
             clients.map(async (c) => ((await inboxDraftsFor(locus().db, c.id)) ? c.id : null)),
+          )
+        ).filter((id): id is string => id !== null)
+      : [],
+  );
+  const autoSaving = new Set(
+    manager
+      ? (
+          await Promise.all(
+            clients.map(async (c) => ((await brainAutoSaveFor(locus().db, c.id)) ? c.id : null)),
           )
         ).filter((id): id is string => id !== null)
       : [],
@@ -75,6 +96,12 @@ export default async function Clients({
         <Notice tone="info">
           Drafted replies turned {drafts} for {count} {count === 1 ? "sub-account" : "sub-accounts"}
           .
+        </Notice>
+      )}
+      {(notes === "on" || notes === "off") && (
+        <Notice tone="info">
+          Saving notes without asking turned {notes} for {count}{" "}
+          {count === 1 ? "sub-account" : "sub-accounts"}.
         </Notice>
       )}
       {clients.length === 0 ? (
@@ -155,6 +182,38 @@ export default async function Clients({
             </Button>
             <Button name="on" value="no">
               Turn off
+            </Button>
+          </div>
+        </form>
+      )}
+      {manager && clients.length > 0 && (
+        <form
+          action={switchBrainAutoSave}
+          className="space-y-3 rounded-md border border-neutral-200 p-4"
+        >
+          <h2 className="font-semibold">Notes the agent works out</h2>
+          <p className="text-sm text-neutral-600">
+            Each sub-account's agent keeps notes about the business. What someone tells it is saved
+            at once. A note it works out by itself waits for a yes on a card in the chat, unless you
+            turn this on. Changes to the sub-account's instructions always wait.
+          </p>
+          <div className="space-y-1">
+            {clients.map((client) => (
+              <label key={client.id} className="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="locationId" value={client.id} />
+                {client.name}
+                <span className="text-neutral-500">
+                  · {autoSaving.has(client.id) ? "saves without asking" : "asks first"}
+                </span>
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-3">
+            <Button name="on" value="yes">
+              Save without asking
+            </Button>
+            <Button name="on" value="no">
+              Ask first
             </Button>
           </div>
         </form>

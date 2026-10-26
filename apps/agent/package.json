@@ -15,6 +15,7 @@
     "@libsql/client": "0.18.0",
     "@locus/agent-api": "workspace:*",
     "@locus/auth": "workspace:*",
+    "@locus/brain": "workspace:*",
     "@locus/builder": "workspace:*",
     "@locus/connect": "workspace:*",
     "@locus/db": "workspace:*",

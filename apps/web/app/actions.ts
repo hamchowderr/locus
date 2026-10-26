@@ -12,6 +12,7 @@ import {
   requireAgencyManager,
   resolveActiveClient,
   selectClient,
+  setBrainAutoSave,
   setComped,
   setInboxDrafts,
   setMemberClients,
@@ -638,6 +639,31 @@ export async function switchInboxDrafts(form: FormData) {
   }
   revalidatePath("/clients");
   redirect(`/clients?drafts=${on ? "on" : "off"}&changed=${ids.length}`);
+}
+
+/**
+ * Lets the agents of the sub-accounts ticked on the Clients page save the notes they work out
+ * themselves without asking, or makes each one wait for a yes again. Owners and admins only
+ * (`setBrainAutoSave`).
+ */
+export async function switchBrainAutoSave(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fclients");
+  const on = form.get("on") === "yes";
+  let changed = 0;
+  try {
+    changed = await setBrainAutoSave(
+      locus().db,
+      sessionContext(current),
+      form.getAll("locationId").map(String),
+      on,
+    );
+  } catch (error) {
+    if (error instanceof ClientAccessDenied) back("/clients", error);
+    throw error;
+  }
+  revalidatePath("/clients");
+  redirect(`/clients?notes=${on ? "on" : "off"}&changed=${changed}`);
 }
 
 /** Files one of the active client's sites under a folder, or under none. */
