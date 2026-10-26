@@ -1,6 +1,6 @@
 "use client";
 
-import { Library } from "lucide-react";
+import { Brain, Library } from "lucide-react";
 import { type ReactNode, useCallback } from "react";
 import type { ToolViews } from "@/components/chat/tool-steps";
 import { ProjectChat } from "@/components/chat-project/project-chat";
@@ -30,20 +30,23 @@ const outputsOf = (t: ThreadItem): ThreadOutput[] =>
 
 /**
  * The sub-account's chat: the chat kit's project chat, with Locus's tools told in plain words
- * and sites' conversations kept out of it. Its panel has the sub-account's Library beside
- * Threads. The model is the server's own, so the composer offers no picker. Where connectors
+ * and sites' conversations kept out of it. Its panel has the sub-account's Library and Brain
+ * beside Threads. The model is the server's own, so the composer offers no picker. Where connectors
  * are set up, the composer's + menu lists them with a switch each for this chat.
  */
 export function MainChat({
   className,
   modes,
   library,
+  brain,
   connectorScope,
 }: {
   className?: string | undefined;
   modes: ReadonlyArray<{ id: string; name: string }>;
   /** The Library tab's content, read on the server. */
   library: ReactNode;
+  /** The Brain tab's content (the sub-account's notes), read on the server. */
+  brain: ReactNode;
   /** The sub-account the connector switches belong to; unset where connectors aren't set up. */
   connectorScope?: string | undefined;
 }) {
@@ -67,6 +70,12 @@ export function MainChat({
           label: "Library",
           icon: <Library className="size-4" aria-hidden />,
           content: library,
+        },
+        {
+          id: "brain",
+          label: "Brain",
+          icon: <Brain className="size-4" aria-hidden />,
+          content: brain,
         },
       ]}
     />

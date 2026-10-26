@@ -99,6 +99,9 @@ importers:
       '@locus/auth':
         specifier: workspace:*
         version: link:../../packages/auth
+      '@locus/brain':
+        specifier: workspace:*
+        version: link:../../packages/brain
       '@locus/builder':
         specifier: workspace:*
         version: link:../../packages/builder
