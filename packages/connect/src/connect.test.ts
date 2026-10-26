@@ -34,6 +34,7 @@ import {
   syncLocations,
 } from "./agency.ts";
 import { authorizeUrl, exchangeCode, type GhlAppConfig } from "./ghl-oauth.ts";
+import { listInbox } from "./inbox.ts";
 import { CrmMediaError, siteCrm } from "./site-crm.ts";
 import { importStaffAccess, listAgencyStaff } from "./staff.ts";
 import { createStubGhl, STUB_AGENCY, STUB_CODE, type StubAgency } from "./stub.ts";
@@ -448,6 +449,109 @@ describe("sub-account sessions", () => {
     const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
     agency.locations = agency.locations.filter((l) => l.name !== "Harbor Realty");
     await expect(clientGhlSession(deps, client)).rejects.toBeInstanceOf(GhlError);
+  });
+
+  it("reads the Inbox live from the client's own sub-account, newest first", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
+    seen = [];
+    const inbox = await listInbox(deps, client);
+    expect(seen).toEqual(["POST /oauth/location-token", "GET /conversations/search"]);
+    expect(inbox).toEqual([
+      {
+        id: "stubconv1stublocation3",
+        contactId: "stubcontact1",
+        contact: "Jordan Visitor",
+        channel: "Live chat",
+        preview: "Hi, is the open house still on Sunday?",
+        at: new Date("2026-10-14T12:00:00Z"),
+        unread: 1,
+      },
+      {
+        id: "stubconv2stublocation3",
+        contactId: "stubcontact2",
+        contact: "Riley Buyer",
+        channel: "SMS",
+        preview: "Thanks, see you then.",
+        at: new Date("2026-10-14T11:00:00Z"),
+        unread: 0,
+      },
+    ]);
+  });
+
+  it("reads no Inbox for a client that didn't come from the staff check", async () => {
+    const harbor = await clientNamed("Harbor Realty");
+    const forged: AuthorizedClient = {
+      location: { ...harbor, siteBuilder: false },
+      memberId: "owner@agency-a",
+    };
+    seen = [];
+    await expect(listInbox(deps, forged)).rejects.toBeInstanceOf(ClientAccessDenied);
+    expect(seen).toEqual([]);
+  });
+
+  it("keeps only well-formed conversations and cuts long messages short", async () => {
+    const fake = createFakeGhl({
+      "POST /oauth/location-token": (req) => ({
+        body: {
+          access_token: "loc-token",
+          locationId: (req.body as { locationId: string }).locationId,
+        },
+      }),
+      "GET /conversations/search": {
+        body: {
+          conversations: [
+            { id: "../etc", contactId: "c1", lastMessageBody: "bad id" },
+            {
+              id: "conv1",
+              contactId: "c1",
+              email: "pat@example.test",
+              lastMessageBody: `<b>${"word ".repeat(60)}</b>`,
+              lastMessageType: "TYPE_NEW_THING",
+              unreadCount: -3,
+            },
+          ],
+        },
+      },
+    });
+    const harbor = await clientNamed("Harbor Realty");
+    const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
+    const [only, ...rest] = await listInbox(
+      { ...deps, http: { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" } },
+      client,
+    );
+    expect(rest).toEqual([]);
+    expect(only).toMatchObject({ id: "conv1", contact: "pat@example.test", channel: "Message" });
+    expect(only?.preview.length).toBe(140);
+    expect(only?.preview.endsWith("…")).toBe(true);
+    expect(only?.unread).toBe(0);
+    expect(only?.at).toBeNull();
+    const search = fake.requests.find((r) => r.url.pathname === "/conversations/search");
+    expect(search?.url.searchParams.get("locationId")).toBe(harbor.ghlLocationId);
+    expect(Object.fromEntries(search?.url.searchParams ?? [])).toMatchObject({
+      sortBy: "last_message_date",
+      sort: "desc",
+      status: "all",
+      limit: "20",
+    });
+    expect(search?.headers.version).toBe("v3");
+  });
+
+  it("passes on GHL refusing the inbox read", async () => {
+    const fake = createFakeGhl({
+      "POST /oauth/location-token": (req) => ({
+        body: {
+          access_token: "loc-token",
+          locationId: (req.body as { locationId: string }).locationId,
+        },
+      }),
+      "GET /conversations/search": { status: 401, body: { message: "scope missing" } },
+    });
+    const harbor = await clientNamed("Harbor Realty");
+    const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
+    await expect(
+      listInbox({ ...deps, http: { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" } }, client),
+    ).rejects.toBeInstanceOf(GhlError);
   });
 });
 
