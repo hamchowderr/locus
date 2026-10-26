@@ -4,7 +4,7 @@ import { createTool } from "@mastra/core/tools";
 import { WORKSPACE_TOOLS, Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
 import { BrainFilesystem } from "./filesystem.ts";
-import { INDEX_FILE, INSTRUCTIONS_FILE, normalizeBrainPath } from "./paths.ts";
+import { INDEX_FILE, INSTRUCTIONS_FILE, normalizeBrainPath, SETUP_NOTE } from "./paths.ts";
 import { WEBSITE_TOOL } from "./website.ts";
 
 /** The names agents see for Mastra's workspace tools over the brain. */
@@ -306,7 +306,9 @@ export class BrainContextProcessor implements Processor<"locus-brain-context"> {
       ).trim();
     const instructions = await read(INSTRUCTIONS_FILE);
     const index = await read(INDEX_FILE);
-    const empty = !instructions && (await this.#filesystem.notes()).length === 0;
+    // Only Locus's setup note is still a new client: nothing anyone learned is there yet.
+    const empty =
+      !instructions && (await this.#filesystem.notes()).every((n) => n.path === SETUP_NOTE);
     return [
       "## This client's brain",
       "",

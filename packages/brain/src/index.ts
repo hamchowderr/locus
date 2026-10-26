@@ -12,6 +12,7 @@ export {
   INSTRUCTIONS_FILE,
   MAX_NOTE_BYTES,
   normalizeBrainPath,
+  SETUP_NOTE,
 } from "./paths.ts";
 export {
   getNote,

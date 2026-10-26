@@ -38,13 +38,14 @@ import { GhlError } from "@locus/ghl";
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { baseUrl, connectDeps } from "@/lib/connect";
 import { prepareExtraUsage, sendExtraUsage } from "@/lib/extra-usage";
 import { finishHeldInstall } from "@/lib/ghl-install";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext, sitesReturn } from "@/lib/next-path";
-import { integrationsReturn } from "@/lib/onboarding";
+import { fillSetupNote, integrationsReturn } from "@/lib/onboarding";
 import {
   ACTIVE_SITE_COOKIE,
   chooseActiveSite,
@@ -167,7 +168,9 @@ export async function chooseMainClient(form: FormData) {
     if (!(await setMainClient(locus().db, organizationId, locationId))) {
       throw new Error("Choose one of your agency's sub-accounts.");
     }
-    await selectClient(locus().db, ctx, locationId);
+    const client = await selectClient(locus().db, ctx, locationId);
+    // Its brain starts with how it's set up in GoHighLevel, read after the page has moved on.
+    after(() => fillSetupNote(client));
   } catch (error) {
     back("/onboarding", error);
   }
