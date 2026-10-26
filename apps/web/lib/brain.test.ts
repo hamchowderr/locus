@@ -24,6 +24,7 @@ import {
   newNotePath,
   restoreBrainNote,
   saveBrainNote,
+  saveSetupNote,
   versionHint,
 } from "./brain.ts";
 
@@ -191,5 +192,27 @@ describe("the brain as people see it", () => {
       saveBrainNote(deps, clientA, "owner", "business/hours.md", "# Hours\n\nMine.", seen),
     ).rejects.toThrow(/changed this note while you had it open/);
     expect((await brainNote(deps, clientA, "business/hours.md"))?.content).toContain("8 to 6");
+  });
+});
+
+describe("the setup's starter note", () => {
+  it("is saved as Locus into that client's brain only, and never replaces one already there", async () => {
+    expect(await saveSetupNote(deps, clientA, "# Setup\n\nFirst read.")).toBe(true);
+    const note = await brainNote(deps, clientA, "business/gohighlevel-setup.md");
+    expect(note?.content).toContain("First read.");
+    expect(note?.updatedBy).toBeNull();
+    expect(await brainNote(deps, clientB, "business/gohighlevel-setup.md")).toBeNull();
+
+    await saveBrainNote(
+      deps,
+      clientA,
+      "owner",
+      "business/gohighlevel-setup.md",
+      "# Setup\n\nMine.",
+    );
+    expect(await saveSetupNote(deps, clientA, "# Setup\n\nSecond read.")).toBe(false);
+    expect((await brainNote(deps, clientA, "business/gohighlevel-setup.md"))?.content).toContain(
+      "Mine.",
+    );
   });
 });
