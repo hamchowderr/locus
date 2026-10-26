@@ -9,6 +9,7 @@ import { appConnectionsFromEnv } from "@/lib/apps";
 import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
 import { setupStepFor } from "@/lib/onboarding";
+import { chatWelcome } from "@/lib/welcome";
 
 /**
  * The main chat always runs as the supervisor, with no picker: it answers questions and hands
@@ -41,6 +42,7 @@ export default async function ChatPage() {
           brain={<BrainTab client={client} />}
           inbox={<InboxTab />}
           connectorScope={appConnectionsFromEnv() ? client.location.id : undefined}
+          welcome={await chatWelcome(current, client)}
         />
       ) : (
         <div className="mx-auto mt-6 w-full max-w-4xl px-4">

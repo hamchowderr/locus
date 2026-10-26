@@ -303,3 +303,8 @@ export async function saveSetupNote(
     }
   });
 }
+
+/** How many notes the client's brain holds, instructions included. */
+export async function brainNoteCount(deps: BrainDeps, client: AuthorizedClient): Promise<number> {
+  return withTenant(deps, client, async (db) => (await listNotes(db)).length);
+}
