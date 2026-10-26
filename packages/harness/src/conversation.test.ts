@@ -413,6 +413,8 @@ describe("forgetResult", () => {
     // A run resuming after an approval saw its read blanked and said it had acted without
     // reading: the note says the steps after it had the result in view.
     expect(NOT_KEPT).toMatch(/whole result when you took the steps after it/);
+    // Told only that, a resumed run took back the summary it had written from its read.
+    expect(NOT_KEPT).toMatch(/no sign that you did not see it or that you made up/);
   });
 });
 
