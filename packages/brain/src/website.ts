@@ -97,7 +97,11 @@ export function isPublicAddress(address: string): boolean {
  * address is public, then connects to one of those same addresses. Checking and connecting on
  * one lookup is what stops a name that answers differently the second time (DNS rebinding).
  */
-export function publicLookup(resolve: (host: string) => Promise<string[]> = dnsResolve) {
+export function publicLookup(
+  resolve: (host: string) => Promise<string[]> = dnsResolve,
+  /** Which addresses may be reached; only tests ever pass anything but the default. */
+  allowed: (address: string) => boolean = isPublicAddress,
+) {
   return (
     host: string,
     options: { all?: boolean } | number | undefined,
@@ -109,7 +113,7 @@ export function publicLookup(resolve: (host: string) => Promise<string[]> = dnsR
   ) => {
     resolve(host).then(
       (addresses) => {
-        if (addresses.length === 0 || !addresses.every(isPublicAddress)) {
+        if (addresses.length === 0 || !addresses.every(allowed)) {
           callback(new Error(`${host} isn't on the public internet.`), "");
           return;
         }
@@ -123,8 +127,11 @@ export function publicLookup(resolve: (host: string) => Promise<string[]> = dnsR
 }
 
 /** `fetch` over Node's own sockets, connecting only through `publicLookup`. Never redirects. */
-function pinnedFetch(resolve: (host: string) => Promise<string[]>): typeof globalThis.fetch {
-  const checked = publicLookup(resolve);
+export function pinnedFetch(
+  resolve: (host: string) => Promise<string[]>,
+  allowed: (address: string) => boolean = isPublicAddress,
+): typeof globalThis.fetch {
+  const checked = publicLookup(resolve, allowed);
   return ((input: URL | string, init?: RequestInit) =>
     new Promise<Response>((done, fail) => {
       const url = new URL(String(input));
@@ -137,20 +144,28 @@ function pinnedFetch(resolve: (host: string) => Promise<string[]>): typeof globa
           signal: init?.signal ?? undefined,
         },
         (res) => {
-          const headers = new Headers();
-          for (const [name, value] of Object.entries(res.headers)) {
-            if (value !== undefined)
-              headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+          // A throw here would be outside any promise and end the process: every failure,
+          // including a status Response refuses (a site may answer 999), goes to `fail`.
+          try {
+            const headers = new Headers();
+            for (const [name, value] of Object.entries(res.headers)) {
+              if (value !== undefined)
+                headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+            }
+            const raw = res.statusCode ?? 502;
+            const status = raw >= 200 && raw <= 599 ? raw : 502;
+            const empty = [204, 205, 304].includes(status) || status !== raw;
+            if (empty) res.resume();
+            done(
+              new Response(empty ? null : (Readable.toWeb(res) as ReadableStream), {
+                status,
+                headers,
+              }),
+            );
+          } catch (e) {
+            res.destroy();
+            fail(e);
           }
-          const status = res.statusCode ?? 502;
-          const empty = [101, 204, 205, 304].includes(status) || status < 200;
-          if (empty) res.resume();
-          done(
-            new Response(empty ? null : (Readable.toWeb(res) as ReadableStream), {
-              status: status < 200 ? 502 : status,
-              headers,
-            }),
-          );
         },
       );
       request.on("error", fail);
@@ -371,11 +386,12 @@ export async function readClientPage(
     if (!addresses.every(isPublicAddress)) {
       return { error: `${url.hostname} isn't on the public internet.` };
     }
+    const signal = AbortSignal.timeout(TIMEOUT_MS);
     let response: Response;
     try {
       response = await get(url, {
         redirect: "manual",
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal,
         headers: { accept: "text/html,text/plain;q=0.9", "user-agent": "LocusBot/1.0" },
       });
     } catch (e) {
@@ -403,6 +419,8 @@ export async function readClientPage(
       return { error: `${url.href} isn't a web page (${type || "no type"}).` };
     }
     const raw = await readBody(response);
+    // A stream cut off by the timeout can end as if complete: say so rather than pass half a page.
+    if (signal.aborted) return { error: `${url.href} took too long to load.` };
     const page =
       media === "text/plain"
         ? { title: "", description: "", text: raw.slice(0, MAX_PAGE_CHARS), links: [] }
