@@ -38,6 +38,7 @@ export {
   handleGithubWebhook,
   verifyGithubSignature,
 } from "./github.ts";
+export { INBOX_PAGE, type InboxConversation, listInbox } from "./inbox.ts";
 export {
   agencyGithubAccount,
   checkSitePaths,
