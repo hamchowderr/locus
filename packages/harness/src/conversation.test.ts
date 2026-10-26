@@ -16,6 +16,7 @@ import {
   NOT_KEPT,
   pendingApprovals,
 } from "./conversation.ts";
+import { APPROVED } from "./tools.ts";
 import { TAINT_MARK } from "./untrusted.ts";
 
 const mock = useAimock();
@@ -386,6 +387,13 @@ describe("forgetResult", () => {
       taint: TAINT_MARK,
     });
     expect(forgetResult("query_data", tainted)).toEqual({ notKept: NOT_KEPT, rowCount: 0 });
+    // An approved change keeps our note that it was approved and made, never GHL's answer.
+    expect(
+      forgetResult("perform_action", { approved: APPROVED, messageId: "m1", msg: "Hi Ann" }),
+    ).toEqual({ notKept: NOT_KEPT, approved: APPROVED });
+    expect(forgetResult("perform_action", { approved: "something else" })).toEqual({
+      notKept: NOT_KEPT,
+    });
   });
 
   test("tells the model the result was real, and to read GHL again before relying on it", () => {
