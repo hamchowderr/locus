@@ -25,10 +25,28 @@ export const SETUP_PARTS = 6;
 /** Most names kept from each part. A sub-account with more is summed up, not listed. */
 export const MAX_SETUP_NAMES = 50;
 
+/** Longest name kept, in characters. */
+const MAX_NAME_CHARS = 100;
+
+/**
+ * A name as one plain line: GoHighLevel names are typed by the client's staff, so they lose line
+ * breaks, control characters and anything Markdown could read as a heading or list, and are cut
+ * to a sensible length.
+ */
+export function plainName(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  const flat = raw
+    .replace(/[\p{Cc}\u2028\u2029]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[#>*+\-\s]+/, "");
+  return flat.length > MAX_NAME_CHARS ? `${flat.slice(0, MAX_NAME_CHARS - 1)}…` : flat;
+}
+
 type Named = { name?: unknown };
 const names = (items: Named[] | undefined): string[] =>
   (items ?? [])
-    .map((i) => (typeof i.name === "string" ? i.name.trim() : ""))
+    .map((i) => plainName(i.name))
     .filter(Boolean)
     .slice(0, MAX_SETUP_NAMES);
 
@@ -41,8 +59,16 @@ export async function readSetupSummary(
     const op = operationById(id);
     try {
       if (!op) throw new Error(`The skill catalog is missing ${id}`);
-      return pick(await ghlRequest<T>(op, session, {}, http));
-    } catch {
+      // Paged lists: ask for as many as the note keeps, not GoHighLevel's default page.
+      const paging = op.pagination;
+      const query =
+        paging?.style === "offset" && paging.in === "query"
+          ? { [paging.limit]: MAX_SETUP_NAMES }
+          : undefined;
+      return pick(await ghlRequest<T>(op, session, query ? { query } : {}, http));
+    } catch (error) {
+      // A scope the app lacks reads the same as GoHighLevel failing; the log tells them apart.
+      console.warn(`Reading ${label} for the setup note failed`, error);
       unread.push(label);
       return [];
     }
@@ -88,6 +114,9 @@ export function setupNote(summary: SetupSummary, business: string, on: Date): st
           `## ${heading}`,
           "",
           ...(items.length ? items.map((i) => `- ${i}`) : ["None set up yet."]),
+          ...(items.length >= MAX_SETUP_NAMES
+            ? [`(The first ${MAX_SETUP_NAMES}; there may be more.)`]
+            : []),
           "",
         ];
   const pipelines = summary.unread.includes("Pipelines")
@@ -103,7 +132,7 @@ export function setupNote(summary: SetupSummary, business: string, on: Date): st
         "",
       ];
   return [
-    `# How ${business} is set up in GoHighLevel`,
+    `# How ${plainName(business) || "this sub-account"} is set up in GoHighLevel`,
     "",
     `Read from GoHighLevel on ${day}, when Locus was set up. It's a starting point and goes stale:`,
     "GoHighLevel itself is always right, so check there before relying on a detail.",
