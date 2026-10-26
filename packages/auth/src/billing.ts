@@ -1,6 +1,6 @@
 import type { ControlDb } from "@locus/db";
-import { agencyTrial, subscription } from "@locus/db/control";
-import { eq } from "drizzle-orm";
+import { agencyTrial, invitation, member, subscription } from "@locus/db/control";
+import { and, count, eq, gt } from "drizzle-orm";
 import { rolesOf } from "./client-access.ts";
 import { isComped } from "./operator.ts";
 import { type Plan, type PlanLimits, planNamed, TRIAL_PLAN } from "./plans.ts";
@@ -158,4 +158,46 @@ export function newClientRefusal(entitlement: Entitlement, activeClients: number
     return `Your ${entitlement.plan?.title ?? ""} plan covers ${cap} clients. Upgrade on the Billing page to add more.`;
   }
   return null;
+}
+
+const seatsText = (n: number) => `${n} seat${n === 1 ? "" : "s"}`;
+
+/**
+ * Why the agency may not take one more person, or `null` if it may. Everyone in the agency takes
+ * a seat, and so does every invitation still open, so a plan's seats can't be overshot by
+ * inviting many at once. When accepting, that invitation already holds its seat: only people
+ * already in count. Comped agencies and plans without a seat limit are never refused.
+ */
+export async function seatRefusal(
+  db: ControlDb,
+  organizationId: string,
+  opts: { accepting?: boolean; now?: Date } = {},
+): Promise<string | null> {
+  const now = opts.now ?? new Date();
+  const { limits, plan, trialEndsAt } = await agencyEntitlement(db, organizationId, { now });
+  const seats = limits?.seats;
+  const what = trialEndsAt ? "free trial" : `${plan?.title ?? "current"} plan`;
+  if (seats === null || seats === undefined) return null;
+  const [people] = await db
+    .select({ n: count() })
+    .from(member)
+    .where(eq(member.organizationId, organizationId));
+  const inAgency = people?.n ?? 0;
+  if (opts.accepting) {
+    return inAgency < seats
+      ? null
+      : `This agency's ${what} has no free seat right now. Ask whoever invited you to make room, or to choose a bigger plan.`;
+  }
+  const [open] = await db
+    .select({ n: count() })
+    .from(invitation)
+    .where(
+      and(
+        eq(invitation.organizationId, organizationId),
+        eq(invitation.status, "pending"),
+        gt(invitation.expiresAt, now),
+      ),
+    );
+  if (inAgency + (open?.n ?? 0) < seats) return null;
+  return `Your ${what} includes ${seatsText(seats)}, and ${seats === 1 ? "it's" : "they're all"} taken (people in the agency and invitations not yet accepted both count). Choose a bigger plan on the Billing page, or cancel an open invitation, to invite someone else.`;
 }
