@@ -45,7 +45,7 @@ export function MainChat({
   modes: ReadonlyArray<{ id: string; name: string }>;
   /** The Library tab's content, read on the server. */
   library: ReactNode;
-  /** The Inbox tab's content, read live from GHL on the server. */
+  /** The Inbox tab's content, which reads GHL live when the tab is shown. */
   inbox: ReactNode;
   /** The sub-account the connector switches belong to; unset where connectors aren't set up. */
   connectorScope?: string | undefined;
