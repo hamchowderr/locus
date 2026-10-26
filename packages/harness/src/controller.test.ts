@@ -200,6 +200,12 @@ describe("act mode", () => {
       "approval:c3-tag",
       "approval:c3-tag-b",
     ]);
+    // The tag waited only because of the taint, and the resumed run is told it was approved.
+    const afterTag = mock()
+      .llm.getRequests()
+      .map(toolResults)
+      .find((results) => "c3-tag" in results);
+    expect(afterTag?.["c3-tag"]).toContain(APPROVED);
     // Same session, same thread, a new run: the taint was that run's alone.
     expect(await send(session, "c3: now tag c1")).toEqual([]);
     expect(sent(ghl)).toEqual([
