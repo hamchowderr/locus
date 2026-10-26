@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { isPublicAddress, pageText, publicLookup, readClientPage } from "./website.ts";
+import { isPublicAddress, pageText, pinnedFetch, publicLookup, readClientPage } from "./website.ts";
 
 const HOME = `<!doctype html><html><head><title>Bright Roofing &amp; Gutters</title>
 <meta name="description" content="Roof repair in Austin since 2004.">
@@ -198,5 +198,23 @@ describe("reading the client's website", () => {
       "bright.test isn't on the public internet.",
     );
     expect(await ask(["93.184.216.34"])).toEqual([{ address: "93.184.216.34", family: 4 }]);
+  });
+
+  it("survives a site answering a status no browser would", async () => {
+    const { createServer: raw } = await import("node:net");
+    const server = raw((socket) => socket.end("HTTP/1.1 999 X\r\ncontent-length: 0\r\n\r\n"));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    // The transport itself, let through to this one local test server.
+    const get = pinnedFetch(
+      async () => ["127.0.0.1"],
+      (a) => a === "127.0.0.1",
+    );
+    try {
+      const response = await get(`http://bright.test:${port}/`);
+      expect(response.status).toBe(502);
+    } finally {
+      server.close();
+    }
   });
 });
