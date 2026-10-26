@@ -229,6 +229,13 @@ describe("the free trial", () => {
     }
   });
 
+  it("a running trial still counts beside an unfinished checkout", async () => {
+    await startTrial(db, "agency-a", "owner-1", { now: start });
+    await deliver(subscriptionEvent("customer.subscription.created", "incomplete"));
+    const trial = await agencyEntitlement(db, "agency-a", { now: later(1) });
+    expect(trial).toMatchObject({ entitled: true, status: "trialing" });
+  });
+
   it("an overdue payment after the trial shows as overdue, not as an ended trial", async () => {
     await startTrial(db, "agency-a", "owner-1", { now: start });
     await deliver(subscriptionEvent("customer.subscription.created", "active"));
@@ -258,6 +265,16 @@ describe("adding waiting sub-accounts once paid", () => {
     expect(paid).toEqual(["agency-a"]);
     await deliver(subscriptionEvent("customer.subscription.updated", "past_due"));
     expect(paid).toEqual(["agency-a"]);
+    await deliver(subscriptionEvent("customer.subscription.updated", "active"));
+    expect(paid).toEqual(["agency-a", "agency-a"]);
+    // A renewal changes the period, not the status or the plan: nothing to add.
+    const renewal = subscriptionEvent("customer.subscription.updated", "active");
+    await deliver({
+      ...renewal,
+      id: "evt_renewal",
+      data: { ...renewal.data, previous_attributes: { latest_invoice: "in_old" } },
+    });
+    expect(paid).toEqual(["agency-a", "agency-a"]);
   });
 
   it("a failure there never fails Stripe's webhook", async () => {
