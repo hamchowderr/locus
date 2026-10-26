@@ -217,6 +217,44 @@ describe("act mode", () => {
   });
 });
 
+describe("a write in the same step as a read of public text", () => {
+  test("was chosen before the text was read, so only the steps after it wait", async () => {
+    // The model asks for the read and the tag at once: it has not seen the submissions yet, so
+    // they cannot have steered the tag, which goes through. The step after the read can be
+    // steered by it, so its tag waits.
+    mock().llm.on(
+      { userMessage: /c4: read submissions and tag/i, hasToolResult: false },
+      {
+        toolCalls: [
+          ...read("c4-read", "forms.get-forms-submissions", "SELECT name FROM t").toolCalls,
+          ...perform("c4-tag", "contacts.add-tags", tagC1).toolCalls,
+        ],
+      },
+    );
+    mock().llm.on({ toolCallId: "c4-tag" }, perform("c4-tag-b", "contacts.add-tags", tagC1));
+    mock().llm.on({ toolCallId: "c4-tag-b" }, { content: "Tagged." });
+    const { ghl, controller } = await controllerFor({
+      "GET /forms/submissions": { body: { submissions: [{ id: "s1", name: "Ann" }] } },
+      "*": { body: {} },
+    });
+    const session = await openClientSession(controller, { memberId: "m1" });
+
+    expect(await send(session, "c4: read submissions and tag")).toEqual(["approval:c4-tag-b"]);
+    // The two calls of one step may run side by side, so their order is not checked.
+    expect([...sent(ghl)].sort()).toEqual([
+      "GET /forms/submissions",
+      "POST /contacts/c1/tags",
+      "POST /contacts/c1/tags",
+    ]);
+    // The same-step tag asked no one, so it is not told a person approved it.
+    const afterTag = mock()
+      .llm.getRequests()
+      .map(toolResults)
+      .find((results) => "c4-tag" in results);
+    expect(afterTag?.["c4-tag"]).not.toContain(APPROVED);
+  });
+});
+
 describe("a run that waited for an approval", () => {
   test("resumes with its own words and the note, not the data it read", async () => {
     mock().llm.on(
