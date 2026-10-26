@@ -2,6 +2,7 @@ import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
 import { redirect } from "next/navigation";
 import { Notice } from "@/app/ui";
 import { BrainTab } from "@/components/brain-tab";
+import { InboxTab } from "@/components/inbox-tab";
 import { LibraryTab } from "@/components/library-tab";
 import { MainChat } from "@/components/main-chat";
 import { appConnectionsFromEnv } from "@/lib/apps";
@@ -29,7 +30,7 @@ export default async function ChatPage() {
     <div className="flex h-full flex-col">
       {chatKitEnabled() ? (
         // The chat kit's project chat: the sub-account's one chat, handing longer work to
-        // threads, with its Library and Brain beside them. Its requests go through this site's
+        // threads, with its Library, Brain and Inbox beside them. Its requests go through this site's
         // /api/agent-controller routes, which the agent server checks against the sign-in.
         // The menu's layout already provides the tooltips it needs.
         <MainChat
@@ -37,6 +38,7 @@ export default async function ChatPage() {
           modes={CHAT_MODES}
           library={<LibraryTab client={client} />}
           brain={<BrainTab client={client} />}
+          inbox={<InboxTab />}
           connectorScope={appConnectionsFromEnv() ? client.location.id : undefined}
         />
       ) : (
