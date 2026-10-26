@@ -190,6 +190,58 @@ describe("act mode", () => {
   });
 });
 
+describe("a run that waited for an approval", () => {
+  test("resumes with its own words and the note, not the data it read", async () => {
+    mock().llm.on(
+      { userMessage: /c9: delete the duplicate/i, hasToolResult: false },
+      {
+        toolCalls: [
+          {
+            id: "c9-read",
+            name: "query_data",
+            arguments: JSON.stringify({
+              sources: [
+                {
+                  as: "t",
+                  operation: "contacts.get-contact",
+                  params: { path: { contactId: "c1" } },
+                },
+              ],
+              sql: "SELECT * FROM t",
+            }),
+          },
+        ],
+      },
+    );
+    mock().llm.on(
+      { toolCallId: "c9-read" },
+      {
+        content: "c9 summary: the duplicate is c1.",
+        ...perform("c9-del", "contacts.delete-contact", { path: { contactId: "c1" } }),
+      },
+    );
+    mock().llm.on({ toolCallId: "c9-del" }, { content: "Deleted c1." });
+    const { controller } = await controllerFor({
+      "GET /contacts/c1": { body: { contact: { id: "c1", firstName: "Private Pat" } } },
+      "*": { body: {} },
+    });
+    const session = await openClientSession(controller, { memberId: "m1" });
+
+    expect(await send(session, "c9: delete the duplicate")).toEqual(["approval:c9-del"]);
+
+    const requests = mock()
+      .llm.getRequests()
+      .map((r) => JSON.stringify(r.body));
+    // The step after the read had the contact in front of it.
+    expect(requests[1]).toContain("Private Pat");
+    // The request after the yes: the run's own words are there, and the read is the note.
+    const resumed = requests.at(-1);
+    expect(resumed).toContain("c9 summary: the duplicate is c1.");
+    expect(resumed).toContain(NOT_KEPT);
+    expect(resumed).not.toContain("Private Pat");
+  });
+});
+
 describe("ask mode", () => {
   test("only reads are offered", async () => {
     mock().llm.on({ userMessage: /c4: how many forms/i }, { content: "I can check that." });
