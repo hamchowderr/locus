@@ -65,6 +65,10 @@ export default async function GhlInstall() {
 
   return (
     <AuthPage title={`Finish installing Locus for ${held.companyName}`}>
+      <Notice tone="info">
+        GoHighLevel sent you here after Locus was installed on {held.companyName}. Only continue if
+        you just installed it yourself.
+      </Notice>
       {held.join ? (
         <>
           <p className="text-sm text-neutral-600">
@@ -75,12 +79,14 @@ export default async function GhlInstall() {
             <input type="hidden" name="choice" value="join" />
             <Button>Connect to {held.join.name}</Button>
           </form>
-          <form action={finishGhlInstall} className="text-center">
-            <input type="hidden" name="choice" value="new" />
-            <button type="submit" className="text-sm underline">
-              Start a new Locus agency for it instead
-            </button>
-          </form>
+          {!held.claimed && (
+            <form action={finishGhlInstall} className="text-center">
+              <input type="hidden" name="choice" value="new" />
+              <button type="submit" className="text-sm underline">
+                Start a new Locus agency for it instead
+              </button>
+            </form>
+          )}
         </>
       ) : (
         <>

@@ -25,6 +25,7 @@ export {
   brainAutoSaveFor,
   ClientAccessDenied,
   inboxDraftsFor,
+  isManagerRole,
   type LocationRow,
   listAccessibleClients,
   listSiteMembers,

@@ -355,6 +355,16 @@ export const agencyOnboarding = sqliteTable("agency_onboarding", {
   createdAt: createdAt(),
 });
 
+/**
+ * GoHighLevel marketplace installs waiting for their installer to sign in and confirm. The
+ * grant itself is sealed in `secret` under `/locus/ghl-held/<id>`; this row says until when it
+ * may be used, so abandoned ones can be swept.
+ */
+export const ghlHeldInstall = sqliteTable("ghl_held_install", {
+  id: text("id").primaryKey(),
+  heldUntil: integer("held_until", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const auditLog = sqliteTable(
   "audit_log",
   {

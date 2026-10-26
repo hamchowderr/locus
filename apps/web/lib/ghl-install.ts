@@ -1,11 +1,14 @@
-import { ClientAccessDenied, requireAgencyManager } from "@locus/auth";
+import { ClientAccessDenied, isManagerRole, requireAgencyManager } from "@locus/auth";
 import {
   type AgencyGrant,
   ConnectError,
   connectAgencyGrant,
+  dropHeldGrant,
   inspectGrant,
+  onboardingOpen,
   peekHeldGrant,
   refusedQuery,
+  type SyncResult,
   takeHeldGrant,
 } from "@locus/connect";
 import { agencyGhlConnection, member, organization } from "@locus/db/control";
@@ -22,7 +25,13 @@ export type HeldInstall =
   | { kind: "none" }
   | { kind: "sign-in"; companyName: string }
   | { kind: "taken"; companyName: string }
-  | { kind: "ready"; companyName: string; join: { id: string; name: string } | null };
+  | {
+      kind: "ready";
+      companyName: string;
+      join: { id: string; name: string } | null;
+      /** Already held by the agency in `join`, so a new agency for it isn't on offer. */
+      claimed: boolean;
+    };
 
 /**
  * The Locus agency a held grant would connect to without making a new one: the agency that
@@ -43,11 +52,12 @@ async function joinTarget(
     return org ?? null;
   };
   if (claimedBy) {
+    // Only its owners and admins may reconnect the agency that already holds it.
     const [mine] = await db
-      .select({ id: member.id })
+      .select({ role: member.role })
       .from(member)
       .where(and(eq(member.organizationId, claimedBy), eq(member.userId, current.user.id)));
-    return mine ? named(claimedBy) : null;
+    return mine && isManagerRole(mine.role) ? named(claimedBy) : null;
   }
   const active = current.session.activeOrganizationId;
   if (!active) return null;
@@ -66,31 +76,31 @@ async function joinTarget(
   return !connected || connected.companyId === grant.companyId ? named(active) : null;
 }
 
-/** Whether a marketplace install is waiting in this browser. */
-export async function hasHeldInstall(): Promise<boolean> {
-  const id = (await cookies()).get(HELD_GRANT_COOKIE)?.value;
-  return !!id && !!(await peekHeldGrant(connectDeps(), id));
-}
-
 export async function heldInstall(): Promise<HeldInstall> {
   const deps = connectDeps();
-  const grant = await peekHeldGrant(deps, (await cookies()).get(HELD_GRANT_COOKIE)?.value);
+  const id = (await cookies()).get(HELD_GRANT_COOKIE)?.value;
+  const grant = await peekHeldGrant(deps, id);
   if (!grant) return { kind: "none" };
   const { companyName, claimedBy } = await inspectGrant(deps, grant);
   const name = companyName || "your agency";
   const current = await currentSession();
   if (!current) return { kind: "sign-in", companyName: name };
   const join = await joinTarget(current, grant, claimedBy);
-  if (claimedBy && !join) return { kind: "taken", companyName: name };
-  return { kind: "ready", companyName: name, join };
+  if (claimedBy && !join) {
+    // Nothing this person can do with it: let it go rather than keep the tokens.
+    await dropHeldGrant(deps, id);
+    return { kind: "taken", companyName: name };
+  }
+  return { kind: "ready", companyName: name, join, claimed: !!claimedBy };
 }
 
 /**
  * Connects the held marketplace install once its installer confirms: into the agency the page
  * offered (`join`), or into a new Locus agency named after it, which starts the free trial and
- * the setup. The grant is used once. Returns the outcome for the page it lands on.
+ * the setup. The grant is used once. Returns the page to land on, with the outcome.
  */
 export async function finishHeldInstall(choice: "join" | "new"): Promise<string> {
+  const query = (result: SyncResult) => `connected=${result.added}${refusedQuery(result)}`;
   const current = await currentSession();
   if (!current) throw new ConnectError("Sign in first.");
   const jar = await cookies();
@@ -105,8 +115,8 @@ export async function finishHeldInstall(choice: "join" | "new"): Promise<string>
   const { claimedBy } = await inspectGrant(deps, grant);
   const join = choice === "join" ? await joinTarget(current, grant, claimedBy) : null;
   if (!join) {
-    const result = await createAgencyFromGrant(grant);
-    return `connected=${result.added}${refusedQuery(result)}`;
+    // A new agency always starts its setup.
+    return `/onboarding?${query(await createAgencyFromGrant(grant))}`;
   }
   const switching = join.id !== current.session.activeOrganizationId;
   if (switching) {
@@ -124,5 +134,7 @@ export async function finishHeldInstall(choice: "join" | "new"): Promise<string>
     },
     grant,
   );
-  return `connected=${result.added}${refusedQuery(result)}`;
+  // Decided here: this request's session still names the agency it started on.
+  const open = await onboardingOpen(locus().db, join.id);
+  return `${open ? "/onboarding" : "/connect"}?${query(result)}`;
 }

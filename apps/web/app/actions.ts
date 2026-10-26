@@ -182,14 +182,21 @@ export async function chooseMainClient(form: FormData) {
 export async function finishGhlInstall(form: FormData) {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fonboarding%2Finstall");
-  let query: string;
+  let landing: string;
   try {
-    query = await finishHeldInstall(text(form, "choice") === "join" ? "join" : "new");
+    landing = await finishHeldInstall(text(form, "choice") === "join" ? "join" : "new");
   } catch (error) {
-    query = `error=${encodeURIComponent(error instanceof GhlError ? "ghl" : messageOf(error))}`;
+    if (
+      !(error instanceof ConnectError || error instanceof ClientAccessDenied) &&
+      !(error instanceof GhlError)
+    ) {
+      throw error;
+    }
+    const message = error instanceof GhlError ? "ghl" : error.message;
+    landing = await integrationsReturn(`error=${encodeURIComponent(message)}`);
   }
   revalidatePath("/", "layout");
-  redirect(await integrationsReturn(query));
+  redirect(landing);
 }
 
 /** "Do this later" on the setup's GitHub or Vercel step. */
