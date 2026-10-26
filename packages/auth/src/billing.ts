@@ -166,7 +166,8 @@ const seatsText = (n: number) => `${n} seat${n === 1 ? "" : "s"}`;
  * Why the agency may not take one more person, or `null` if it may. Everyone in the agency takes
  * a seat, and so does every invitation still open, so a plan's seats can't be overshot by
  * inviting many at once. When accepting, that invitation already holds its seat: only people
- * already in count. Comped agencies and plans without a seat limit are never refused.
+ * already in count. Comped agencies and plans without a seat limit are never refused; an agency
+ * with no plan at all (none chosen, or its trial over) may not invite anyone new.
  */
 export async function seatRefusal(
   db: ControlDb,
