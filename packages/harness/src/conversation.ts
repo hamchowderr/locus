@@ -33,13 +33,16 @@ export const HISTORY_TOKENS = 24_000;
  * The stub's text. It replaces every forgotten result, not only GHL reads (site-builder tools,
  * writes, failures), and serves later turns too. Told only that a result was gone, a model
  * concluded it had invented the contacts it had just read (`apps/agent/fixtures/recorded/ask-back`),
- * so the note says the result was real; it still sends the model back to GHL for current data.
+ * so the note says the result was real. A run that resumed after an approval saw its own read
+ * blanked and said it had drafted a reply before reading the conversation, so the note also says
+ * the later steps were taken with the result in view. It still sends the model back to GHL for
+ * current data.
  */
 export const NOT_KEPT =
   "Not kept: this tool really ran and returned a result, which was removed afterwards because " +
-  "it may hold data from GoHighLevel or a connected app, and that is not stored. What you said " +
-  "from it was right when you said it, but it may have changed since: read it again before you " +
-  "rely on its details.";
+  "it may hold data from GoHighLevel or a connected app, and that is not stored. You had the " +
+  "whole result when you took your next steps, so what you did and said after it was based on " +
+  "it. It may have changed since: read it again before you rely on its details.";
 
 export function createLocusMemory(storage: ConversationStore): Memory {
   return new Memory({
