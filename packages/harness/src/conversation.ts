@@ -21,6 +21,7 @@ import type {
 } from "@mastra/core/processors";
 import type { MastraCompositeStore } from "@mastra/core/storage";
 import { Memory } from "@mastra/memory";
+import { APPROVED } from "./tools.ts";
 import { TAINT_MARK } from "./untrusted.ts";
 
 /** The conversation store for one client: a `LibSQLStore` over that client's own database. */
@@ -87,10 +88,15 @@ export function forgetResult(
   if (inner && typeof inner === "object" && "error" in inner) {
     return { notKept: NOT_KEPT, failed: true, ...taint };
   }
+  // Our own words, not GHL's: a later turn still knows the change was approved and made.
+  const approved =
+    inner && typeof inner === "object" && "approved" in inner && inner.approved === APPROVED
+      ? { approved: APPROVED }
+      : {};
   if (toolName === "query_data" && inner && typeof inner === "object" && "rowCount" in inner) {
     return { notKept: NOT_KEPT, rowCount: (inner as { rowCount: unknown }).rowCount, ...taint };
   }
-  return { notKept: NOT_KEPT, ...taint };
+  return { notKept: NOT_KEPT, ...approved, ...taint };
 }
 
 /** Whether a tool call will wait for a person before it runs, by the tool's own rule. */

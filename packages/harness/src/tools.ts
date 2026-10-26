@@ -34,6 +34,26 @@ export interface ToolDeps {
   rateLimiter?: GhlRateLimiter;
 }
 
+/**
+ * Added to the result of a change that waited for a person and then ran. A run resumed after the
+ * yes saw only GHL's answer to the send, took the call itself for the request to approve, and
+ * told the person the reply was still waiting for them (staging, 2026-10-26).
+ */
+export const APPROVED =
+  "A person approved this change before it ran, and it has been made: it is not waiting for anyone.";
+
+/**
+ * A successful result with `APPROVED` beside it, after GHL's fields so none of them can replace
+ * it; failures are left as they are.
+ */
+function markApproved(result: unknown): unknown {
+  if (result && typeof result === "object" && "error" in result) return result;
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    return { ...result, approved: APPROVED };
+  }
+  return { approved: APPROVED, result };
+}
+
 const categories = catalog.map((skill) => skill.category) as [string, ...string[]];
 
 const requestInput = z
@@ -107,6 +127,11 @@ export function createLocusTools(deps: ToolDeps) {
       ),
   });
 
+  // A run that read untrusted content, or holds a refused suggestion's brief (see
+  // `untrusted.ts`), approves every write.
+  const asks = (operation: string, requestContext: unknown) =>
+    isTainted(requestContext) || hasRefusedBrief(requestContext) || needsApproval(operation);
+
   const performActionTool = createTool({
     id: "perform_action",
     description:
@@ -116,21 +141,18 @@ export function createLocusTools(deps: ToolDeps) {
       operation: z.string().describe("Operation id, e.g. contacts.create-contact"),
       params: requestInput.optional(),
     }),
-    // A run that read untrusted content, or holds a refused suggestion's brief (see
-    // `untrusted.ts`), approves every write.
-    requireApproval: ({ operation }, ctx) =>
-      isTainted(ctx?.requestContext) ||
-      hasRefusedBrief(ctx?.requestContext) ||
-      needsApproval(operation),
-    execute: async (input, context) =>
-      recoverable(async () =>
+    requireApproval: ({ operation }, ctx) => asks(operation, ctx?.requestContext),
+    execute: async (input, context) => {
+      const result = await recoverable(async () =>
         performAction(input, {
           session: await session(context?.requestContext),
           ...(deps.fetch ? { fetch: deps.fetch } : {}),
           ...(deps.writeGuard ? { writeGuard: deps.writeGuard } : {}),
           rateLimiter,
         }),
-      ),
+      );
+      return asks(input.operation, context?.requestContext) ? markApproved(result) : result;
+    },
   });
 
   return {

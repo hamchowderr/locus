@@ -22,4 +22,9 @@ describe("a drafted reply's brief", () => {
     expect(summary).toBeLessThan(brief.indexOf("conversations.send-a-new-message"));
     expect(brief).toMatch(/without quoting the message/);
   });
+
+  test("says a returned send was approved and went out", () => {
+    // A run resumed after the yes said the reply was still waiting for approval.
+    expect(brief).toMatch(/once it returns, the reply has been sent/);
+  });
 });
