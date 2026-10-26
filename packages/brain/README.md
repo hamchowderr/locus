@@ -65,6 +65,8 @@ A new client's brain is empty, so its context asks the agent to offer, once, to 
 notes from the client's website. `createWebsiteReader` (`read_client_website`) reads one page at
 a time of the website on the sub-account's GoHighLevel business profile, read live on every
 call after the staff check. Every page and redirect must stay on that site's host and resolve
-to a public address. The harness treats what the site says as outside text, so the run is
-tainted and every note drafted from it waits for a person's yes. The business profile itself
-is never copied into notes.
+to a public address, and the connection goes to the address that was checked. Ports other
+than 80, 443 or the one the website on record names are refused, and markup is read in one
+pass. The harness treats what the site says as outside text, so the run that read it is
+tainted and every note that run drafts waits for a person's yes. (Like GHL reads, the taint
+ends with the run.) The business profile itself is never copied into notes.

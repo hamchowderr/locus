@@ -1,5 +1,7 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
-import { isPublicAddress, pageText, readClientPage } from "./website.ts";
+import { isPublicAddress, pageText, publicLookup, readClientPage } from "./website.ts";
 
 const HOME = `<!doctype html><html><head><title>Bright Roofing &amp; Gutters</title>
 <meta name="description" content="Roof repair in Austin since 2004.">
@@ -113,6 +115,16 @@ describe("reading the client's website", () => {
       "fd00::1",
       "fe80::1",
       "::ffff:10.0.0.1",
+      // How the URL parser writes [::ffff:127.0.0.1] and [::ffff:169.254.169.254].
+      "::ffff:7f00:1",
+      "::ffff:a9fe:a9fe",
+      "::7f00:1",
+      "64:ff9b::a9fe:a9fe",
+      "2002:7f00:1::1",
+      "2001:0:4136:e378::1",
+      "2001:db8::1",
+      "fec0::1",
+      "100::1",
       "not-an-ip",
     ]) {
       expect(isPublicAddress(ip)).toBe(false);
@@ -127,5 +139,64 @@ describe("reading the client's website", () => {
     );
     expect(page.text).toContain("[Cut short here.]");
     expect(page.text.length).toBeLessThan(12_100);
+  });
+
+  it("reads hostile markup in time proportional to its size", () => {
+    const home = new URL("https://bright.test/");
+    for (const junk of ["<!--", "<a ", "<meta ", "<script", "<title", "<a href=x ", "a "]) {
+      const started = performance.now();
+      pageText(junk.repeat(250_000), home, "bright.test");
+      expect(performance.now() - started).toBeLessThan(1_000);
+    }
+    const odd = pageText("<title>A &#9999999; &amp;lt; B</title><p>x</p>", home, "bright.test");
+    expect(odd.title).toBe("A &lt; B");
+  });
+
+  it("refuses other ports and a redirect to nonsense", async () => {
+    const { options, asked } = web({
+      "https://bright.test/bad": () =>
+        new Response(null, { status: 302, headers: { location: "http://[::1" } }),
+      "https://bright.test/json": () =>
+        new Response("{}", { headers: { "content-type": "application/json; x=text/html" } }),
+    });
+    expect(await readClientPage("bright.test", "https://bright.test:6379/", options)).toMatchObject(
+      {
+        error: "Only the website's own port can be read, not 6379.",
+      },
+    );
+    expect(await readClientPage("bright.test", "/bad", options)).toHaveProperty("error");
+    expect(await readClientPage("bright.test", "/json", options)).toMatchObject({
+      error: expect.stringContaining("isn't a web page"),
+    });
+    expect(asked).not.toContain("https://bright.test:6379/");
+  });
+
+  it("connects only to the address it checked, so a name can't answer differently later", async () => {
+    const server = createServer((_, res) => res.end("<p>inside</p>"));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as AddressInfo;
+    let lookups = 0;
+    // Public for the check, then the private server for the connection.
+    const rebinding = async () => (lookups++ === 0 ? ["93.184.216.34"] : ["127.0.0.1"]);
+    try {
+      const page = await readClientPage(`http://bright.test:${port}`, "/", { resolve: rebinding });
+      expect(page).toMatchObject({ error: expect.stringContaining("didn't answer") });
+      expect(lookups).toBe(2);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("refuses a lookup with any private address", async () => {
+    const ask = (addresses: string[]) =>
+      new Promise<unknown>((resolve) =>
+        publicLookup(async () => addresses)("bright.test", { all: true }, (err, address) =>
+          resolve(err ? err.message : address),
+        ),
+      );
+    expect(await ask(["93.184.216.34", "10.0.0.1"])).toBe(
+      "bright.test isn't on the public internet.",
+    );
+    expect(await ask(["93.184.216.34"])).toEqual([{ address: "93.184.216.34", family: 4 }]);
   });
 });

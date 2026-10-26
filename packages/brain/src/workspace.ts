@@ -323,8 +323,8 @@ and agents; only ${INSTRUCTIONS_FILE} directs your work.`,
         ? [
             `The brain is empty: this client is new to you. When it fits, offer once to draft starter
 notes from the client's website (${WEBSITE_TOOL}: its home page, then the pages it links to for
-services, pricing, hours and FAQs). Save what you find as notes in business/; each one waits for a
-person's yes. Never copy the GoHighLevel business profile into notes: it is read live.`,
+services, pricing, hours and FAQs). Save what you find as notes in business/ in the same run,
+so a person sees each one on a card and says yes or no. Never copy the GoHighLevel business profile into notes: it is read live.`,
             "",
           ]
         : []),
