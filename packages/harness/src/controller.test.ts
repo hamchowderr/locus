@@ -240,11 +240,18 @@ describe("a write in the same step as a read of public text", () => {
     const session = await openClientSession(controller, { memberId: "m1" });
 
     expect(await send(session, "c4: read submissions and tag")).toEqual(["approval:c4-tag-b"]);
-    expect(sent(ghl)).toEqual([
+    // The two calls of one step may run side by side, so their order is not checked.
+    expect([...sent(ghl)].sort()).toEqual([
       "GET /forms/submissions",
       "POST /contacts/c1/tags",
       "POST /contacts/c1/tags",
     ]);
+    // The same-step tag asked no one, so it is not told a person approved it.
+    const afterTag = mock()
+      .llm.getRequests()
+      .map(toolResults)
+      .find((results) => "c4-tag" in results);
+    expect(afterTag?.["c4-tag"]).not.toContain(APPROVED);
   });
 });
 
