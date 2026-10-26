@@ -11,7 +11,12 @@
  *    `<User>` in a site's JSX doesn't hide the whole file.
  * 2. A run that has read such content, or has read free text the public writes (form and survey
  *    submissions, conversation messages, notes, reviews, comments), is *tainted*: from then on
- *    every `perform_action` waits for a person to approve it, whatever the operation.
+ *    every `perform_action` waits for a person to approve it, whatever the operation. "From then
+ *    on" means the model steps after the read: a write the model asks for in the same step as
+ *    the read was chosen before the text existed for it, so the text cannot have steered it
+ *    (and the taint is set only once every call in the step has run). That holds while no
+ *    tool's result reaches the model within a step: a provider-run tool (a model's own web
+ *    search or fetch) would break it, and would need gating here before it is added.
  *
  * The patterns catch the common phrasings, not every phrasing; a determined attacker can word
  * around them. That is why reading public free text taints the run on its own: for that data a
