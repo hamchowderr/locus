@@ -39,6 +39,12 @@ export async function listNotePaths(
     .orderBy(asc(brainFile.path));
 }
 
+/** How many notes there are, without reading them. */
+export async function countNotes(db: Executor): Promise<number> {
+  const [row] = await db.select({ n: count() }).from(brainFile);
+  return row?.n ?? 0;
+}
+
 export async function listNotes(db: Executor): Promise<NoteRow[]> {
   return db.select().from(brainFile).orderBy(asc(brainFile.path));
 }

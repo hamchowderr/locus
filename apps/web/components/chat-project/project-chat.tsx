@@ -143,7 +143,7 @@ export function ProjectChat({
   const [openId, setOpenId] = useState<string | null>(null);
   const [threadRunning, setThreadRunning] = useState(false);
   const [tab, setTab] = useState(THREADS_TAB);
-  const [mainId, settleMain] = useMainThread(main, isChat);
+  const [mainId, settleMain, looked] = useMainThread(main, isChat);
   const [mode, setMode] = useState(modes?.[0]?.id);
 
   const work = new Map(threads.filter((t) => t.parentThreadId).map((t) => [t.id, t]));
@@ -409,7 +409,9 @@ export function ProjectChat({
           <div className="flex flex-1 flex-col items-center justify-end gap-2 px-4 pb-6 text-center">
             <h1 className="text-balance font-semibold text-3xl tracking-tight">{greeting}</h1>
             {emptyText && <p className="text-base text-muted-foreground">{emptyText}</p>}
-            {welcome && <div className="mt-4 flex w-full justify-center">{welcome}</div>}
+            {welcome && looked && (
+              <div className="mt-4 flex w-full justify-center">{welcome}</div>
+            )}
           </div>
         ) : (
           <ChatView
@@ -429,7 +431,7 @@ export function ProjectChat({
             the first send (and a refused one comes back into the same box). */}
         <div className={cn(empty && 'flex-1')}>
           {mainComposer}
-          {empty && (
+          {empty && looked && (
             <StarterList
               starters={starters}
               disabled={mainBusy}
@@ -526,8 +528,10 @@ function ProjectComposer({
 function useMainThread(
   main: UseAgentControllerChat,
   isChat: (t: ThreadItem) => boolean,
-): [string | null, () => void] {
+): [string | null, () => void, boolean] {
   const [mainId, setMainId] = useState<string | null>(null);
+  // Whether the list of chats has come back, so a returning person's chat isn't shown as new.
+  const [looked, setLooked] = useState(false);
   const firstIsChat = useRef(isChat);
   // A chat the first message made while the list loaded stays the one on show.
   const settled = useRef(false);
@@ -548,6 +552,8 @@ function useMainThread(
         }
       } catch {
         // No history to show; the first message starts the chat.
+      } finally {
+        setLooked(true);
       }
     })();
   }, [openThread]);
@@ -562,5 +568,5 @@ function useMainThread(
   const settle = useCallback(() => {
     settled.current = true;
   }, []);
-  return [mainId, settle];
+  return [mainId, settle, looked];
 }

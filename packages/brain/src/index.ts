@@ -15,6 +15,7 @@ export {
   SETUP_NOTE,
 } from "./paths.ts";
 export {
+  countNotes,
   getNote,
   listNotes,
   listNoteVersions,
