@@ -20,7 +20,10 @@ function apiFor(
   ghl: FakeGhl,
   extras: Partial<Parameters<typeof createLocusController>[0]> = {},
   hostContext?: Record<string, unknown>,
-  { workThreads = false }: { workThreads?: boolean } = {},
+  {
+    workThreads = false,
+    mayRun,
+  }: { workThreads?: boolean; mayRun?: (member: AgentApiMember) => Promise<string | null> } = {},
 ) {
   let signedIn: AgentApiMember | null = {
     memberId: "m1",
@@ -63,6 +66,7 @@ function apiFor(
       return controller;
     },
     ...(hostContext ? { requestContext: async () => hostContext } : {}),
+    ...(mayRun ? { mayRun } : {}),
   });
   const client = new MastraClient({
     baseUrl: "http://locus.test",
@@ -1196,5 +1200,60 @@ describe("work threads, through the chat kit's routes", () => {
   test("refuses what a thread that is not the client.s waits on", async () => {
     const { api } = apiFor(createFakeGhl({}), {}, undefined, { workThreads: true });
     expect((await kit(api, "threads/someone-elses/pending")).status).toBe(404);
+  });
+});
+
+describe("when the agency may not run the model", () => {
+  const ENDED = "Your free trial has ended.";
+
+  test("new messages, approvals and answers are refused with the reason; reading is not", async () => {
+    let refusal: string | null = ENDED;
+    const asked: string[] = [];
+    const { api } = apiFor(createFakeGhl({ "*": { body: {} } }), {}, undefined, {
+      mayRun: async (member) => {
+        asked.push(member.clientId);
+        return refusal;
+      },
+    });
+    const kit = (path: string, body?: unknown) =>
+      api.fetch(
+        new Request(`http://locus.test${PREFIX}/kit/agent-controller/${path}`, {
+          method: body === undefined ? "GET" : "POST",
+          ...(body === undefined
+            ? {}
+            : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
+        }),
+      );
+
+    for (const [path, body] of [
+      ["stream", { text: "Hello" }],
+      ["approve", { decision: "approve", toolCallId: "x" }],
+      ["answer", { answer: "yes" }],
+    ] as const) {
+      const res = await kit(path, body);
+      expect(res.status).toBe(402);
+      expect(await res.json()).toEqual({ error: ENDED });
+    }
+    expect(asked).toEqual(["client-A", "client-A", "client-A"]);
+    expect((await kit("threads")).status).toBe(200);
+    expect(asked).toHaveLength(3);
+
+    const session = `http://locus.test${PREFIX}/agent-controller/locus/sessions/${encodeURIComponent(RESOURCE)}`;
+    const sent = await api.fetch(
+      new Request(`${session}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "Hello" }),
+      }),
+    );
+    expect(sent.status).toBe(402);
+    expect(mock().llm.getRequests()).toHaveLength(0);
+
+    // Once a plan is chosen, the chat runs again.
+    refusal = null;
+    mock().llm.on({ userMessage: /hello again/i }, { content: "Hi." });
+    const stream = kitEvents(await kit("stream", { text: "Hello again" }));
+    await stream.until((e) => e.type === "__done__");
+    expect(stream.events.some((e) => e.type === "__done__")).toBe(true);
   });
 });

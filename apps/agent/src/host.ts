@@ -19,6 +19,7 @@ import {
 } from "@locus/agent-api";
 import {
   type AuthorizedClient,
+  agencyEntitlement,
   authorizeClient,
   authorizeMemberClient,
   brainAutoSaveFor,
@@ -409,6 +410,23 @@ export function createHost({
     throw new ClientAccessDenied("nobody may open this client now");
   };
 
+  /**
+   * Why the client's agency may not run the model now: its free trial ended and no plan was
+   * chosen. Only that: an agency that never had a trial (comped, or from before trials) is
+   * left as it is, and billing's other states are the web app's to enforce.
+   */
+  const trialRefusal = async (clientId: string): Promise<string | null> => {
+    const [row] = await db
+      .select({ organizationId: schema.location.organizationId })
+      .from(schema.location)
+      .where(eq(schema.location.id, clientId));
+    if (!row) return null;
+    const { status } = await agencyEntitlement(db, row.organizationId);
+    return status === "trial_ended"
+      ? "Your free trial has ended. An owner or admin can choose a plan on the Billing page to keep going."
+      : null;
+  };
+
   /** Each client's drafted replies, set up with its controller. */
   const inboxes = new Map<string, InboxDrafts>();
 
@@ -431,6 +449,7 @@ export function createHost({
       opened.set(request, { ctx, clientId });
       return { memberId: client.memberId, locationId: client.location.ghlLocationId, clientId };
     },
+    mayRun: ({ clientId }) => trialRefusal(clientId),
     // Each run carries the session it acts for, so its GHL calls are checked against that
     // member, not whoever used the client last.
     requestContext: async (request) => {
@@ -638,6 +657,8 @@ export function createHost({
     for (const { id: clientId } of clients) {
       const memberId = await inboxDraftsFor(db, clientId);
       if (!memberId) continue;
+      // No drafts once the trial ended unpaid: each one is a model run.
+      if (await trialRefusal(clientId)) continue;
       let client: Awaited<ReturnType<typeof drafterFor>>;
       try {
         client = await drafterFor(memberId, clientId);

@@ -96,7 +96,7 @@ function trialNotice(
   if (!entitlement?.trialEndsAt) return null;
   if (entitlement.status === "trial_ended") {
     return {
-      text: "Your free trial has ended.",
+      text: "Your free trial has ended. The chat is paused until a plan is chosen.",
       ended: true,
     };
   }
