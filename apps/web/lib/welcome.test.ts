@@ -36,7 +36,14 @@ describe("the chat's welcome", () => {
     const w = buildWelcome({ ...facts, manager: false, isNew: false, notes: 12 });
     expect(w.greeting).toBe("Hi Chowderr 👋");
     expect(w.rows.map((r) => r.label)).toEqual(["GoHighLevel", "Brain"]);
+    expect(w.rows[0]?.detail).toBe("Sunrise Dental, read live.");
     expect(w.rows[0]?.href).toBeUndefined();
     expect(w.rows[1]?.detail).toBe("12 notes about Sunrise Dental.");
+  });
+
+  it("says when the brain couldn't be read, and when the trial ends today", () => {
+    const w = buildWelcome({ ...facts, notes: null, trialDays: 0 });
+    expect(w.rows.find((r) => r.label === "Brain")?.state).toBe("info");
+    expect(w.rows.find((r) => r.label === "Free trial")?.detail).toMatch(/^Ends today\./);
   });
 });

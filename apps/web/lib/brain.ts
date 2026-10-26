@@ -3,6 +3,7 @@ import {
   BRAIN_FOLDERS,
   BrainFilesystem,
   BrainPathError,
+  countNotes,
   getNote,
   INSTRUCTIONS_FILE,
   listNotes,
@@ -306,5 +307,5 @@ export async function saveSetupNote(
 
 /** How many notes the client's brain holds, instructions included. */
 export async function brainNoteCount(deps: BrainDeps, client: AuthorizedClient): Promise<number> {
-  return withTenant(deps, client, async (db) => (await listNotes(db)).length);
+  return withTenant(deps, client, (db) => countNotes(db));
 }

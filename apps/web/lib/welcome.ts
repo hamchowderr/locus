@@ -123,7 +123,10 @@ export function buildWelcome(f: WelcomeFacts): ChatWelcome {
   const rows: ContextRow[] = [
     {
       label: "GoHighLevel",
-      detail: `${f.agency ?? "Your agency"}: ${plural(f.clients, "sub-account")}, read live.`,
+      // Members may reach only some sub-accounts: they hear about this one.
+      detail: manager
+        ? `${f.agency ?? "Your agency"}: ${plural(f.clients, "sub-account")}, read live.`
+        : `${business}, read live.`,
       state: "ready",
       ...(manager ? { href: "/clients" } : {}),
     },
@@ -135,7 +138,7 @@ export function buildWelcome(f: WelcomeFacts): ChatWelcome {
           : notes <= 1
             ? "Almost empty. Ask me to fill it from the website."
             : `${plural(notes, "note")} about ${business}.`,
-      state: notes !== null && notes <= 1 ? "missing" : "ready",
+      state: notes === null ? "info" : notes <= 1 ? "missing" : "ready",
       href: "/brain",
     },
   ];
@@ -172,7 +175,7 @@ export function buildWelcome(f: WelcomeFacts): ChatWelcome {
   if (manager && f.trialDays !== null) {
     rows.push({
       label: "Free trial",
-      detail: `${plural(f.trialDays, "day")} left. No card needed until you choose a plan.`,
+      detail: `${f.trialDays > 0 ? `${plural(f.trialDays, "day")} left` : "Ends today"}. No card needed until you choose a plan.`,
       state: "info",
       href: "/billing",
     });

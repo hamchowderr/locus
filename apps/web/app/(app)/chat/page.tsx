@@ -42,7 +42,13 @@ export default async function ChatPage() {
           brain={<BrainTab client={client} />}
           inbox={<InboxTab />}
           connectorScope={appConnectionsFromEnv() ? client.location.id : undefined}
-          welcome={await chatWelcome(current, client)}
+          // The welcome is extra: if it can't be read, the chat opens without it.
+          welcome={
+            await chatWelcome(current, client).catch((error: unknown) => {
+              console.error("Reading the chat's welcome failed", error);
+              return undefined;
+            })
+          }
         />
       ) : (
         <div className="mx-auto mt-6 w-full max-w-4xl px-4">
