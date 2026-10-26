@@ -215,7 +215,13 @@ export function readsPublicText(operationId: string): boolean {
 }
 
 /** Tools whose every result is written by other people: a connected app's emails, messages. */
-const OUTSIDE_TEXT_TOOLS = new Set(["use_app"]);
+/** Tools whose results are other people's text, by where it comes from. */
+const OUTSIDE_TEXT_SOURCES: Record<string, string> = {
+  use_app: "a connected app",
+  // The client's own website, read to draft starter notes (`@locus/brain`).
+  read_client_website: "the client's website",
+};
+const OUTSIDE_TEXT_TOOLS = new Set(Object.keys(OUTSIDE_TEXT_SOURCES));
 
 /** Tools whose results are our own text, not GHL content. */
 const TRUSTED_TOOLS = new Set(["load_skill"]);
@@ -283,13 +289,14 @@ export class UntrustedContentProcessor implements Processor<"locus-untrusted-con
     if (screened.withheld === 0 && !publicText) return;
 
     taint(requestContext);
-    const fromApp = OUTSIDE_TEXT_TOOLS.has(toolName);
-    const source = fromApp ? "a connected app" : fromThread ? "a thread" : "GoHighLevel";
+    const outside = OUTSIDE_TEXT_SOURCES[toolName];
+    const fromApp = outside !== undefined;
+    const source = outside ?? (fromThread ? "a thread" : "GoHighLevel");
     const why =
       screened.withheld > 0
         ? `${screened.withheld} value(s) or line(s) from ${source} read like instructions and were withheld.`
         : fromApp
-          ? "This result comes from a connected app and holds text written by other people."
+          ? `This result comes from ${source} and holds text written by other people.`
           : fromThread
             ? "This result holds a thread's words, which can quote text written by other people."
             : "This result holds text written by the public.";

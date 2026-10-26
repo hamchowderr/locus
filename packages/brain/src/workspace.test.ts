@@ -206,9 +206,13 @@ describe("the brain in context", () => {
 
   it("says when there are no instructions, and cuts a very long one", async () => {
     const { brain } = await brainTools();
-    expect(await brain.context.render()).toContain("(No instructions for this client yet.)");
+    const empty = await brain.context.render();
+    expect(empty).toContain("(No instructions for this client yet.)");
+    // A new client's agent offers to start the brain from the client's website.
+    expect(empty).toContain("read_client_website");
     await brain.filesystem.writeFile("instructions.md", "a".repeat(MAX_CONTEXT_CHARS + 50));
     const text = await brain.context.render();
+    expect(text).not.toContain("read_client_website");
     expect(text).toContain(`Cut short here. Read the rest with ${BRAIN_TOOLS.read}.`);
     expect(text).not.toContain("a".repeat(MAX_CONTEXT_CHARS + 1));
   });
