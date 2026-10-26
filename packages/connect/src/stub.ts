@@ -2,8 +2,8 @@
  * `GHL_MODE=stub`: a pretend GHL agency, so the connect flow can be built and run without a
  * GoHighLevel account or the Marketplace app. It answers the OAuth endpoints Locus uses, as the
  * live docs describe them, for one fixture company — plus users search for its staff, reading a
- * sub-account with that sub-account's own token, and taking a site's lead (contact upsert, tags,
- * note) without keeping it.
+ * sub-account with that sub-account's own token, listing its conversations (two made-up ones),
+ * and taking a site's lead (contact upsert, tags, note) without keeping it.
  */
 
 export interface StubAgency {
@@ -86,6 +86,41 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
       const own = agency.locations.find((l) => l._id === asLocation);
       if (method === "GET" && own && url.pathname === `/locations/${own._id}`) {
         return Response.json({ location: { id: own._id, name: own.name } });
+      }
+      // The chat's Inbox (`listInbox`): two made-up conversations, for this sub-account only.
+      if (own && method === "GET" && url.pathname === "/conversations/search") {
+        if (url.searchParams.get("locationId") !== own._id) {
+          return Response.json(
+            { statusCode: 403, message: "Not this sub-account" },
+            { status: 403 },
+          );
+        }
+        const at = Date.parse("2026-10-14T12:00:00Z");
+        return Response.json({
+          conversations: [
+            {
+              id: `stubconv1${own._id.replace(/\W/g, "")}`,
+              contactId: "stubcontact1",
+              locationId: own._id,
+              fullName: "Jordan Visitor",
+              lastMessageBody: "Hi, is the open house still on Sunday?",
+              lastMessageType: "TYPE_LIVE_CHAT",
+              lastMessageDate: at,
+              unreadCount: 1,
+            },
+            {
+              id: `stubconv2${own._id.replace(/\W/g, "")}`,
+              contactId: "stubcontact2",
+              locationId: own._id,
+              contactName: "Riley Buyer",
+              lastMessageBody: "Thanks, see you then.",
+              lastMessageType: "TYPE_SMS",
+              lastMessageDate: at - 3_600_000,
+              unreadCount: 0,
+            },
+          ],
+          total: 2,
+        });
       }
       // A site's lead form (`submitSiteLead`): accepted and forgotten, nothing is kept.
       if (own && method === "POST" && url.pathname === "/contacts/upsert") {
