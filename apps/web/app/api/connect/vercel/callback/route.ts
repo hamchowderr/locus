@@ -5,8 +5,10 @@ import { NextResponse } from "next/server";
 import { baseUrl } from "@/lib/connect";
 import { VERCEL_STATE_COOKIE, vercelDeps } from "@/lib/hosts";
 import { currentSession, NotConfigured, sessionContext } from "@/lib/locus";
+import { integrationsReturn } from "@/lib/onboarding";
 
-const back = (query: string) => NextResponse.redirect(new URL(`/connect?${query}`, baseUrl()));
+const back = async (query: string) =>
+  NextResponse.redirect(new URL(await integrationsReturn(query), baseUrl()));
 
 /**
  * Vercel sends the installer back here with a `code`, `configurationId`, `teamId` and our
@@ -20,18 +22,18 @@ export async function GET(request: Request) {
   jar.delete({ name: VERCEL_STATE_COOKIE, path: "/api/connect/vercel" });
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
-  if (!expected || !state || state !== expected || !code) return back("error=vercel-state");
+  if (!expected || !state || state !== expected || !code) return await back("error=vercel-state");
 
   const current = await currentSession();
   if (!current) return NextResponse.redirect(new URL("/sign-in?next=%2Fconnect", baseUrl()));
   try {
     const result = await connectVercel(vercelDeps(), sessionContext(current), { code });
-    return back(`vercel=${encodeURIComponent(result.accountName)}`);
+    return await back(`vercel=${encodeURIComponent(result.accountName)}`);
   } catch (error) {
     if (error instanceof ConnectError || error instanceof ClientAccessDenied) {
-      return back(`error=${encodeURIComponent(error.message)}`);
+      return await back(`error=${encodeURIComponent(error.message)}`);
     }
-    if (error instanceof NotConfigured) return back("error=vercel-not-configured");
+    if (error instanceof NotConfigured) return await back("error=vercel-not-configured");
     throw error;
   }
 }

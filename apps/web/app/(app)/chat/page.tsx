@@ -1,4 +1,5 @@
 import { ClientAccessDenied, resolveActiveClient } from "@locus/auth";
+import { onboardingStep } from "@locus/connect";
 import { redirect } from "next/navigation";
 import { Notice } from "@/app/ui";
 import { BrainTab } from "@/components/brain-tab";
@@ -20,6 +21,8 @@ export default async function ChatPage() {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fchat");
   if (!current.session.activeOrganizationId) redirect("/onboarding");
+  if (await onboardingStep(locus().db, current.session.activeOrganizationId))
+    redirect("/onboarding");
   const client = await resolveActiveClient(locus().db, sessionContext(current)).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
     throw e;

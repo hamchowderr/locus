@@ -24,6 +24,7 @@ import {
   type GhlHttp,
   listInstalledLocations,
   mintLocationToken,
+  readCompanyName,
   readLocationName,
   refreshGrant,
 } from "./ghl-oauth.ts";
@@ -67,9 +68,41 @@ export async function connectAgency(
   ctx: SessionContext,
   code: string,
 ): Promise<SyncResult & { companyId: string }> {
+  await requireAgencyManager(deps.db, ctx);
+  const grant = await exchangeCode(deps.ghl, code, deps.http, deps.now?.() ?? Date.now());
+  return connectAgencyGrant(deps, ctx, grant);
+}
+
+/**
+ * The GHL agency a grant is for, read before any Locus agency exists for it: its name (for
+ * naming the new Locus agency) and whether another Locus agency already holds it. Read-only.
+ */
+export async function inspectGrant(
+  deps: Pick<ConnectDeps, "db" | "http">,
+  grant: AgencyGrant,
+): Promise<{ companyName: string; claimedBy: string | null }> {
+  const [claimed] = await deps.db
+    .select({ organizationId: agencyGhlConnection.organizationId })
+    .from(agencyGhlConnection)
+    .where(eq(agencyGhlConnection.ghlCompanyId, grant.companyId));
+  const companyName = await readCompanyName(
+    { token: grant.accessToken, companyId: grant.companyId },
+    deps.http,
+  ).catch(() => "");
+  return { companyName, claimedBy: claimed?.organizationId ?? null };
+}
+
+/**
+ * Connects the session's agency with a grant already exchanged (`exchangeCode`), then registers
+ * every sub-account it installed Locus on. Owners and admins only.
+ */
+export async function connectAgencyGrant(
+  deps: ConnectDeps,
+  ctx: SessionContext,
+  grant: AgencyGrant,
+): Promise<SyncResult & { companyId: string }> {
   const { organizationId } = await requireAgencyManager(deps.db, ctx);
   const now = deps.now?.() ?? Date.now();
-  const grant = await exchangeCode(deps.ghl, code, deps.http, now);
 
   const [claimed] = await deps.db
     .select()
