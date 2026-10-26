@@ -1247,6 +1247,18 @@ describe("when the agency may not run the model", () => {
       }),
     );
     expect(sent.status).toBe(402);
+    for (const tail of ["steer", "follow-up", "tool-approval", "tool-suspension"]) {
+      const res = await api.fetch(
+        new Request(`${session}/${tail}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({}),
+        }),
+      );
+      expect([tail, res.status]).toEqual([tail, 402]);
+    }
+    // Stopping is never refused.
+    expect((await kit("abort", {})).status).not.toBe(402);
     expect(mock().llm.getRequests()).toHaveLength(0);
 
     // Once a plan is chosen, the chat runs again.
