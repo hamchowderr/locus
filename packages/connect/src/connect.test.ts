@@ -528,7 +528,30 @@ describe("sub-account sessions", () => {
     expect(only?.at).toBeNull();
     const search = fake.requests.find((r) => r.url.pathname === "/conversations/search");
     expect(search?.url.searchParams.get("locationId")).toBe(harbor.ghlLocationId);
-    expect(search?.url.searchParams.get("sortBy")).toBe("last_message_date");
+    expect(Object.fromEntries(search?.url.searchParams ?? [])).toMatchObject({
+      sortBy: "last_message_date",
+      sort: "desc",
+      status: "all",
+      limit: "20",
+    });
+    expect(search?.headers.version).toBe("v3");
+  });
+
+  it("passes on GHL refusing the inbox read", async () => {
+    const fake = createFakeGhl({
+      "POST /oauth/location-token": (req) => ({
+        body: {
+          access_token: "loc-token",
+          locationId: (req.body as { locationId: string }).locationId,
+        },
+      }),
+      "GET /conversations/search": { status: 401, body: { message: "scope missing" } },
+    });
+    const harbor = await clientNamed("Harbor Realty");
+    const client = await authorizeClient(db, ctx("owner", "agency-a"), harbor.id);
+    await expect(
+      listInbox({ ...deps, http: { fetch: fake.fetch, baseUrl: "https://fake.ghl.test" } }, client),
+    ).rejects.toBeInstanceOf(GhlError);
   });
 });
 

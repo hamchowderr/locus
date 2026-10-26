@@ -36,7 +36,7 @@ export default async function ChatPage() {
           className="min-h-0 flex-1"
           modes={CHAT_MODES}
           library={<LibraryTab client={client} />}
-          inbox={<InboxTab client={client} />}
+          inbox={<InboxTab />}
           connectorScope={appConnectionsFromEnv() ? client.location.id : undefined}
         />
       ) : (
