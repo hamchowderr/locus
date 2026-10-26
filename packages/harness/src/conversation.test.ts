@@ -394,6 +394,9 @@ describe("forgetResult", () => {
     expect(NOT_KEPT).toMatch(/really ran and returned a result/);
     // Not a licence to reuse an old copy on a later turn.
     expect(NOT_KEPT).toMatch(/may have changed since: read it again before you rely on/);
+    // A run resuming after an approval saw its read blanked and said it had acted without
+    // reading: the note says the steps after it had the result in view.
+    expect(NOT_KEPT).toMatch(/whole result when you took the steps after it/);
   });
 });
 

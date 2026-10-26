@@ -41,7 +41,7 @@ export const HISTORY_TOKENS = 24_000;
 export const NOT_KEPT =
   "Not kept: this tool really ran and returned a result, which was removed afterwards because " +
   "it may hold data from GoHighLevel or a connected app, and that is not stored. You had the " +
-  "whole result when you took your next steps, so what you did and said after it was based on " +
+  "whole result when you took the steps after it, so what you did and said then was based on " +
   "it. It may have changed since: read it again before you rely on its details.";
 
 export function createLocusMemory(storage: ConversationStore): Memory {
