@@ -77,8 +77,9 @@ async function joinTarget(
 }
 
 export async function heldInstall(): Promise<HeldInstall> {
-  const deps = connectDeps();
   const id = (await cookies()).get(HELD_GRANT_COOKIE)?.value;
+  if (!id) return { kind: "none" };
+  const deps = connectDeps();
   const grant = await peekHeldGrant(deps, id);
   if (!grant) return { kind: "none" };
   const { companyName, claimedBy } = await inspectGrant(deps, grant);
