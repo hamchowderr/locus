@@ -78,6 +78,13 @@ export {
   type SiteFile,
 } from "./publish.ts";
 export {
+  MAX_SETUP_NAMES,
+  readSetupSummary,
+  SETUP_PARTS,
+  type SetupSummary,
+  setupNote,
+} from "./setup-summary.ts";
+export {
   enableSiteBackend,
   ensureSiteBackendEnv,
   LOGIN_SECRET_TABLES,

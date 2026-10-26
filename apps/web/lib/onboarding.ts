@@ -1,19 +1,30 @@
-import { ClientAccessDenied, rememberAgency, requireAgencyManager, startTrial } from "@locus/auth";
+import {
+  type AuthorizedClient,
+  ClientAccessDenied,
+  rememberAgency,
+  requireAgencyManager,
+  startTrial,
+} from "@locus/auth";
 import {
   type AgencyGrant,
   beginOnboarding,
   ConnectError,
+  clientGhlSession,
   connectAgencyGrant,
   exchangeCode,
   inspectGrant,
   type OnboardingStep,
   onboardingOpen,
   onboardingStep,
+  readSetupSummary,
+  SETUP_PARTS,
   type SyncResult,
+  setupNote,
 } from "@locus/connect";
 import { agencyTrial, member, organization } from "@locus/db/control";
 import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
+import { brainDeps, saveSetupNote } from "./brain.ts";
 import { connectDeps } from "./connect.ts";
 import { currentSession, locus, sessionContext } from "./locus.ts";
 
@@ -134,5 +145,23 @@ export async function createAgencyFromGrant(grant: AgencyGrant): Promise<SyncRes
     if (error instanceof ConnectError) throw error;
     console.error("Connecting a new agency's GoHighLevel failed", error);
     throw new ConnectError("GoHighLevel couldn't be connected. Try again.");
+  }
+}
+
+/**
+ * The main sub-account's first brain note: how it is set up in GoHighLevel (products, calendars,
+ * pipelines, fields, forms, workflows), by name. Saved straight away, as Locus. Names
+ * only, never a customer's records; the business profile isn't copied, since agents read it live.
+ * Best effort: the setup goes on whatever happens here.
+ */
+export async function fillSetupNote(client: AuthorizedClient): Promise<void> {
+  try {
+    const deps = connectDeps();
+    const summary = await readSetupSummary(await clientGhlSession(deps, client), deps.http);
+    // Nothing read (GoHighLevel down, say): no note is better than an empty one.
+    if (summary.unread.length === SETUP_PARTS) return;
+    await saveSetupNote(brainDeps(), client, setupNote(summary, client.location.name, new Date()));
+  } catch (error) {
+    console.error("Saving the setup note failed", error);
   }
 }
