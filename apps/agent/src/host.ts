@@ -21,6 +21,7 @@ import {
   type AuthorizedClient,
   authorizeClient,
   authorizeMemberClient,
+  brainAutoSaveFor,
   ClientAccessDenied,
   chatKitKey,
   chatKitSessionId,
@@ -502,6 +503,8 @@ export function createHost({
         authorize: async (context) => {
           await runClient(context as { get: (key: string) => unknown } | undefined);
         },
+        // The owners' switch on the Sub-accounts page, read on every proposal.
+        autoSave: () => brainAutoSaveFor(db, location.id),
       });
       // The main chat hands longer work to threads of their own (`start_thread`), which run in
       // the background and report back. Its result is the new thread's id and title only.
@@ -539,6 +542,7 @@ export function createHost({
           ...builder?.tools,
           [workThreads.tool.id]: workThreads.tool,
           ...workThreads.steering,
+          ...brain.tools,
         },
         ownTextTools: [
           ...(builder?.ownTextTools ?? []),

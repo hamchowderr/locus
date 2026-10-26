@@ -13,7 +13,8 @@
   "dependencies": {
     "@locus/db": "workspace:*",
     "@mastra/core": "1.75.0",
-    "drizzle-orm": "0.45.4"
+    "drizzle-orm": "0.45.4",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@libsql/client": "0.18.0",

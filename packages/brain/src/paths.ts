@@ -13,7 +13,7 @@ export const BRAIN_FOLDERS = {
   work: "One note per site, funnel or campaign built or run, with where to find it.",
   decisions: "Dated decisions and the reason for each.",
   sources: "Summaries of files the client gave us or pages of their website.",
-  inbox: "Notes waiting for a person to approve.",
+  inbox: "Rough notes a person hasn't sorted into a folder yet.",
 } as const;
 export type BrainFolder = keyof typeof BRAIN_FOLDERS;
 
