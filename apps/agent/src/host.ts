@@ -21,6 +21,7 @@ import {
   type AuthorizedClient,
   authorizeClient,
   authorizeMemberClient,
+  brainAutoSaveFor,
   ClientAccessDenied,
   chatKitKey,
   chatKitSessionId,
@@ -30,6 +31,12 @@ import {
   resolveActiveClient,
   type SessionContext,
 } from "@locus/auth";
+import {
+  BRAIN_TOOL_NAMES,
+  createBrainWorkspace,
+  createWebsiteReader,
+  type WebsiteReaderOptions,
+} from "@locus/brain";
 import { imagesFromEnv, SITE_BUILDER_AGENT } from "@locus/builder";
 import {
   activeSiteIdForSession,
@@ -42,7 +49,13 @@ import {
   SITE_ID_KEY,
   type SiteBuilderDeps,
 } from "@locus/builder/host";
-import { type ConnectDeps, clientGhl, clientGhlSession, siteCrm } from "@locus/connect";
+import {
+  type ConnectDeps,
+  clientGhl,
+  clientGhlSession,
+  readLocationWebsite,
+  siteCrm,
+} from "@locus/connect";
 import {
   type ControlDb,
   DbSecretStore,
@@ -58,9 +71,12 @@ import {
   clientResource,
   createComposioConnector,
   createLocusController,
+  hasRefusedBrief,
+  isTainted,
   parseAuthConfigs,
   TAINT_KEY,
 } from "@locus/harness";
+import { LoggedRuntimeProvider } from "@locus/sandbox";
 import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
 import type { MastraModelConfig } from "@mastra/core/llm";
 import { RequestContext } from "@mastra/core/request-context";
@@ -129,6 +145,8 @@ export interface HostDeps {
   model: MastraModelConfig;
   /** GHL's API; tests pass a fake. */
   fetch?: typeof fetch;
+  /** How the client's website is reached (`read_client_website`); tests pass fakes. */
+  website?: Pick<WebsiteReaderOptions, "fetch" | "resolve">;
   /** The web app's origin, the only one whose pages may post to the agent. */
   origin: string;
   /** How often an open event stream re-checks access; tests shorten it. */
@@ -183,7 +201,8 @@ export function siteSandboxes(
     let runtimes: ReturnType<typeof runtimesFromEnv> | undefined;
     return {
       runtimes: () => {
-        runtimes ??= local();
+        // Logged here, where the agent itself drives the sandboxes (`logged.ts`).
+        runtimes ??= new LoggedRuntimeProvider(local());
         return runtimes;
       },
     };
@@ -330,6 +349,7 @@ export function createHost({
   connect,
   model,
   fetch,
+  website: websiteAccess = {},
   origin,
   streamCheckMs = STREAM_CHECK_MS,
   logError = (message, error) =>
@@ -489,6 +509,29 @@ export function createHost({
       // One connector per client, so its Composio session is reused across runs.
       const clientApps = apps ? apps(clientId) : null;
       const appSettings = tenantDbOver(clientDb);
+      // The client's brain, in the same database. A run that read other people's words asks
+      // before it saves a note, as before any other change.
+      const brain = createBrainWorkspace(appSettings, {
+        needsApproval: (context) => isTainted(context) || hasRefusedBrief(context),
+        // The same staff check as GHL, before every brain call.
+        authorize: async (context) => {
+          await runClient(context as { get: (key: string) => unknown } | undefined);
+        },
+        // The owners' switch on the Sub-accounts page, read on every proposal.
+        autoSave: () => brainAutoSaveFor(db, location.id),
+      });
+      // The client's own website, for drafting starter notes. Its address is read live from the
+      // sub-account's profile, after the same staff check; its text taints the run, so every note
+      // drafted from it waits for a person.
+      const website = createWebsiteReader({
+        siteUrl: async (context) =>
+          readLocationWebsite(
+            await clientGhlSession(connect, await runClient(context as never)),
+            // GHL's API as every other tool reaches it.
+            fetch ? { fetch } : {},
+          ),
+        ...websiteAccess,
+      });
       // The main chat hands longer work to threads of their own (`start_thread`), which run in
       // the background and report back. Its result is the new thread's id and title only.
       const workThreads = clientWorkThreads(
@@ -525,6 +568,8 @@ export function createHost({
           ...builder?.tools,
           [workThreads.tool.id]: workThreads.tool,
           ...workThreads.steering,
+          ...brain.tools,
+          [website.id]: website,
         },
         ownTextTools: [
           ...(builder?.ownTextTools ?? []),
@@ -537,7 +582,13 @@ export function createHost({
         // The chat page names the supervisor on every turn, and the server saves it on the chat;
         // work threads keep their agent's mode whatever a turn names.
         modes: [...workThreads.modes, ...(builder?.modes ?? [])],
-        ...(builder ? { processors: builder.processors } : {}),
+        workspace: brain,
+        // Notes are the client's own words about the business, never GHL records.
+        keepResults: BRAIN_TOOL_NAMES,
+        processors: {
+          input: [brain.context],
+          ...(builder ? { output: builder.processors.output } : {}),
+        },
       });
       workThreads.attach(controller);
       inboxes.set(
