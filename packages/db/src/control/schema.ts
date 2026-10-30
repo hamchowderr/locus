@@ -321,6 +321,19 @@ export const agencyComp = sqliteTable("agency_comp", {
   createdAt: createdAt(),
 });
 
+/**
+ * An agency's free trial: Starter's limits for a few days, with no card and no Stripe
+ * subscription. It starts when the agency is created, and each person gets one, however many
+ * agencies they create (`started_by_user_id` is unique). The row outlives a deleted agency for
+ * that reason, so `organization_id` is not a foreign key.
+ */
+export const agencyTrial = sqliteTable("agency_trial", {
+  organizationId: text("organization_id").primaryKey(),
+  startedByUserId: text("started_by_user_id").notNull().unique(),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+  endsAt: integer("ends_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const auditLog = sqliteTable(
   "audit_log",
   {

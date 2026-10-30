@@ -79,4 +79,8 @@ export const PLANS: readonly Plan[] = [
   },
 ];
 
+/** What the free trial gets: Starter's limits. */
+// biome-ignore lint/style/noNonNullAssertion: Starter is always the first plan.
+export const TRIAL_PLAN: Plan = PLANS[0]!;
+
 export const planNamed = (name: string) => PLANS.find((p) => p.name === name.toLowerCase());

@@ -5,6 +5,7 @@ import {
   OVERAGE_CENTS_PER_CREDIT,
   PLANS,
   requireAgencyManager,
+  trialDaysLeft,
   usageSummary,
 } from "@locus/auth";
 import { redirect } from "next/navigation";
@@ -23,6 +24,8 @@ const STATUS: Record<string, string> = {
   unpaid: "Unpaid. Existing clients keep working; you can't add new ones until it's paid.",
   canceled: "Cancelled.",
   incomplete: "Checkout wasn't finished.",
+  trial_ended:
+    "Your free trial has ended. Choose a plan to keep using Locus's AI and to add sub-accounts. Everything you made is kept, and live sites stay live.",
   none: "No plan yet.",
 };
 
@@ -30,6 +33,8 @@ const credits = (units: number) =>
   Math.round(units / CREDIT).toLocaleString("en-US", { maximumFractionDigits: 0 });
 /** What a number of credit units costs as extra usage, in dollars. */
 const dollarsOf = (units: number) => ((units / CREDIT) * OVERAGE_CENTS_PER_CREDIT) / 100;
+
+const trialText = (days: number) => (days <= 1 ? "Ends within a day." : `${days} days left.`);
 
 export default async function Billing({
   searchParams,
@@ -51,8 +56,15 @@ export default async function Billing({
     },
   );
   const enabled = billingEnabled();
-  const paying = entitlement.status !== "none" && entitlement.status !== "comped";
-  const usage = manager && paying ? await usageSummary(locus().db, sessionContext(current)) : null;
+  // The free trial has no Stripe subscription behind it; only a subscription is paid for.
+  const onTrial = entitlement.status === "trialing" && entitlement.trialEndsAt !== null;
+  const paying =
+    !onTrial &&
+    entitlement.status !== "none" &&
+    entitlement.status !== "comped" &&
+    entitlement.status !== "trial_ended";
+  const usage =
+    manager && (paying || onTrial) ? await usageSummary(locus().db, sessionContext(current)) : null;
   // Whatever extra usage is waiting goes to Stripe after the page is sent, not before.
   if (enabled && usage?.overage)
     after(() => sendExtraUsage({ organizationId }).then(() => undefined));
@@ -66,10 +78,18 @@ export default async function Billing({
           Thanks. Your plan shows here as soon as Stripe confirms the payment.
         </Notice>
       )}
-      <p>
-        {entitlement.plan && <strong>{entitlement.plan.title}. </strong>}
-        {STATUS[entitlement.status]}
-      </p>
+      {onTrial && entitlement.trialEndsAt ? (
+        <p>
+          <strong>Free trial. </strong>
+          {trialText(trialDaysLeft(entitlement.trialEndsAt))} It has {entitlement.plan?.title}'s
+          limits, and no card is needed. Choose a plan any time to keep going after it ends.
+        </p>
+      ) : (
+        <p>
+          {entitlement.plan && <strong>{entitlement.plan.title}. </strong>}
+          {STATUS[entitlement.status]}
+        </p>
+      )}
       <p className="text-sm text-neutral-600">
         Agency ID: <span className="font-mono">{organizationId}</span>
       </p>
@@ -119,35 +139,40 @@ export default async function Billing({
                 ` ${credits(usage.overage.used)} extra credits used ($${dollarsOf(usage.overage.used).toFixed(2)} so far).`}
             </p>
           )}
-          <p className="text-neutral-600">
-            With extra usage on, AI keeps working after the plan's credits run out, up to your
-            monthly limit. Extra credits cost ${(OVERAGE_CENTS_PER_CREDIT / 100).toFixed(2)} each
-            and are added to your next Locus invoice. With it off, AI stops at the plan's credits.
-          </p>
-          <form action={setExtraUsage} className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                name="enabled"
-                defaultChecked={usage.overage?.enabled ?? false}
-              />
-              Extra usage on
-            </label>
-            <label className="flex items-center gap-2">
-              Monthly limit $
-              <input
-                type="number"
-                name="limitUsd"
-                min={0}
-                step={1}
-                defaultValue={usage.overage ? Math.floor(dollarsOf(usage.overage.limit)) : 50}
-                className="w-24 rounded border border-neutral-300 px-2 py-1"
-              />
-            </label>
-            <button type="submit" className="underline">
-              Save
-            </button>
-          </form>
+          {paying && (
+            <>
+              <p className="text-neutral-600">
+                With extra usage on, AI keeps working after the plan's credits run out, up to your
+                monthly limit. Extra credits cost ${(OVERAGE_CENTS_PER_CREDIT / 100).toFixed(2)}{" "}
+                each and are added to your next Locus invoice. With it off, AI stops at the plan's
+                credits.
+              </p>
+              <form action={setExtraUsage} className="flex flex-wrap items-center gap-3">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    name="enabled"
+                    defaultChecked={usage.overage?.enabled ?? false}
+                  />
+                  Extra usage on
+                </label>
+                <label className="flex items-center gap-2">
+                  Monthly limit $
+                  <input
+                    type="number"
+                    name="limitUsd"
+                    min={0}
+                    step={1}
+                    defaultValue={usage.overage ? Math.floor(dollarsOf(usage.overage.limit)) : 50}
+                    className="w-24 rounded border border-neutral-300 px-2 py-1"
+                  />
+                </label>
+                <button type="submit" className="underline">
+                  Save
+                </button>
+              </form>
+            </>
+          )}
         </section>
       )}
 
