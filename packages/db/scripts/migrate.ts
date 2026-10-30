@@ -33,6 +33,10 @@ const vercelEnv = process.env.VERCEL_ENV;
 const branch = process.env.VERCEL_GIT_COMMIT_REF;
 const branchPreview = vercelEnv === "preview" && branch !== "staging";
 
+/** How long a branch's Preview waits for the shared staging database. */
+const SHARED_DB_WAIT_MS = 60_000;
+let abandoned = false;
+
 const db = openControlDb(url, process.env.LOCUS_CONTROL_DB_TOKEN);
 try {
   if (branchPreview) {
@@ -55,8 +59,23 @@ try {
       console.warn(`control database skipped: main's migrations could not be read (${e})`);
     }
     if (mainFolder) {
-      await migrateControlDb(db, mainFolder);
-      console.log(`control database migrated to main: ${url}`);
+      // A staging database that doesn't answer isn't this branch's fault either: give it a
+      // minute, then build without it (main's own deploy and the next build bring it up). An
+      // error it does answer with still fails the build.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const outcome = await Promise.race([
+        migrateControlDb(db, mainFolder).then(() => "migrated" as const),
+        new Promise<"timeout">((done) => {
+          timer = setTimeout(() => done("timeout"), SHARED_DB_WAIT_MS);
+        }),
+      ]).finally(() => clearTimeout(timer));
+      if (outcome === "migrated") {
+        console.log(`control database migrated to main: ${url}`);
+      } else {
+        console.warn(`control database skipped: no answer within ${SHARED_DB_WAIT_MS / 1000} s`);
+        // The unanswered request would keep this process waiting; nothing else is left to do.
+        abandoned = true;
+      }
     }
   } else {
     await migrateControlDb(db);
@@ -84,3 +103,4 @@ try {
 } finally {
   db.$client.close();
 }
+if (abandoned) process.exit(process.exitCode ?? 0);
