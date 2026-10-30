@@ -8,6 +8,8 @@ import { MainChat } from "@/components/main-chat";
 import { appConnectionsFromEnv } from "@/lib/apps";
 import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
+import { setupStepFor } from "@/lib/onboarding";
+import { chatWelcome } from "@/lib/welcome";
 
 /**
  * The main chat always runs as the supervisor, with no picker: it answers questions and hands
@@ -19,7 +21,7 @@ const CHAT_MODES = [{ id: "supervisor", name: "Chat" }] as const;
 export default async function ChatPage() {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fchat");
-  if (!current.session.activeOrganizationId) redirect("/onboarding");
+  if (await setupStepFor(current)) redirect("/onboarding");
   const client = await resolveActiveClient(locus().db, sessionContext(current)).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
     throw e;
@@ -40,6 +42,13 @@ export default async function ChatPage() {
           brain={<BrainTab client={client} />}
           inbox={<InboxTab />}
           connectorScope={appConnectionsFromEnv() ? client.location.id : undefined}
+          // The welcome is extra: if it can't be read, the chat opens without it.
+          welcome={
+            await chatWelcome(current, client).catch((error: unknown) => {
+              console.error("Reading the chat's welcome failed", error);
+              return undefined;
+            })
+          }
         />
       ) : (
         <div className="mx-auto mt-6 w-full max-w-4xl px-4">

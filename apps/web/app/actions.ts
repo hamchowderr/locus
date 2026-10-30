@@ -28,18 +28,24 @@ import {
   refusedQuery,
   removeSiteDomain,
   type SyncResult,
+  setMainClient,
   setSiteFolder,
+  skipOnboardingStep,
   syncLocations,
   unlinkHostProject,
 } from "@locus/connect";
+import { GhlError } from "@locus/ghl";
 import { revalidatePath } from "next/cache";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { after } from "next/server";
 import { baseUrl, connectDeps } from "@/lib/connect";
 import { prepareExtraUsage, sendExtraUsage } from "@/lib/extra-usage";
+import { finishHeldInstall } from "@/lib/ghl-install";
 import { publishDeps, siteDeps } from "@/lib/hosts";
 import { billingEnabled, currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
 import { safeNext, sitesReturn } from "@/lib/next-path";
+import { fillSetupNote, integrationsReturn } from "@/lib/onboarding";
 import {
   ACTIVE_SITE_COOKIE,
   chooseActiveSite,
@@ -151,35 +157,64 @@ export async function signOut() {
   redirect("/sign-in");
 }
 
-function slugify(name: string) {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return `${base || "agency"}-${crypto.randomUUID().slice(0, 6)}`;
-}
-
-/** A new agency, owned by the signed-in user and made their active one. */
-export async function createAgency(form: FormData) {
-  const name = text(form, "name");
+/** The setup's second step: the agency's own sub-account, which its chat then opens on. */
+export async function chooseMainClient(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fonboarding");
+  const locationId = text(form, "locationId");
   try {
-    const requestHeaders = await headers();
-    const agency = await locus().auth.api.createOrganization({
-      body: { name, slug: slugify(name) },
-      headers: requestHeaders,
-    });
-    if (!agency) throw new Error("The agency could not be created.");
-    await locus().auth.api.setActiveOrganization({
-      body: { organizationId: agency.id },
-      headers: requestHeaders,
-    });
-    const current = await currentSession();
-    if (current) await rememberAgency(locus().db, current.user.id, agency.id);
+    const ctx = sessionContext(current);
+    const { organizationId } = await requireAgencyManager(locus().db, ctx);
+    if (!(await setMainClient(locus().db, organizationId, locationId))) {
+      throw new Error("Choose one of your agency's sub-accounts.");
+    }
+    const client = await selectClient(locus().db, ctx, locationId);
+    // Its brain starts with how it's set up in GoHighLevel, read after the page has moved on.
+    after(() => fillSetupNote(client));
   } catch (error) {
     back("/onboarding", error);
   }
-  redirect("/");
+  revalidatePath("/", "layout");
+  redirect("/onboarding");
+}
+
+/**
+ * Confirms a GoHighLevel marketplace install held for this browser: into the agency the page
+ * offered, or a new one. Lands on the setup (new or unfinished agencies) or Integrations.
+ */
+export async function finishGhlInstall(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fonboarding%2Finstall");
+  let landing: string;
+  try {
+    landing = await finishHeldInstall(text(form, "choice") === "join" ? "join" : "new");
+  } catch (error) {
+    if (
+      !(error instanceof ConnectError || error instanceof ClientAccessDenied) &&
+      !(error instanceof GhlError)
+    ) {
+      throw error;
+    }
+    const message = error instanceof GhlError ? "ghl" : error.message;
+    landing = await integrationsReturn(`error=${encodeURIComponent(message)}`);
+  }
+  revalidatePath("/", "layout");
+  redirect(landing);
+}
+
+/** "Do this later" on the setup's GitHub or Vercel step. */
+export async function skipSetupStep(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fonboarding");
+  const step = text(form, "step");
+  if (step !== "github" && step !== "vercel") redirect("/onboarding");
+  try {
+    const { organizationId } = await requireAgencyManager(locus().db, sessionContext(current));
+    await skipOnboardingStep(locus().db, organizationId, step);
+  } catch (error) {
+    back("/onboarding", error);
+  }
+  redirect("/onboarding");
 }
 
 /**

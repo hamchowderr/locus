@@ -321,6 +321,54 @@ export const agencyComp = sqliteTable("agency_comp", {
   createdAt: createdAt(),
 });
 
+/**
+ * An agency's free trial: Starter's limits for a few days, with no card and no Stripe
+ * subscription. It starts when the agency is created, and each person gets one, however many
+ * agencies they create (`started_by_user_id` is unique). The row outlives a deleted agency for
+ * that reason, so `organization_id` is not a foreign key.
+ */
+export const agencyTrial = sqliteTable("agency_trial", {
+  organizationId: text("organization_id").primaryKey(),
+  startedByUserId: text("started_by_user_id").notNull().unique(),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+  endsAt: integer("ends_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/**
+ * An agency's first-run setup, for agencies that signed up through it: GoHighLevel, its main
+ * sub-account, GitHub, then Vercel. Until `completed_at` is set, signing in returns its owner to
+ * the next unfinished step. Agencies from before it have no row and are never sent there.
+ */
+export const agencyOnboarding = sqliteTable(
+  "agency_onboarding",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** The agency's own business: the sub-account its chat opens on first. */
+    mainLocationId: text("main_location_id").references(() => location.id, {
+      onDelete: "set null",
+    }),
+    /** "Do this later" on the GitHub step. */
+    githubSkipped: integer("github_skipped", { mode: "boolean" }).notNull().default(false),
+    /** "Do this later" on the Vercel step. */
+    vercelSkipped: integer("vercel_skipped", { mode: "boolean" }).notNull().default(false),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("agency_onboarding_main_location_idx").on(t.mainLocationId)],
+);
+
+/**
+ * GoHighLevel marketplace installs waiting for their installer to sign in and confirm. The
+ * grant itself is sealed in `secret` under `/locus/ghl-held/<id>`; this row says until when it
+ * may be used, so abandoned ones can be swept.
+ */
+export const ghlHeldInstall = sqliteTable("ghl_held_install", {
+  id: text("id").primaryKey(),
+  heldUntil: integer("held_until", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const auditLog = sqliteTable(
   "audit_log",
   {

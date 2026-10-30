@@ -5,8 +5,10 @@ import { NextResponse } from "next/server";
 import { baseUrl } from "@/lib/connect";
 import { GITHUB_STATE_COOKIE, githubDeps } from "@/lib/hosts";
 import { currentSession, NotConfigured, sessionContext } from "@/lib/locus";
+import { integrationsReturn } from "@/lib/onboarding";
 
-const back = (query: string) => NextResponse.redirect(new URL(`/connect?${query}`, baseUrl()));
+const back = async (query: string) =>
+  NextResponse.redirect(new URL(await integrationsReturn(query), baseUrl()));
 
 /**
  * GitHub sends the installer back here with a `code` (and usually `installation_id`). The
@@ -20,7 +22,7 @@ export async function GET(request: Request) {
   jar.delete({ name: GITHUB_STATE_COOKIE, path: "/api/connect/github" });
   const state = url.searchParams.get("state");
   const code = url.searchParams.get("code");
-  if (!expected || !state || state !== expected || !code) return back("error=github-state");
+  if (!expected || !state || state !== expected || !code) return await back("error=github-state");
 
   const current = await currentSession();
   if (!current) return NextResponse.redirect(new URL("/sign-in?next=%2Fconnect", baseUrl()));
@@ -29,12 +31,12 @@ export async function GET(request: Request) {
       code,
       installationId: url.searchParams.get("installation_id"),
     });
-    return back(`github=${encodeURIComponent(result.accountLogin)}`);
+    return await back(`github=${encodeURIComponent(result.accountLogin)}`);
   } catch (error) {
     if (error instanceof ConnectError || error instanceof ClientAccessDenied) {
-      return back(`error=${encodeURIComponent(error.message)}`);
+      return await back(`error=${encodeURIComponent(error.message)}`);
     }
-    if (error instanceof NotConfigured) return back("error=github-not-configured");
+    if (error instanceof NotConfigured) return await back("error=github-not-configured");
     throw error;
   }
 }
