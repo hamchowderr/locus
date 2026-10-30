@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { currentOf, groupsFor, type StyleGroup, setGroup } from "./classes";
+import { keyOf } from "./history";
 import {
   type PendingEdit,
   type SaveResult,
@@ -213,7 +214,7 @@ function ChangeList({ pending }: { pending: PendingEdit[] }) {
       </summary>
       <ul className="mt-1 flex max-h-32 flex-col gap-0.5 overflow-y-auto text-neutral-600 text-xs">
         {pending.map((edit) => (
-          <li key={`${edit.target}|${describe(edit)}`} className="break-words">
+          <li key={keyOf(edit)} className="break-words">
             {describe(edit)}
           </li>
         ))}
