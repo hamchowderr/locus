@@ -5,6 +5,7 @@ import {
   currentOf,
   groupsFor,
   PADDING,
+  previewCss,
   setGroup,
   TEXT_COLOR,
   TEXT_SIZE,
@@ -49,5 +50,21 @@ describe("visual edit style classes", () => {
   it("offers text styles only where there is text", () => {
     expect(groupsFor({ text: "Hi", tag: "div" })).toContain(TEXT_COLOR);
     expect(groupsFor({ text: null, tag: "img" })).not.toContain(TEXT_COLOR);
+  });
+
+  it("has preview CSS for every style the controls offer", () => {
+    const css = previewCss();
+    expect(css).toContain(":where(.text-2xl){font-size:1.5rem;");
+    expect(css).toContain(":where(.text-red-600){color:oklch(");
+    expect(css).toContain(":where(.text-primary){color:var(--primary)}");
+    expect(css).toContain(":where(.bg-muted){background-color:var(--muted)}");
+    expect(css).toContain(":where(.text-center){text-align:center}");
+    expect(css).toContain(":where(.p-4){padding:1rem}");
+    expect(css).toContain(":where(.opacity-50){opacity:0.5}");
+    expect(css).not.toContain("undefined");
+    expect(css).not.toContain("NaN");
+    for (const group of [TEXT_COLOR, TEXT_SIZE, ALIGNMENT, BACKGROUND, PADDING]) {
+      for (const { value } of group.options) if (value) expect(css).toContain(`:where(.${value}){`);
+    }
   });
 });

@@ -2,6 +2,7 @@
 
 import { VISUAL_EDITS_MESSAGE } from "@locus/studio/visual-edits-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { previewCss } from "./classes";
 import { differences, EditHistory, type Pending, readStored, sameAt, withEdit } from "./history";
 
 /** What the preview reports about one selected element. */
@@ -234,6 +235,8 @@ export function useVisualEdits({
             ),
           );
         }
+        // The styles the controls offer, so a change shows before it's saved.
+        send({ type: "styles", css: previewCss() });
         if (enabledRef.current) send({ type: "enable" });
         // Changes not saved yet are shown again on the reloaded page.
         for (const edit of pendingRef.current.values()) send({ type: "show", change: shown(edit) });

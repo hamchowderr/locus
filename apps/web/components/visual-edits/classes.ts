@@ -181,3 +181,123 @@ export function setGroup(className: string, group: StyleGroup, value: string): s
   rest.splice(Math.min(at, rest.length), 0, value);
   return rest.join(" ");
 }
+
+/** Tailwind's own values for the fixed colours the editor offers. */
+const PALETTE_VALUES: Record<string, string> = {
+  white: "#fff",
+  black: "#000",
+  "slate-900": "oklch(20.8% 0.042 265.755)",
+  "slate-500": "oklch(55.4% 0.046 257.417)",
+  "red-600": "oklch(57.7% 0.245 27.325)",
+  "orange-500": "oklch(70.5% 0.213 47.604)",
+  "amber-400": "oklch(82.8% 0.189 84.429)",
+  "green-600": "oklch(62.7% 0.194 149.214)",
+  "teal-600": "oklch(60% 0.118 184.704)",
+  "sky-500": "oklch(68.5% 0.169 237.323)",
+  "blue-600": "oklch(54.6% 0.245 262.881)",
+  "indigo-600": "oklch(51.1% 0.262 276.966)",
+  "purple-600": "oklch(55.8% 0.291 302.321)",
+  "pink-600": "oklch(59.2% 0.249 0.584)",
+};
+
+const colorValue = (c: string) => PALETTE_VALUES[c] ?? `var(--${c})`;
+
+const SIZE_VALUES: Record<string, [string, string]> = {
+  xs: ["0.75rem", "calc(1 / 0.75)"],
+  sm: ["0.875rem", "calc(1.25 / 0.875)"],
+  base: ["1rem", "1.5"],
+  lg: ["1.125rem", "calc(1.75 / 1.125)"],
+  xl: ["1.25rem", "calc(1.75 / 1.25)"],
+  "2xl": ["1.5rem", "calc(2 / 1.5)"],
+  "3xl": ["1.875rem", "1.2"],
+  "4xl": ["2.25rem", "calc(2.5 / 2.25)"],
+  "5xl": ["3rem", "1"],
+  "6xl": ["3.75rem", "1"],
+  "7xl": ["4.5rem", "1"],
+};
+
+const WEIGHTS: Record<string, number> = { normal: 400, medium: 500, semibold: 600, bold: 700 };
+
+// The site's shadcn theme sets corners from `--radius`, as its globals.css does.
+const RADII: Record<string, string> = {
+  none: "0",
+  sm: "calc(var(--radius, 0.625rem) * 0.6)",
+  md: "calc(var(--radius, 0.625rem) * 0.8)",
+  lg: "var(--radius, 0.625rem)",
+  xl: "calc(var(--radius, 0.625rem) * 1.4)",
+  "2xl": "calc(var(--radius, 0.625rem) * 1.8)",
+  full: "9999px",
+};
+
+const SHADOWS: Record<string, string> = {
+  none: "0 0 #0000",
+  sm: "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)",
+  md: "0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)",
+  lg: "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)",
+  xl: "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
+};
+
+const space = (n: string) => `${Number(n) * 0.25}rem`;
+
+/** The CSS for one of the editor's own classes, or null for a class it doesn't offer. */
+function declarationsOf(cls: string): string | null {
+  const dash = cls.indexOf("-");
+  const prefix = cls.slice(0, dash);
+  const v = cls.slice(dash + 1);
+  switch (prefix) {
+    case "text": {
+      const size = SIZE_VALUES[v];
+      if (size) return `font-size:${size[0]};line-height:${size[1]}`;
+      if (ALIGN.includes(v)) return `text-align:${v}`;
+      return `color:${colorValue(v)}`;
+    }
+    case "bg":
+      return `background-color:${colorValue(v)}`;
+    case "font":
+      return v in WEIGHTS ? `font-weight:${WEIGHTS[v]}` : null;
+    case "p":
+      return `padding:${space(v)}`;
+    case "my":
+      return `margin-block:${space(v)}`;
+    case "rounded":
+      return v in RADII ? `border-radius:${RADII[v]}` : null;
+    case "shadow":
+      return v in SHADOWS ? `box-shadow:${SHADOWS[v]}` : null;
+    case "opacity":
+      return `opacity:${Number(v) / 100}`;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Rules for every class the style controls offer, so a change shows in the preview at once:
+ * the site's built CSS only holds the classes its pages already used. They sit in Tailwind's
+ * utilities layer with no specificity (`:where`), so the site's own rules, and its responsive
+ * and hover variants, still win wherever they apply, as they will once the change is saved.
+ */
+export function previewCss(): string {
+  const groups = [
+    TEXT_COLOR,
+    BACKGROUND,
+    TEXT_SIZE,
+    WEIGHT,
+    ALIGNMENT,
+    PADDING,
+    MARGIN_Y,
+    RADIUS,
+    SHADOW,
+    OPACITY,
+  ];
+  const rules = groups.flatMap((g) =>
+    g.options
+      .map((o) => o.value)
+      .filter(Boolean)
+      .map((cls) => {
+        const css = declarationsOf(cls);
+        return css ? `:where(.${cls}){${css}}` : "";
+      })
+      .filter(Boolean),
+  );
+  return `@layer utilities{${rules.join("")}}`;
+}

@@ -60,72 +60,78 @@ export function VisualEditor({
   useEffect(() => onPendingChange?.(count), [count, onPendingChange]);
 
   return (
-    <aside className={cn("flex w-80 shrink-0 flex-col gap-3 overflow-y-auto text-sm", className)}>
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="font-semibold">Visual edits</h2>
-        <Button
-          type="button"
-          size="sm"
-          variant={edits.enabled ? "default" : "outline"}
-          aria-pressed={edits.enabled}
-          disabled={!editable || !edits.ready}
-          onClick={() => edits.setMode(!edits.enabled)}
-        >
-          <MousePointerClick data-icon="inline-start" />
-          {edits.enabled ? "Selecting" : "Select"}
-        </Button>
-      </div>
-      {!editable ? (
-        <p className="text-neutral-600">
-          This preview shows an older version. Visual edits change the current site: open the
-          current preview to use them.
-        </p>
-      ) : !edits.ready ? (
-        <p className="text-neutral-600">Visual edits start once the preview has loaded.</p>
-      ) : !edits.enabled ? (
-        <p className="text-neutral-600">
-          The page works as usual, so you can follow links and open menus. Turn on{" "}
-          <strong>Select</strong> to change items again.
-        </p>
-      ) : edits.selection.length === 0 ? (
-        <p className="text-neutral-600">
-          Click anything on the page to change it, or double-click text to type over it. Shift-click
-          selects more than one. Changes made here are free and don't use AI.
-        </p>
-      ) : edits.selection.length === 1 && edits.selection[0] ? (
-        <ItemControls
-          item={edits.selection[0]}
-          theme={edits.theme}
-          generation={edits.generation}
-          onChange={edits.change}
-        />
-      ) : (
-        <p className="text-neutral-600">
-          {edits.selection.length} items selected. Describe a change for all of them below.
-        </p>
-      )}
-
-      {editable && edits.ready && asking && (
-        <>
-          <Separator />
-          <AskBuilder
-            ask={ask}
-            busy={chatBusy}
-            selection={edits.selection}
-            page={edits.path}
-            unsaved={count > 0}
-          />
-        </>
-      )}
-
-      {(count > 0 || edits.problem || edits.failures.length > 0 || saved) && <Separator />}
-      {(count > 0 || edits.canUndo || edits.canRedo) && (
-        <div className="flex flex-col gap-2">
-          <p>
-            {count === 0
-              ? "No changes waiting to be saved."
-              : `${count === 1 ? "1 change" : `${count} changes`} not saved yet.`}
+    <aside className={cn("flex w-80 shrink-0 flex-col gap-3 text-sm lg:min-h-0", className)}>
+      {/* Everything but the save bar scrolls, so Undo, Save and Discard stay in view. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">Visual edits</h2>
+          <Button
+            type="button"
+            size="sm"
+            variant={edits.enabled ? "default" : "outline"}
+            aria-pressed={edits.enabled}
+            disabled={!editable || !edits.ready}
+            onClick={() => edits.setMode(!edits.enabled)}
+          >
+            <MousePointerClick data-icon="inline-start" />
+            {edits.enabled ? "Selecting" : "Select"}
+          </Button>
+        </div>
+        {!editable ? (
+          <p className="text-neutral-600">
+            This preview shows an older version. Visual edits change the current site: open the
+            current preview to use them.
           </p>
+        ) : !edits.ready ? (
+          <p className="text-neutral-600">Visual edits start once the preview has loaded.</p>
+        ) : !edits.enabled ? (
+          <p className="text-neutral-600">
+            The page works as usual, so you can follow links and open menus. Turn on{" "}
+            <strong>Select</strong> to change items again.
+          </p>
+        ) : edits.selection.length === 0 ? (
+          <p className="text-neutral-600">
+            Click anything on the page to change it, or double-click text to type over it.
+            Shift-click selects more than one. Changes made here are free and don't use AI.
+          </p>
+        ) : edits.selection.length === 1 && edits.selection[0] ? (
+          <ItemControls
+            item={edits.selection[0]}
+            theme={edits.theme}
+            generation={edits.generation}
+            onChange={edits.change}
+          />
+        ) : (
+          <p className="text-neutral-600">
+            {edits.selection.length} items selected. Describe a change for all of them below.
+          </p>
+        )}
+
+        {editable && edits.ready && asking && (
+          <>
+            <Separator />
+            <AskBuilder
+              ask={ask}
+              busy={chatBusy}
+              selection={edits.selection}
+              page={edits.path}
+              unsaved={count > 0}
+            />
+          </>
+        )}
+
+        {edits.problem && <p className="text-red-700">{edits.problem}</p>}
+        <SaveSummary failures={edits.failures} />
+        {saved?.version != null && (
+          <p className="text-neutral-600">
+            Saved as version {saved.version}.{saved.publishError ? ` ${saved.publishError}` : ""}
+          </p>
+        )}
+      </div>
+
+      {(count > 0 || edits.canUndo || edits.canRedo) && (
+        <div className="flex shrink-0 flex-col gap-2 border-t pt-3">
+          <ChangeList pending={edits.pending} />
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
@@ -174,14 +180,45 @@ export function VisualEditor({
           </div>
         </div>
       )}
-      {edits.problem && <p className="text-red-700">{edits.problem}</p>}
-      <SaveSummary failures={edits.failures} />
-      {saved?.version != null && (
-        <p className="text-neutral-600">
-          Saved as version {saved.version}.{saved.publishError ? ` ${saved.publishError}` : ""}
-        </p>
-      )}
     </aside>
+  );
+}
+
+const ATTRIBUTE_LABELS: Record<string, string> = {
+  className: "Style",
+  src: "Image",
+  alt: "Image description",
+  href: "Link",
+  placeholder: "Placeholder",
+};
+
+const clip = (text: string) => (text.length > 40 ? `${text.slice(0, 39)}…` : text);
+
+/** One line saying what an unsaved change does. */
+function describe(edit: PendingEdit): string {
+  if (edit.kind === "text") return `Text: “${clip(edit.from)}” to “${clip(edit.to)}”`;
+  if (edit.kind === "newTab")
+    return edit.on ? "Link opens in a new tab" : "Link opens in the same tab";
+  if (edit.name === "className") return "Style changed";
+  return `${ATTRIBUTE_LABELS[edit.name] ?? edit.name}: ${clip(edit.to) || "(empty)"}`;
+}
+
+/** How many changes wait to be saved, and what each one is. */
+function ChangeList({ pending }: { pending: PendingEdit[] }) {
+  if (pending.length === 0) return <p>No changes waiting to be saved.</p>;
+  return (
+    <details>
+      <summary className="cursor-pointer">
+        {pending.length === 1 ? "1 change" : `${pending.length} changes`} not saved yet
+      </summary>
+      <ul className="mt-1 flex max-h-32 flex-col gap-0.5 overflow-y-auto text-neutral-600 text-xs">
+        {pending.map((edit) => (
+          <li key={`${edit.target}|${describe(edit)}`} className="break-words">
+            {describe(edit)}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -328,9 +365,6 @@ function ItemControls({
           onChange={(next) => attr("className", next)}
         />
       ))}
-      <p className="text-xs text-neutral-500">
-        Some new styles only show once you save, while the preview updates.
-      </p>
     </div>
   );
 }
