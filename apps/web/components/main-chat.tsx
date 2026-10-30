@@ -5,6 +5,7 @@ import { type ReactNode, useCallback } from "react";
 import type { ToolViews } from "@/components/chat/tool-steps";
 import { ProjectChat } from "@/components/chat-project/project-chat";
 import type { ThreadOutput } from "@/components/chat-project/thread-groups";
+import { type ChatStarter, ContextCard, type ContextRow } from "@/components/chat-project/welcome";
 import { ConnectorsMenu } from "@/components/connectors-menu";
 import type { ThreadItem } from "@/lib/agent-controller/use-threads";
 import { readConnectorsOff } from "@/lib/chat-connectors";
@@ -41,6 +42,7 @@ export function MainChat({
   brain,
   inbox,
   connectorScope,
+  welcome,
 }: {
   className?: string | undefined;
   modes: ReadonlyArray<{ id: string; name: string }>;
@@ -52,6 +54,10 @@ export function MainChat({
   inbox: ReactNode;
   /** The sub-account the connector switches belong to; unset where connectors aren't set up. */
   connectorScope?: string | undefined;
+  /** What the chat shows before its first message: a greeting, its context and ways to start. */
+  welcome?:
+    | { greeting: string; intro: string; rows: ContextRow[]; starters: ChatStarter[] }
+    | undefined;
 }) {
   // Read at send time, so a switch flipped mid-chat counts from the next message.
   const turnExtra = useCallback(() => {
@@ -64,6 +70,14 @@ export function MainChat({
       modes={modes}
       composerMenu={connectorScope ? <ConnectorsMenu scope={connectorScope} /> : undefined}
       turnExtra={turnExtra}
+      {...(welcome
+        ? {
+            greeting: welcome.greeting,
+            emptyText: welcome.intro,
+            welcome: <ContextCard rows={welcome.rows} />,
+            starters: welcome.starters,
+          }
+        : {})}
       toolViews={TOOL_VIEWS}
       isChat={isChat}
       outputsOf={outputsOf}
