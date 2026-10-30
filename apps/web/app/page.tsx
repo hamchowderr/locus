@@ -1,7 +1,7 @@
-import { onboardingStep } from "@locus/connect";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { configured, currentSession, locus } from "@/lib/locus";
+import { configured, currentSession } from "@/lib/locus";
+import { setupStepFor } from "@/lib/onboarding";
 import { AuthPage, Notice } from "./ui";
 
 /**
@@ -18,10 +18,8 @@ export default async function Home() {
     );
   }
   if (current) {
-    const organizationId = current.session.activeOrganizationId;
     // A new agency part-way through its setup goes back to the next step of it.
-    const setup = organizationId ? await onboardingStep(locus().db, organizationId) : "ghl";
-    redirect(setup ? "/onboarding" : "/chat");
+    redirect((await setupStepFor(current)) ? "/onboarding" : "/chat");
   }
   return (
     <AuthPage title="Operate every GoHighLevel client from one place">
