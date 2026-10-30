@@ -1,8 +1,9 @@
 import { ClientAccessDenied, listAccessibleClients, TRIAL_DAYS } from "@locus/auth";
-import { ONBOARDING_STEPS, type OnboardingStep, onboardingStep } from "@locus/connect";
+import { ONBOARDING_STEPS, type OnboardingStep } from "@locus/connect";
 import { redirect } from "next/navigation";
 import { connectMessage } from "@/lib/connect-messages";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
+import { setupStepFor } from "@/lib/onboarding";
 import { chooseMainClient, skipSetupStep } from "../actions";
 import { AuthPage, Button, Notice } from "../ui";
 
@@ -30,10 +31,8 @@ export default async function Onboarding({
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fonboarding");
   const { error, refused, reason } = await searchParams;
-  const organizationId = current.session.activeOrganizationId;
-  const step: OnboardingStep | null = organizationId
-    ? await onboardingStep(locus().db, organizationId)
-    : "ghl";
+  // Members who aren't owners or admins can't do the setup, so they go on to the chat.
+  const step = await setupStepFor(current);
   if (!step) redirect("/chat");
 
   const number = ONBOARDING_STEPS.indexOf(step) + 1;
@@ -92,7 +91,14 @@ function PickMain({
           No sub-accounts came across. In GoHighLevel's screen, choose at least your own
           sub-account, then connect again.
         </Notice>
-        {waiting && <Notice tone="info">{waiting}</Notice>}
+        {waiting && (
+          <>
+            <Notice tone="info">{waiting}</Notice>
+            <a href="/billing" className="block text-center text-sm underline">
+              Choose a plan
+            </a>
+          </>
+        )}
         <a href="/api/connect/crm/start" className={LINK}>
           Connect GoHighLevel again
         </a>

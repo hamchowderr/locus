@@ -159,6 +159,9 @@ export function stubAuthorizeTarget(state: string): string {
 
 export const STATE_COOKIE = "locus_crm_state";
 
+/** Holds the id of a marketplace install's grant while its installer signs in and confirms. */
+export const HELD_GRANT_COOKIE = "locus_ghl_install";
+
 export type GhlCheck = { ok: true; name: string } | { ok: false; reason: string };
 
 /** Whether Locus can act inside the client right now. Read-only; nothing is kept. */
