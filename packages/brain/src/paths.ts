@@ -17,6 +17,12 @@ export const BRAIN_FOLDERS = {
 } as const;
 export type BrainFolder = keyof typeof BRAIN_FOLDERS;
 
+/**
+ * The note Locus writes when an agency picks its main sub-account: how it is set up in
+ * GoHighLevel. A brain holding only this is still new to the agent.
+ */
+export const SETUP_NOTE = "business/gohighlevel-setup.md";
+
 /** Largest note kept, in UTF-8 bytes. Far more than a note needs; it keeps a prompt affordable. */
 export const MAX_NOTE_BYTES = 256 * 1024;
 

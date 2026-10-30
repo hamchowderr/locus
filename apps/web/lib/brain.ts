@@ -10,6 +10,7 @@ import {
   type NoteVersion,
   normalizeBrainPath,
   restoreNoteVersion,
+  SETUP_NOTE,
   summarize,
 } from "@locus/brain";
 import { leaseClientDb, openClientDb } from "@locus/builder/host";
@@ -279,5 +280,26 @@ export async function restoreBrainNote(
     // Putting back a deletion would only delete the note again.
     if (version.content === null) throw new BrainInputError("Choose a version that has text.");
     await restoreNoteVersion(db, path, number, personActor(userId));
+  });
+}
+
+/**
+ * Saves the setup's starter note as Locus (no person or agent), unless a note is already there:
+ * picking the main sub-account again never overwrites what people have since written.
+ */
+export async function saveSetupNote(
+  deps: BrainDeps,
+  client: AuthorizedClient,
+  content: string,
+): Promise<boolean> {
+  return withTenant(deps, client, async (db) => {
+    const brain = new BrainFilesystem(db);
+    try {
+      await brain.writeFile(SETUP_NOTE, content, { overwrite: false });
+      return true;
+    } catch (e) {
+      if (e instanceof Error && e.name === "FileExistsError") return false;
+      throw e;
+    }
   });
 }
