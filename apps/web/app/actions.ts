@@ -19,6 +19,7 @@ import {
   setSiteAccess,
   setSiteBuilder,
   setUsageOverage,
+  startTrial,
 } from "@locus/auth";
 import {
   attachSiteDomain,
@@ -175,7 +176,14 @@ export async function createAgency(form: FormData) {
       headers: requestHeaders,
     });
     const current = await currentSession();
-    if (current) await rememberAgency(locus().db, current.user.id, agency.id);
+    if (current) {
+      await rememberAgency(locus().db, current.user.id, agency.id);
+      // A new agency starts on the free trial, once per person. The agency exists by now, so a
+      // failure here must not send its owner back to create another.
+      await startTrial(locus().db, agency.id, current.user.id).catch((error: unknown) => {
+        console.error("Starting the free trial failed", error);
+      });
+    }
   } catch (error) {
     back("/onboarding", error);
   }

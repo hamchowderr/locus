@@ -8,10 +8,13 @@ import {
   GHL_SCOPES,
   type GhlAppConfig,
   STUB_CODE,
+  syncLocations,
 } from "@locus/connect";
 import { DbSecretStore, provisionerFromEnv } from "@locus/db";
+import { agencyGhlConnection } from "@locus/db/control";
 import { GhlError } from "@locus/ghl";
 import { deriveSecretsSubkey, secretsFromEnv } from "@locus/secrets";
+import { eq } from "drizzle-orm";
 import { deploymentBaseUrl } from "./base-url.ts";
 import { billingEnabled, locus, NotConfigured } from "./locus.ts";
 
@@ -131,6 +134,19 @@ export function connectDeps(): ConnectDeps {
       : {}),
     ...(mode === "stub" ? { http: { fetch: stubFetch, baseUrl: "https://stub.ghl.local" } } : {}),
   };
+}
+
+/**
+ * Adds the sub-accounts that were waiting for a plan, once the agency may have them: after a
+ * payment or when a trial starts. Nothing to do for an agency that hasn't connected GoHighLevel.
+ */
+export async function addWaitingClients(organizationId: string): Promise<void> {
+  const [connection] = await locus()
+    .db.select({ organizationId: agencyGhlConnection.organizationId })
+    .from(agencyGhlConnection)
+    .where(eq(agencyGhlConnection.organizationId, organizationId));
+  if (!connection) return;
+  await syncLocations(connectDeps(), organizationId);
 }
 
 /** In stub mode the "GHL approval page" is a local route that approves straight away. */
