@@ -6,7 +6,7 @@ import { APIError, createAuthMiddleware, getIP } from "better-auth/api";
 import { nextCookies } from "better-auth/next-js";
 import { organization } from "better-auth/plugins";
 import Stripe from "stripe";
-import { mayManageBilling } from "./billing.ts";
+import { mayManageBilling, seatRefusal } from "./billing.ts";
 import { reportOverage } from "./overage-billing.ts";
 import { PLANS } from "./plans.ts";
 import { ATTEMPT_LIMITS, checkAttemptLimits } from "./rate-limit.ts";
@@ -229,6 +229,21 @@ export function createAuth(config: LocusAuthConfig) {
       organization({
         requireEmailVerificationOnInvitation: true,
         organizationHooks: {
+          // Where billing is on, a plan's seats hold: inviting and joining both check them.
+          ...(config.billing
+            ? {
+                beforeCreateInvitation: async ({ invitation }) => {
+                  const refused = await seatRefusal(config.db, invitation.organizationId);
+                  if (refused) throw new APIError("FORBIDDEN", { message: refused });
+                },
+                beforeAcceptInvitation: async ({ invitation }) => {
+                  const refused = await seatRefusal(config.db, invitation.organizationId, {
+                    accepting: true,
+                  });
+                  if (refused) throw new APIError("FORBIDDEN", { message: refused });
+                },
+              }
+            : {}),
           beforeDeleteOrganization: async ({ organization: agency }) => {
             await config.beforeAgencyDeleted?.(agency.id);
           },
