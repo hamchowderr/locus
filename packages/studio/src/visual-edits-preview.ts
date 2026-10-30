@@ -405,6 +405,19 @@ export function visualEditsScript(origins: string[], draft = ""): string {
     });
   }
 
+  // Rules for the styles the editor offers, so a new class shows before it is saved (the
+  // site's built CSS holds only the classes it already used). Plain CSS from the editor only.
+  function styles(css) {
+    if (typeof css !== "string" || css.length > 50000 || /<|@import|url\\(/i.test(css)) return;
+    var el = document.getElementById("locus-visual-edits-styles");
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "locus-visual-edits-styles";
+      document.head.appendChild(el);
+    }
+    el.textContent = css;
+  }
+
   window.addEventListener("message", function (e) {
     if (e.source !== window.parent || ORIGINS.indexOf(e.origin) < 0) return;
     var data = e.data;
@@ -415,6 +428,7 @@ export function visualEditsScript(origins: string[], draft = ""): string {
     else if (data.type === "disable") disable();
     else if (data.type === "clear") { selected = []; report(); }
     else if (data.type === "show" && data.change) show(data.change);
+    else if (data.type === "styles") styles(data.css);
   });
 
   // Tell the framing window the script is here (nothing else), so an editor can say hello.

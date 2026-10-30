@@ -1,6 +1,6 @@
 "use client";
 
-import { MousePointerClick } from "lucide-react";
+import { MessageSquare, MousePointerClick } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { type ComponentProps, useEffect, useState } from "react";
 import { SitePreview } from "@/components/site-preview/site-preview";
@@ -41,6 +41,9 @@ export function SiteWorkspace({
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  // The chat makes room for Visual edits while they are open, until it is shown again (or the
+  // panel asks the site builder something).
+  const [chatShown, setChatShown] = useState(true);
   // Unsaved visual edits, which wait (in this tab) when the panel is closed.
   const [unsaved, setUnsaved] = useState(0);
   useEffect(() => setUnsaved(storedCount(siteId)), [siteId]);
@@ -93,24 +96,41 @@ export function SiteWorkspace({
         }}
         actions={
           canChange && (
-            <Button
-              type="button"
-              size="sm"
-              variant={editing ? "default" : "outline"}
-              aria-pressed={editing}
-              onClick={() => setEditing((on) => !on)}
-            >
-              <MousePointerClick data-icon="inline-start" />
-              Visual edits
-              {unsaved > 0 && (
-                <span
-                  title={`${unsaved} not saved yet`}
-                  className="rounded-full bg-amber-400 px-1.5 text-[11px] text-black leading-4"
+            <>
+              {editing && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={chatShown ? "default" : "outline"}
+                  aria-pressed={chatShown}
+                  onClick={() => setChatShown((shown) => !shown)}
                 >
-                  {unsaved}
-                </span>
+                  <MessageSquare data-icon="inline-start" />
+                  Chat
+                </Button>
               )}
-            </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={editing ? "default" : "outline"}
+                aria-pressed={editing}
+                onClick={() => {
+                  setChatShown(editing);
+                  setEditing(!editing);
+                }}
+              >
+                <MousePointerClick data-icon="inline-start" />
+                Visual edits
+                {unsaved > 0 && (
+                  <span
+                    title={`${unsaved} not saved yet`}
+                    className="rounded-full bg-amber-400 px-1.5 text-[11px] text-black leading-4"
+                  >
+                    {unsaved}
+                  </span>
+                )}
+              </Button>
+            </>
           )
         }
       />
@@ -119,7 +139,10 @@ export function SiteWorkspace({
           siteId={siteId}
           frame={frame}
           previewUrl={url}
-          ask={chat.send}
+          ask={(text) => {
+            setChatShown(true);
+            return chat.send(text);
+          }}
           asking={chat.busy}
           editable={preview.version === null}
           onPendingChange={setUnsaved}
@@ -133,7 +156,10 @@ export function SiteWorkspace({
         chat={chat}
         refusal={refusal}
         versions={{ ...versions, shown: preview.version }}
-        className="h-[70vh] border-t lg:h-auto lg:w-[400px] lg:shrink-0 lg:border-t-0 lg:border-l"
+        className={cn(
+          "h-[70vh] border-t lg:h-auto lg:w-[400px] lg:shrink-0 lg:border-t-0 lg:border-l",
+          editing && !chatShown && "hidden",
+        )}
       />
     </div>
   );
