@@ -28,7 +28,9 @@ import {
   refusedQuery,
   removeSiteDomain,
   type SyncResult,
+  setMainClient,
   setSiteFolder,
+  skipOnboardingStep,
   syncLocations,
   unlinkHostProject,
 } from "@locus/connect";
@@ -151,35 +153,38 @@ export async function signOut() {
   redirect("/sign-in");
 }
 
-function slugify(name: string) {
-  const base = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 40);
-  return `${base || "agency"}-${crypto.randomUUID().slice(0, 6)}`;
-}
-
-/** A new agency, owned by the signed-in user and made their active one. */
-export async function createAgency(form: FormData) {
-  const name = text(form, "name");
+/** The setup's second step: the agency's own sub-account, which its chat then opens on. */
+export async function chooseMainClient(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fonboarding");
+  const locationId = text(form, "locationId");
   try {
-    const requestHeaders = await headers();
-    const agency = await locus().auth.api.createOrganization({
-      body: { name, slug: slugify(name) },
-      headers: requestHeaders,
-    });
-    if (!agency) throw new Error("The agency could not be created.");
-    await locus().auth.api.setActiveOrganization({
-      body: { organizationId: agency.id },
-      headers: requestHeaders,
-    });
-    const current = await currentSession();
-    if (current) await rememberAgency(locus().db, current.user.id, agency.id);
+    const ctx = sessionContext(current);
+    const { organizationId } = await requireAgencyManager(locus().db, ctx);
+    if (!(await setMainClient(locus().db, organizationId, locationId))) {
+      throw new Error("Choose one of your agency's sub-accounts.");
+    }
+    await selectClient(locus().db, ctx, locationId);
   } catch (error) {
     back("/onboarding", error);
   }
-  redirect("/");
+  revalidatePath("/", "layout");
+  redirect("/onboarding");
+}
+
+/** "Do this later" on the setup's GitHub or Vercel step. */
+export async function skipSetupStep(form: FormData) {
+  const current = await currentSession();
+  if (!current) redirect("/sign-in?next=%2Fonboarding");
+  const step = text(form, "step");
+  if (step !== "github" && step !== "vercel") redirect("/onboarding");
+  try {
+    const { organizationId } = await requireAgencyManager(locus().db, sessionContext(current));
+    await skipOnboardingStep(locus().db, organizationId, step);
+  } catch (error) {
+    back("/onboarding", error);
+  }
+  redirect("/onboarding");
 }
 
 /**

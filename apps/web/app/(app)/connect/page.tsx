@@ -5,17 +5,8 @@ import { redirect } from "next/navigation";
 import { syncClients } from "@/app/actions";
 import { Button, Notice, Page } from "@/app/ui";
 import { serviceMode } from "@/lib/connect";
+import { connectMessage } from "@/lib/connect-messages";
 import { currentSession, locus, NotConfigured, sessionContext } from "@/lib/locus";
-
-const MESSAGES: Record<string, string> = {
-  state: "That sign-in to GoHighLevel expired or didn't match. Try again.",
-  ghl: "GoHighLevel refused the connection. Try again.",
-  "not-configured": "GoHighLevel isn't set up on this deployment yet.",
-  "github-state": "That GitHub install expired or didn't start from Locus. Try again from here.",
-  "github-not-configured": "GitHub isn't set up on this deployment yet.",
-  "vercel-state": "That Vercel install expired or didn't start from Locus. Try again from here.",
-  "vercel-not-configured": "Vercel isn't set up on this deployment yet.",
-};
 
 const LINK =
   "block w-full rounded-md border border-neutral-300 px-4 py-2 text-center text-sm font-medium";
@@ -86,7 +77,7 @@ export default async function Connect({
           involved.
         </Notice>
       )}
-      {error && <Notice tone="error">{MESSAGES[error] ?? error}</Notice>}
+      {error && <Notice tone="error">{connectMessage(error)}</Notice>}
       {github && <Notice tone="info">GitHub connected: {github}.</Notice>}
       {vercel && <Notice tone="info">Vercel connected: {vercel}.</Notice>}
 
