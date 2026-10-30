@@ -1042,10 +1042,13 @@ export async function newSiteRefusal(
   organizationId: string,
   now = new Date(),
 ): Promise<string | null> {
-  const entitlement = await agencyEntitlement(db, organizationId);
+  const entitlement = await agencyEntitlement(db, organizationId, { now });
   if (!entitlement.entitled) {
-    return entitlement.status === "past_due" || entitlement.status === "unpaid"
-      ? "Your Locus payment is overdue. Update it on the Billing page to create sites."
+    if (entitlement.status === "past_due" || entitlement.status === "unpaid") {
+      return "Your Locus payment is overdue. Update it on the Billing page to create sites.";
+    }
+    return entitlement.status === "trial_ended"
+      ? "Your free trial has ended. Choose a Locus plan on the Billing page to create sites."
       : "Choose a Locus plan on the Billing page to create sites.";
   }
   const cap = entitlement.limits?.sitesPerMonth;

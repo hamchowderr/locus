@@ -197,6 +197,20 @@
       "when": 1792970278912,
       "tag": "0027_brain_auto_save",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "6",
+      "when": 1793035443226,
+      "tag": "0028_agency_trial",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1793036488381,
+      "tag": "0029_agency_onboarding",
+      "breakpoints": true
     }
   ]
 }

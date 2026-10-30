@@ -192,6 +192,25 @@ export async function readLocationName(session: GhlSession, http: GhlHttp = {}):
   return res.location?.name ?? "";
 }
 
+/** The agency's name as GHL has it, read with its own agency token. Empty when GHL has none. */
+export async function readCompanyName(
+  agency: { token: string; companyId: string },
+  http: GhlHttp = {},
+): Promise<string> {
+  const session: GhlSession = {
+    token: agency.token,
+    tokenKind: "agency",
+    companyId: agency.companyId,
+  };
+  const res = await ghlRequest<{ company?: { name?: string } }>(
+    operation("companies.get-company"),
+    session,
+    {},
+    http,
+  );
+  return res.company?.name?.trim() ?? "";
+}
+
 /** The business's website from the sub-account's profile, read live; null when none is set. */
 export async function readLocationWebsite(
   session: GhlSession,
