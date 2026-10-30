@@ -158,7 +158,7 @@ export function SiteWorkspace({
         versions={{ ...versions, shown: preview.version }}
         className={cn(
           "h-[70vh] border-t lg:h-auto lg:w-[400px] lg:shrink-0 lg:border-t-0 lg:border-l",
-          editing && !chatShown && "hidden",
+          canChange && editing && !chatShown && "hidden",
         )}
       />
     </div>
