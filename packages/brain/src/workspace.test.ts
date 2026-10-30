@@ -3,6 +3,7 @@ import { RequestContext } from "@mastra/core/request-context";
 import { createWorkspaceTools } from "@mastra/core/workspace";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BrainFilesystem } from "./filesystem.ts";
+import { SETUP_NOTE } from "./paths.ts";
 import { listNoteVersions } from "./store.ts";
 import { tenantDbForTest } from "./test-db.ts";
 import {
@@ -208,8 +209,11 @@ describe("the brain in context", () => {
     const { brain } = await brainTools();
     const empty = await brain.context.render();
     expect(empty).toContain("(No instructions for this client yet.)");
-    // A new client's agent offers to start the brain from the client's website.
+    // A new client's agent offers to start the brain from the client's website, still so when
+    // the brain holds only the setup's summary of GoHighLevel.
     expect(empty).toContain("read_client_website");
+    await brain.filesystem.writeFile(SETUP_NOTE, "# How it is set up in GoHighLevel\n");
+    expect(await brain.context.render()).toContain("read_client_website");
     await brain.filesystem.writeFile("instructions.md", "a".repeat(MAX_CONTEXT_CHARS + 50));
     const text = await brain.context.render();
     expect(text).not.toContain("read_client_website");

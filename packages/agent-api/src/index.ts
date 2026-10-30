@@ -125,11 +125,28 @@ export interface AgentApiConfig {
    * browser sends as `requestContext` is dropped; these replace it.
    */
   requestContext?: (request: Request, member: AgentApiMember) => Promise<Record<string, unknown>>;
+  /**
+   * Why the member's client may not start or resume a run now (its agency's free trial ended
+   * unpaid, say), or null when it may. Asked before every request that runs the model; a refusal
+   * is answered 402 with this reason, which the chat shows. Reading the chat is never refused.
+   */
+  mayRun?: (member: AgentApiMember) => Promise<string | null>;
 }
+
+/** The kit's routes that start or resume a run. */
+const KIT_RUNS = new Set(["stream", "approve", "answer"]);
+/** Mastra's session routes that start or resume a run. */
+const SESSION_RUNS = new Set([
+  "messages",
+  "steer",
+  "follow-up",
+  "tool-approval",
+  "tool-suspension",
+]);
 
 const BODY_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-function deny(status: 400 | 401 | 403 | 404, error: string) {
+function deny(status: 400 | 401 | 402 | 403 | 404, error: string) {
   return Response.json({ error }, { status });
 }
 
@@ -138,8 +155,13 @@ export function createAgentApi({
   authorize,
   controllerFor,
   requestContext,
+  mayRun,
 }: AgentApiConfig) {
   const base = `${prefix}/agent-controller/${CONTROLLER_ID}`;
+  const refusal = async (member: AgentApiMember) => {
+    const reason = (await mayRun?.(member)) ?? null;
+    return reason === null ? null : deny(402, reason);
+  };
   const kitBase = `${prefix}/kit/agent-controller`;
   const controllers = new Map<string, Promise<Mastra>>();
   const apps = new Map<string, Promise<Hono>>();
@@ -194,6 +216,10 @@ export function createAgentApi({
     const segments = decodeSegments(url.pathname.slice(kitBase.length));
     if (!segments) return deny(400, "bad path");
     if (!isKitRoute(request.method, segments)) return deny(404, "not found");
+    if (request.method === "POST" && KIT_RUNS.has(segments[0] ?? "")) {
+      const refused = await refusal(member);
+      if (refused) return refused;
+    }
     let body: string | undefined;
     if (BODY_METHODS.has(request.method)) {
       const sent = await readJson(request);
@@ -286,6 +312,10 @@ export function createAgentApi({
       if (!shape) return deny(404, "not found");
       if (shape !== "modes" && shape !== "create" && segments[1] !== resourceId) {
         return deny(403, "not your client");
+      }
+      if (request.method === "POST" && shape === "session" && SESSION_RUNS.has(segments[2] ?? "")) {
+        const refused = await refusal(member);
+        if (refused) return refused;
       }
 
       let body: string | undefined;

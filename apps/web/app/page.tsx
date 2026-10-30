@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { configured, currentSession } from "@/lib/locus";
+import { setupStepFor } from "@/lib/onboarding";
 import { AuthPage, Notice } from "./ui";
 
 /**
@@ -16,7 +17,10 @@ export default async function Home() {
       </AuthPage>
     );
   }
-  if (current) redirect(current.session.activeOrganizationId ? "/chat" : "/onboarding");
+  if (current) {
+    // A new agency part-way through its setup goes back to the next step of it.
+    redirect((await setupStepFor(current)) ? "/onboarding" : "/chat");
+  }
   return (
     <AuthPage title="Operate every GoHighLevel client from one place">
       <div className="flex gap-4 text-sm">
