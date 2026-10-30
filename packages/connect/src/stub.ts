@@ -8,6 +8,8 @@
 
 export interface StubAgency {
   companyId: string;
+  /** The agency's name, as GHL's company endpoint returns it. */
+  name?: string;
   locations: { _id: string; name: string }[];
   /** Agency staff, as GHL's users search returns them. */
   users: {
@@ -20,6 +22,7 @@ export interface StubAgency {
 
 export const STUB_AGENCY: StubAgency = {
   companyId: "stub-company-1",
+  name: "Stub Agency",
   locations: [
     { _id: "stub-location-1", name: "Sunrise Dental" },
     { _id: "stub-location-2", name: "Peak Fitness" },
@@ -122,6 +125,23 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
           total: 2,
         });
       }
+      // How the sub-account is set up (`readSetupSummary`), by name. Forms and workflows are
+      // left out, as when the app lacks their scopes.
+      const ownQuery = url.searchParams.get("locationId") === own?._id;
+      if (own && method === "GET" && ownQuery && url.pathname === "/products/") {
+        return Response.json({ products: [{ name: "Teeth whitening" }, { name: "Checkup" }] });
+      }
+      if (own && method === "GET" && ownQuery && url.pathname === "/calendars/") {
+        return Response.json({ calendars: [{ name: "New patient visit" }] });
+      }
+      if (own && method === "GET" && ownQuery && url.pathname === "/opportunities/pipelines") {
+        return Response.json({
+          pipelines: [{ name: "New patients", stages: [{ name: "Enquiry" }, { name: "Booked" }] }],
+        });
+      }
+      if (own && method === "GET" && url.pathname === `/locations/${own._id}/customFields`) {
+        return Response.json({ customFields: [{ name: "Insurance provider" }] });
+      }
       // A site's lead form (`submitSiteLead`): accepted and forgotten, nothing is kept.
       if (own && method === "POST" && url.pathname === "/contacts/upsert") {
         const body = JSON.parse(String(init?.body ?? "{}")) as { locationId?: string };
@@ -147,6 +167,10 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
 
     if (!auth.startsWith("Bearer stub-agency-token-")) {
       return Response.json({ statusCode: 401, message: "Invalid token" }, { status: 401 });
+    }
+
+    if (method === "GET" && url.pathname === `/companies/${agency.companyId}`) {
+      return Response.json({ company: { id: agency.companyId, name: agency.name ?? "" } });
     }
 
     if (method === "GET" && url.pathname === "/oauth/installed-locations") {

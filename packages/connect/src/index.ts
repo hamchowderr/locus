@@ -6,7 +6,9 @@ export {
   clientGhl,
   clientGhlSession,
   connectAgency,
+  connectAgencyGrant,
   ghlSecretRef,
+  inspectGrant,
   refusedQuery,
   type SyncResult,
   suspendLocation,
@@ -23,6 +25,7 @@ export {
   listInstalledLocations,
   mintLocationToken,
   NEUTRAL_AUTHORIZE_BASE,
+  readCompanyName,
   readLocationName,
   readLocationWebsite,
   refreshGrant,
@@ -38,7 +41,24 @@ export {
   handleGithubWebhook,
   verifyGithubSignature,
 } from "./github.ts";
+export {
+  dropHeldGrant,
+  HELD_GRANT_MS,
+  holdGrant,
+  peekHeldGrant,
+  takeHeldGrant,
+} from "./held-grant.ts";
 export { INBOX_PAGE, type InboxConversation, listInbox } from "./inbox.ts";
+export {
+  beginOnboarding,
+  mainClientOf,
+  ONBOARDING_STEPS,
+  type OnboardingStep,
+  onboardingOpen,
+  onboardingStep,
+  setMainClient,
+  skipOnboardingStep,
+} from "./onboarding.ts";
 export {
   agencyGithubAccount,
   checkSitePaths,
@@ -57,6 +77,13 @@ export {
   type SiteDeployment,
   type SiteFile,
 } from "./publish.ts";
+export {
+  MAX_SETUP_NAMES,
+  readSetupSummary,
+  SETUP_PARTS,
+  type SetupSummary,
+  setupNote,
+} from "./setup-summary.ts";
 export {
   enableSiteBackend,
   ensureSiteBackendEnv,

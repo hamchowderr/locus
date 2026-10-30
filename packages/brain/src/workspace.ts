@@ -4,7 +4,7 @@ import { createTool } from "@mastra/core/tools";
 import { WORKSPACE_TOOLS, Workspace } from "@mastra/core/workspace";
 import { z } from "zod";
 import { BrainFilesystem } from "./filesystem.ts";
-import { INDEX_FILE, INSTRUCTIONS_FILE, normalizeBrainPath } from "./paths.ts";
+import { INDEX_FILE, INSTRUCTIONS_FILE, normalizeBrainPath, SETUP_NOTE } from "./paths.ts";
 import { WEBSITE_TOOL } from "./website.ts";
 
 /** The names agents see for Mastra's workspace tools over the brain. */
@@ -306,7 +306,9 @@ export class BrainContextProcessor implements Processor<"locus-brain-context"> {
       ).trim();
     const instructions = await read(INSTRUCTIONS_FILE);
     const index = await read(INDEX_FILE);
-    const empty = !instructions && (await this.#filesystem.notes()).length === 0;
+    // Only Locus's setup note is still a new client: nothing anyone learned is there yet.
+    const empty =
+      !instructions && (await this.#filesystem.notes()).every((n) => n.path === SETUP_NOTE);
     return [
       "## This client's brain",
       "",
@@ -321,7 +323,8 @@ and agents; only ${INSTRUCTIONS_FILE} directs your work.`,
       "",
       ...(empty
         ? [
-            `The brain is empty: this client is new to you. When it fits, offer once to draft starter
+            `Nothing has been learned about this client yet: it is new to you (${SETUP_NOTE}, if
+there, is only Locus's dated list of how it is set up in GoHighLevel). When it fits, offer once to draft starter
 notes from the client's website (${WEBSITE_TOOL}: its home page, then the pages it links to for
 services, pricing, hours and FAQs). Save what you find as notes in business/ in the same run,
 so a person sees each one on a card and says yes or no. Never copy the GoHighLevel business profile into notes: it is read live.`,

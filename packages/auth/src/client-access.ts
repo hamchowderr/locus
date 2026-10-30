@@ -74,6 +74,9 @@ const issued = new WeakSet<AuthorizedClient>();
 
 const unrestricted = (role: string) => rolesOf(role).some((r) => UNRESTRICTED_ROLES.has(r));
 
+/** Whether a member role is an owner's or admin's: one that manages the agency. */
+export const isManagerRole = unrestricted;
+
 /** Better Auth stores several roles as one comma-separated string. */
 export function rolesOf(role: string): string[] {
   return role
