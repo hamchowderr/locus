@@ -8,6 +8,8 @@
 
 export interface StubAgency {
   companyId: string;
+  /** The agency's name, as GHL's company endpoint returns it. */
+  name?: string;
   locations: { _id: string; name: string }[];
   /** Agency staff, as GHL's users search returns them. */
   users: {
@@ -20,6 +22,7 @@ export interface StubAgency {
 
 export const STUB_AGENCY: StubAgency = {
   companyId: "stub-company-1",
+  name: "Stub Agency",
   locations: [
     { _id: "stub-location-1", name: "Sunrise Dental" },
     { _id: "stub-location-2", name: "Peak Fitness" },
@@ -147,6 +150,10 @@ export function createStubGhl(agency: StubAgency = STUB_AGENCY): typeof fetch {
 
     if (!auth.startsWith("Bearer stub-agency-token-")) {
       return Response.json({ statusCode: 401, message: "Invalid token" }, { status: 401 });
+    }
+
+    if (method === "GET" && url.pathname === `/companies/${agency.companyId}`) {
+      return Response.json({ company: { id: agency.companyId, name: agency.name ?? "" } });
     }
 
     if (method === "GET" && url.pathname === "/oauth/installed-locations") {

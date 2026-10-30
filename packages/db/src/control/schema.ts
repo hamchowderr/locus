@@ -334,6 +334,31 @@ export const agencyTrial = sqliteTable("agency_trial", {
   endsAt: integer("ends_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+/**
+ * An agency's first-run setup, for agencies that signed up through it: GoHighLevel, its main
+ * sub-account, GitHub, then Vercel. Until `completed_at` is set, signing in returns its owner to
+ * the next unfinished step. Agencies from before it have no row and are never sent there.
+ */
+export const agencyOnboarding = sqliteTable(
+  "agency_onboarding",
+  {
+    organizationId: text("organization_id")
+      .primaryKey()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    /** The agency's own business: the sub-account its chat opens on first. */
+    mainLocationId: text("main_location_id").references(() => location.id, {
+      onDelete: "set null",
+    }),
+    /** "Do this later" on the GitHub step. */
+    githubSkipped: integer("github_skipped", { mode: "boolean" }).notNull().default(false),
+    /** "Do this later" on the Vercel step. */
+    vercelSkipped: integer("vercel_skipped", { mode: "boolean" }).notNull().default(false),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("agency_onboarding_main_location_idx").on(t.mainLocationId)],
+);
+
 export const auditLog = sqliteTable(
   "audit_log",
   {
