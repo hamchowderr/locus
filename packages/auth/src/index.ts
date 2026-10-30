@@ -12,6 +12,9 @@ export {
   type Entitlement,
   mayManageBilling,
   newClientRefusal,
+  startTrial,
+  TRIAL_DAYS,
+  trialDaysLeft,
 } from "./billing.ts";
 export { chatKitKey, chatKitSessionId } from "./chat-kit.ts";
 export {
@@ -22,6 +25,7 @@ export {
   brainAutoSaveFor,
   ClientAccessDenied,
   inboxDraftsFor,
+  isManagerRole,
   type LocationRow,
   listAccessibleClients,
   listSiteMembers,
@@ -66,7 +70,7 @@ export {
   reportOverage,
   setupOverageBilling,
 } from "./overage-billing.ts";
-export { CREDIT, PLANS, type Plan, type PlanLimits, planNamed } from "./plans.ts";
+export { CREDIT, PLANS, type Plan, type PlanLimits, planNamed, TRIAL_PLAN } from "./plans.ts";
 export { type AttemptRule, consumeAttempt } from "./rate-limit.ts";
 export {
   type Allowance,

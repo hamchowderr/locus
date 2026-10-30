@@ -2,6 +2,7 @@ import { createAuth, emailFromEnv, type SessionContext } from "@locus/auth";
 import { type ControlDb, DEV_CONTROL_DB_URL, openControlDb, provisionerFromEnv } from "@locus/db";
 import * as schema from "@locus/db/control";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { cache } from "react";
 import { deploymentBaseUrl } from "./base-url.ts";
 
@@ -60,6 +61,18 @@ function build() {
     beforeAgencyDeleted: async (organizationId) => {
       await offboardClients(db, organizationId);
       await removeAgencySecrets(db, organizationId);
+    },
+    // After Stripe has its answer: adding sub-accounts provisions a database for each. The
+    // connect module is imported when first needed, since it builds on this one.
+    onAgencyPaid: async (organizationId) => {
+      after(async () => {
+        try {
+          const { addWaitingClients } = await import("./connect.ts");
+          await addWaitingClients(organizationId);
+        } catch (error) {
+          console.error("Adding the sub-accounts waiting for a plan failed", error);
+        }
+      });
     },
     afterAgencyDeleted: (organizationId) =>
       removeAgencySecrets(db, organizationId).catch((error: unknown) => {

@@ -3,12 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ControlDb, migrateControlDb, openControlDb } from "@locus/db";
 import * as schema from "@locus/db/control";
-import { agencyComp, organization, subscription, user } from "@locus/db/control";
+import { agencyComp, agencyTrial, organization, subscription, user } from "@locus/db/control";
 import { eq } from "drizzle-orm";
 import Stripe from "stripe";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
-import { agencyEntitlement, mayManageBilling, newClientRefusal } from "./billing.ts";
+import {
+  agencyEntitlement,
+  mayManageBilling,
+  newClientRefusal,
+  startTrial,
+  TRIAL_DAYS,
+  trialDaysLeft,
+} from "./billing.ts";
 
 const WEBHOOK_SECRET = "whsec_test_locus_billing";
 
@@ -173,5 +180,116 @@ describe("entitlement, from our own database", () => {
     expect(
       await db.select().from(subscription).where(eq(subscription.referenceId, "agency-a")),
     ).toEqual([]);
+  });
+});
+
+describe("the free trial", () => {
+  const start = new Date("2026-10-26T12:00:00Z");
+  const later = (days: number) => new Date(start.getTime() + days * 86_400_000);
+
+  it("gives a new agency Starter's limits for three days, with no card", async () => {
+    expect(await startTrial(db, "agency-a", "owner-1", { now: start })).toBe(true);
+    const trial = await agencyEntitlement(db, "agency-a", { now: later(1) });
+    expect(trial).toMatchObject({ entitled: true, status: "trialing" });
+    expect(trial.plan?.name).toBe("starter");
+    expect(trial.trialEndsAt).toEqual(later(TRIAL_DAYS));
+    expect(newClientRefusal(trial, 4)).toBeNull();
+    expect(newClientRefusal(trial, 5)).toMatch(/covers 5 clients/);
+    expect(trialDaysLeft(trial.trialEndsAt as Date, later(1))).toBe(2);
+    expect(trialDaysLeft(trial.trialEndsAt as Date, later(2.9))).toBe(1);
+  });
+
+  it("ends after three days, and says so", async () => {
+    await startTrial(db, "agency-a", "owner-1", { now: start });
+    const ended = await agencyEntitlement(db, "agency-a", { now: later(TRIAL_DAYS) });
+    expect(ended).toMatchObject({ entitled: false, status: "trial_ended", plan: null });
+    expect(newClientRefusal(ended, 0)).toMatch(/free trial has ended/);
+  });
+
+  it("is once per person, and once per agency", async () => {
+    expect(await startTrial(db, "agency-a", "owner-1", { now: start })).toBe(true);
+    // The same person's second agency gets no trial.
+    expect(await startTrial(db, "agency-b", "owner-1", { now: start })).toBe(false);
+    // Nor does the same agency start a second one.
+    expect(await startTrial(db, "agency-a", "owner-2", { now: later(5) })).toBe(false);
+    const rows = await db.select().from(agencyTrial);
+    expect(rows).toHaveLength(1);
+    expect(await agencyEntitlement(db, "agency-b")).toMatchObject({ status: "none" });
+  });
+
+  it("gives way to a paid plan, during the trial or after it", async () => {
+    await startTrial(db, "agency-a", "owner-1", { now: start });
+    await deliver(
+      subscriptionEvent("customer.subscription.created", "active", "locus_growth_monthly"),
+    );
+    for (const now of [later(1), later(10)]) {
+      const paid = await agencyEntitlement(db, "agency-a", { now });
+      expect(paid).toMatchObject({ entitled: true, status: "active", trialEndsAt: null });
+      expect(paid.plan?.name).toBe("growth");
+    }
+  });
+
+  it("a running trial still counts beside an unfinished checkout", async () => {
+    await startTrial(db, "agency-a", "owner-1", { now: start });
+    await deliver(subscriptionEvent("customer.subscription.created", "incomplete"));
+    const trial = await agencyEntitlement(db, "agency-a", { now: later(1) });
+    expect(trial).toMatchObject({ entitled: true, status: "trialing" });
+  });
+
+  it("an overdue payment after the trial shows as overdue, not as an ended trial", async () => {
+    await startTrial(db, "agency-a", "owner-1", { now: start });
+    await deliver(subscriptionEvent("customer.subscription.created", "active"));
+    await deliver(subscriptionEvent("customer.subscription.updated", "past_due"));
+    const overdue = await agencyEntitlement(db, "agency-a", { now: later(10) });
+    expect(overdue).toMatchObject({ entitled: false, status: "past_due" });
+  });
+});
+
+describe("adding waiting sub-accounts once paid", () => {
+  it("tells the web app when Stripe says the agency is paid up, and not otherwise", async () => {
+    const paid: string[] = [];
+    auth = createAuth({
+      db,
+      schema,
+      baseURL: "http://localhost:3000",
+      secret: "test-secret-test-secret-test-secret-0000",
+      sendEmail: async () => {},
+      billing: { secretKey: "sk_test_never_called", webhookSecret: WEBHOOK_SECRET },
+      onAgencyPaid: async (organizationId) => {
+        paid.push(organizationId);
+      },
+    });
+    await deliver(subscriptionEvent("customer.subscription.created", "incomplete"));
+    expect(paid).toEqual([]);
+    await deliver(subscriptionEvent("customer.subscription.updated", "active"));
+    expect(paid).toEqual(["agency-a"]);
+    await deliver(subscriptionEvent("customer.subscription.updated", "past_due"));
+    expect(paid).toEqual(["agency-a"]);
+    await deliver(subscriptionEvent("customer.subscription.updated", "active"));
+    expect(paid).toEqual(["agency-a", "agency-a"]);
+    // A renewal changes the period, not the status or the plan: nothing to add.
+    const renewal = subscriptionEvent("customer.subscription.updated", "active");
+    await deliver({
+      ...renewal,
+      id: "evt_renewal",
+      data: { ...renewal.data, previous_attributes: { latest_invoice: "in_old" } },
+    });
+    expect(paid).toEqual(["agency-a", "agency-a"]);
+  });
+
+  it("a failure there never fails Stripe's webhook", async () => {
+    auth = createAuth({
+      db,
+      schema,
+      baseURL: "http://localhost:3000",
+      secret: "test-secret-test-secret-test-secret-0000",
+      sendEmail: async () => {},
+      billing: { secretKey: "sk_test_never_called", webhookSecret: WEBHOOK_SECRET },
+      onAgencyPaid: async () => {
+        throw new Error("GoHighLevel is down");
+      },
+    });
+    const res = await deliver(subscriptionEvent("customer.subscription.created", "active"));
+    expect(res.status).toBe(200);
   });
 });

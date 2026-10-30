@@ -8,6 +8,7 @@ import { MainChat } from "@/components/main-chat";
 import { appConnectionsFromEnv } from "@/lib/apps";
 import { chatKitEnabled } from "@/lib/chat-kit";
 import { currentSession, locus, sessionContext } from "@/lib/locus";
+import { setupStepFor } from "@/lib/onboarding";
 
 /**
  * The main chat always runs as the supervisor, with no picker: it answers questions and hands
@@ -19,7 +20,7 @@ const CHAT_MODES = [{ id: "supervisor", name: "Chat" }] as const;
 export default async function ChatPage() {
   const current = await currentSession();
   if (!current) redirect("/sign-in?next=%2Fchat");
-  if (!current.session.activeOrganizationId) redirect("/onboarding");
+  if (await setupStepFor(current)) redirect("/onboarding");
   const client = await resolveActiveClient(locus().db, sessionContext(current)).catch((e) => {
     if (e instanceof ClientAccessDenied) return null;
     throw e;
