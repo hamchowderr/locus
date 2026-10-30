@@ -1,11 +1,12 @@
 "use client";
 
-import { MousePointerClick, Save, Sparkles, Undo2 } from "lucide-react";
+import { MousePointerClick, Redo2, Save, Sparkles, Trash2, Undo2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { currentOf, groupsFor, type StyleGroup, setGroup } from "./classes";
+import { keyOf } from "./history";
 import {
   type PendingEdit,
   type SaveResult,
@@ -16,10 +17,11 @@ import {
 const field = "w-full rounded-md border border-neutral-300 px-2 py-1 text-sm";
 
 /**
- * Visual edits for a site's preview, like HighLevel's: turn it on, click anything on the page
+ * Visual edits for a site's preview, like HighLevel's: open it and click anything on the page
  * to select it (Shift-click for more), double-click text to type over it, or change it in this
- * panel. Changes show in the preview at once and cost nothing; Save keeps them as a new
- * version, Discard throws them away. "Ask the site builder" sends the selection and a request
+ * panel. Changes show in the preview at once and cost nothing; Ctrl+Z undoes them, Save keeps
+ * them as a new version, Discard throws them away (Undo brings them back). Closing the panel
+ * keeps them, and their undo history, until then. "Ask the site builder" sends the selection and a request
  * to the site's chat beside the preview, which uses AI credits.
  */
 export function VisualEditor({
@@ -30,6 +32,7 @@ export function VisualEditor({
   asking: chatBusy,
   editable,
   onSaved,
+  onPendingChange,
   className,
 }: {
   siteId: string;
@@ -42,6 +45,8 @@ export function VisualEditor({
   /** False when the preview shows an older version, which can't be edited in place. */
   editable: boolean;
   onSaved?: (result: SaveResult) => void;
+  /** How many changes aren't saved yet, whenever that changes. */
+  onPendingChange?: (count: number) => void;
   className?: string;
 }) {
   const edits = useVisualEdits({ siteId, frame, previewUrl, onSaved });
@@ -53,69 +58,108 @@ export function VisualEditor({
     if (edits.selection.length > 0) setAsking(true);
   }, [edits.selection.length]);
   const count = edits.pending.length;
+  useEffect(() => onPendingChange?.(count), [count, onPendingChange]);
 
   return (
-    <aside className={cn("flex w-80 shrink-0 flex-col gap-3 overflow-y-auto text-sm", className)}>
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="font-semibold">Visual edits</h2>
-        <Button
-          type="button"
-          size="sm"
-          variant={edits.enabled ? "default" : "outline"}
-          aria-pressed={edits.enabled}
-          disabled={!editable || !edits.ready}
-          onClick={() => edits.setMode(!edits.enabled)}
-        >
-          <MousePointerClick data-icon="inline-start" />
-          {edits.enabled ? "Selecting" : "Select items"}
-        </Button>
-      </div>
-      {!editable ? (
-        <p className="text-neutral-600">
-          This preview shows an older version. Visual edits change the current site: open the
-          current preview to use them.
-        </p>
-      ) : !edits.ready ? (
-        <p className="text-neutral-600">Visual edits start once the preview has loaded.</p>
-      ) : !edits.enabled ? (
-        <p className="text-neutral-600">
-          Turn on <strong>Select items</strong>, then click anything on the page to change it.
-          Double-click text to type over it. Changes made here are free and don't use AI.
-        </p>
-      ) : edits.selection.length === 0 ? (
-        <p className="text-neutral-600">
-          Click an item on the page. Shift-click to select more than one.
-        </p>
-      ) : edits.selection.length === 1 && edits.selection[0] ? (
-        <ItemControls item={edits.selection[0]} theme={edits.theme} onChange={edits.change} />
-      ) : (
-        <p className="text-neutral-600">
-          {edits.selection.length} items selected. Describe a change for all of them below.
-        </p>
-      )}
-
-      {editable && edits.ready && asking && (
-        <>
-          <Separator />
-          <AskBuilder
-            ask={ask}
-            busy={chatBusy}
-            selection={edits.selection}
-            page={edits.path}
-            unsaved={count > 0}
+    <aside className={cn("flex w-80 shrink-0 flex-col gap-3 text-sm lg:min-h-0", className)}>
+      {/* Everything but the save bar scrolls, so Undo, Save and Discard stay in view. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">Visual edits</h2>
+          <Button
+            type="button"
+            size="sm"
+            variant={edits.enabled ? "default" : "outline"}
+            aria-pressed={edits.enabled}
+            disabled={!editable || !edits.ready}
+            onClick={() => edits.setMode(!edits.enabled)}
+          >
+            <MousePointerClick data-icon="inline-start" />
+            {edits.enabled ? "Selecting" : "Select"}
+          </Button>
+        </div>
+        {!editable ? (
+          <p className="text-neutral-600">
+            This preview shows an older version. Visual edits change the current site: open the
+            current preview to use them.
+          </p>
+        ) : !edits.ready ? (
+          <p className="text-neutral-600">Visual edits start once the preview has loaded.</p>
+        ) : !edits.enabled ? (
+          <p className="text-neutral-600">
+            The page works as usual, so you can follow links and open menus. Turn on{" "}
+            <strong>Select</strong> to change items again.
+          </p>
+        ) : edits.selection.length === 0 ? (
+          <p className="text-neutral-600">
+            Click anything on the page to change it, or double-click text to type over it.
+            Shift-click selects more than one. Changes made here are free and don't use AI.
+          </p>
+        ) : edits.selection.length === 1 && edits.selection[0] ? (
+          <ItemControls
+            item={edits.selection[0]}
+            theme={edits.theme}
+            generation={edits.generation}
+            onChange={edits.change}
           />
-        </>
-      )}
+        ) : (
+          <p className="text-neutral-600">
+            {edits.selection.length} items selected. Describe a change for all of them below.
+          </p>
+        )}
 
-      {(count > 0 || edits.problem || edits.failures.length > 0 || saved) && <Separator />}
-      {count > 0 && (
-        <div className="flex flex-col gap-2">
-          <p>{count === 1 ? "1 change" : `${count} changes`} not saved yet.</p>
-          <div className="flex gap-2">
+        {editable && edits.ready && asking && (
+          <>
+            <Separator />
+            <AskBuilder
+              ask={ask}
+              busy={chatBusy}
+              selection={edits.selection}
+              page={edits.path}
+              unsaved={count > 0}
+            />
+          </>
+        )}
+
+        {edits.problem && <p className="text-red-700">{edits.problem}</p>}
+        <SaveSummary failures={edits.failures} />
+        {saved?.version != null && (
+          <p className="text-neutral-600">
+            Saved as version {saved.version}.{saved.publishError ? ` ${saved.publishError}` : ""}
+          </p>
+        )}
+      </div>
+
+      {(count > 0 || edits.canUndo || edits.canRedo) && (
+        <div className="flex shrink-0 flex-col gap-2 border-t pt-3">
+          <ChangeList pending={edits.pending} />
+          <div className="flex flex-wrap gap-2">
             <Button
               type="button"
               size="sm"
-              disabled={edits.saving}
+              variant="outline"
+              title="Undo (Ctrl+Z)"
+              aria-label="Undo"
+              disabled={edits.saving || !edits.canUndo}
+              onClick={edits.undo}
+            >
+              <Undo2 />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              title="Redo (Ctrl+Shift+Z)"
+              aria-label="Redo"
+              disabled={edits.saving || !edits.canRedo}
+              onClick={edits.redo}
+            >
+              <Redo2 />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              disabled={edits.saving || count === 0}
               onClick={async () => {
                 setSaved(null);
                 setSaved(await edits.save());
@@ -128,23 +172,54 @@ export function VisualEditor({
               type="button"
               size="sm"
               variant="outline"
-              disabled={edits.saving}
+              disabled={edits.saving || count === 0}
               onClick={edits.discard}
             >
-              <Undo2 data-icon="inline-start" />
+              <Trash2 data-icon="inline-start" />
               Discard
             </Button>
           </div>
         </div>
       )}
-      {edits.problem && <p className="text-red-700">{edits.problem}</p>}
-      <SaveSummary failures={edits.failures} />
-      {saved?.version != null && (
-        <p className="text-neutral-600">
-          Saved as version {saved.version}.{saved.publishError ? ` ${saved.publishError}` : ""}
-        </p>
-      )}
     </aside>
+  );
+}
+
+const ATTRIBUTE_LABELS: Record<string, string> = {
+  className: "Style",
+  src: "Image",
+  alt: "Image description",
+  href: "Link",
+  placeholder: "Placeholder",
+};
+
+const clip = (text: string) => (text.length > 40 ? `${text.slice(0, 39)}…` : text);
+
+/** One line saying what an unsaved change does. */
+function describe(edit: PendingEdit): string {
+  if (edit.kind === "text") return `Text: “${clip(edit.from)}” to “${clip(edit.to)}”`;
+  if (edit.kind === "newTab")
+    return edit.on ? "Link opens in a new tab" : "Link opens in the same tab";
+  if (edit.name === "className") return "Style changed";
+  return `${ATTRIBUTE_LABELS[edit.name] ?? edit.name}: ${clip(edit.to) || "(empty)"}`;
+}
+
+/** How many changes wait to be saved, and what each one is. */
+function ChangeList({ pending }: { pending: PendingEdit[] }) {
+  if (pending.length === 0) return <p>No changes waiting to be saved.</p>;
+  return (
+    <details>
+      <summary className="cursor-pointer">
+        {pending.length === 1 ? "1 change" : `${pending.length} changes`} not saved yet
+      </summary>
+      <ul className="mt-1 flex max-h-32 flex-col gap-0.5 overflow-y-auto text-neutral-600 text-xs">
+        {pending.map((edit) => (
+          <li key={keyOf(edit)} className="break-words">
+            {describe(edit)}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -189,10 +264,13 @@ const tagName = (item: SelectedItem) =>
 function ItemControls({
   item,
   theme,
+  generation,
   onChange,
 }: {
   item: SelectedItem;
   theme: Record<string, string>;
+  /** Changes on undo and redo, so the fields below start again from the item's value. */
+  generation: number;
   onChange: (edit: PendingEdit) => void;
 }) {
   const attr = (name: "src" | "alt" | "href" | "className" | "placeholder", to: string) =>
@@ -221,7 +299,7 @@ function ItemControls({
       {item.src !== null && (
         <Labeled label="Image link">
           <input
-            key={`${item.target}-src`}
+            key={`${item.target}-src-${generation}`}
             className={field}
             defaultValue={item.src}
             placeholder="https://"
@@ -232,7 +310,7 @@ function ItemControls({
       {item.alt !== null && (
         <Labeled label="Describe the image (for screen readers and search)">
           <input
-            key={`${item.target}-alt`}
+            key={`${item.target}-alt-${generation}`}
             className={field}
             defaultValue={item.alt}
             onChange={(e) => attr("alt", e.target.value)}
@@ -243,7 +321,7 @@ function ItemControls({
         <>
           <Labeled label="Link goes to">
             <input
-              key={`${item.target}-href`}
+              key={`${item.target}-href-${generation}`}
               className={field}
               defaultValue={item.href}
               placeholder="/contact or https://"
@@ -270,7 +348,7 @@ function ItemControls({
       {item.placeholder !== null && (
         <Labeled label="Hint shown in the empty field">
           <input
-            key={`${item.target}-ph`}
+            key={`${item.target}-ph-${generation}`}
             className={field}
             defaultValue={item.placeholder}
             onChange={(e) => attr("placeholder", e.target.value)}
@@ -288,9 +366,6 @@ function ItemControls({
           onChange={(next) => attr("className", next)}
         />
       ))}
-      <p className="text-xs text-neutral-500">
-        Some new styles only show once you save, while the preview updates.
-      </p>
     </div>
   );
 }
