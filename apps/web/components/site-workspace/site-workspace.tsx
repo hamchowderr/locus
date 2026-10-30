@@ -1,10 +1,11 @@
 "use client";
 
-import { MousePointerClick } from "lucide-react";
+import { MessageSquare, MousePointerClick } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps, useEffect, useState } from "react";
 import { SitePreview } from "@/components/site-preview/site-preview";
 import { Button } from "@/components/ui/button";
+import { storedCount, useLeaveWarning } from "@/components/visual-edits/use-visual-edits";
 import { VisualEditor } from "@/components/visual-edits/visual-editor";
 import { lastCheckFailure } from "@/lib/builder-steps";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,14 @@ export function SiteWorkspace({
   const [frame, setFrame] = useState<HTMLIFrameElement | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  // The chat makes room for Visual edits while they are open, until it is shown again (or the
+  // panel asks the site builder something).
+  const [chatShown, setChatShown] = useState(true);
+  // Unsaved visual edits, which wait (in this tab) when the panel is closed.
+  const [unsaved, setUnsaved] = useState(0);
+  useEffect(() => setUnsaved(storedCount(siteId)), [siteId]);
+  // Leaving with unsaved visual edits asks first, whether or not the panel is open.
+  useLeaveWarning(unsaved > 0);
   const [reloads, setReloads] = useState(0);
   const mode = "mode" in setting ? setting.mode : null;
   const refusal = "mode" in setting ? setting.refusal : setting.off;
@@ -87,16 +96,41 @@ export function SiteWorkspace({
         }}
         actions={
           canChange && (
-            <Button
-              type="button"
-              size="sm"
-              variant={editing ? "default" : "outline"}
-              aria-pressed={editing}
-              onClick={() => setEditing((on) => !on)}
-            >
-              <MousePointerClick data-icon="inline-start" />
-              Visual edits
-            </Button>
+            <>
+              {editing && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={chatShown ? "default" : "outline"}
+                  aria-pressed={chatShown}
+                  onClick={() => setChatShown((shown) => !shown)}
+                >
+                  <MessageSquare data-icon="inline-start" />
+                  Chat
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant={editing ? "default" : "outline"}
+                aria-pressed={editing}
+                onClick={() => {
+                  setChatShown(editing);
+                  setEditing(!editing);
+                }}
+              >
+                <MousePointerClick data-icon="inline-start" />
+                Visual edits
+                {unsaved > 0 && (
+                  <span
+                    title={`${unsaved} not saved yet`}
+                    className="rounded-full bg-amber-400 px-1.5 text-[11px] text-black leading-4"
+                  >
+                    {unsaved}
+                  </span>
+                )}
+              </Button>
+            </>
           )
         }
       />
@@ -105,9 +139,15 @@ export function SiteWorkspace({
           siteId={siteId}
           frame={frame}
           previewUrl={url}
-          ask={chat.send}
+          ask={(text) => {
+            setChatShown(true);
+            return chat.send(text);
+          }}
           asking={chat.busy}
           editable={preview.version === null}
+          onPendingChange={setUnsaved}
+          // The new version shows in the version picker and on Versions.
+          onSaved={() => router.refresh()}
           className="w-full border-t p-3 lg:w-80 lg:border-t-0 lg:border-l"
         />
       )}
@@ -116,7 +156,10 @@ export function SiteWorkspace({
         chat={chat}
         refusal={refusal}
         versions={{ ...versions, shown: preview.version }}
-        className="h-[70vh] border-t lg:h-auto lg:w-[400px] lg:shrink-0 lg:border-t-0 lg:border-l"
+        className={cn(
+          "h-[70vh] border-t lg:h-auto lg:w-[400px] lg:shrink-0 lg:border-t-0 lg:border-l",
+          canChange && editing && !chatShown && "hidden",
+        )}
       />
     </div>
   );

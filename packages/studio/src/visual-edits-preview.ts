@@ -120,7 +120,7 @@ export function editorOrigin(url: string | null | undefined): string | null {
 /**
  * Runs inside the preview page. It does nothing until the Locus editor framing the page sends
  * `enable`; then hovering outlines elements, a click selects one (Shift or Ctrl/Cmd adds more),
- * and a double-click edits plain text in place. It only reports what was clicked and shows
+ * and a double-click edits plain text in place; Ctrl+Z and Ctrl+Y go to the editor. It only reports what was clicked and shows
  * changes the editor sends (text and a few attributes, never anything that runs); saving
  * happens in Locus. It holds no credentials and only talks to the window that framed it, and
  * only when that window is one of `origins` (the Locus web app).
@@ -329,6 +329,15 @@ export function visualEditsScript(origins: string[], draft = ""): string {
   }, true);
 
   document.addEventListener("keydown", function (e) {
+    // In select mode undo and redo belong to the editor, unless a page field is typed in.
+    var key = (e.key || "").toLowerCase();
+    if (enabled && !editing && (e.ctrlKey || e.metaKey) && !e.altKey &&
+        (key === "z" || (key === "y" && e.ctrlKey && !e.metaKey && !e.shiftKey)) &&
+        !(e.target && e.target.closest && e.target.closest("input, textarea, select, [contenteditable]"))) {
+      e.preventDefault();
+      post({ type: key === "z" && !e.shiftKey ? "undo" : "redo" });
+      return;
+    }
     if (!enabled) return;
     if (editing) {
       if (e.key === "Escape") { e.preventDefault(); finishEditing(true); }
@@ -362,18 +371,20 @@ export function visualEditsScript(origins: string[], draft = ""): string {
     }
   }
 
-  // Shows a change before it is saved. Text changes the selected copy (one element in a list
-  // can render many times), or after a reload the copy still showing the old text; attributes
+  // Shows a change before it is saved. Text changes one copy (an element in a list can render
+  // many times): the one showing the text being replaced, a selected one first; attributes
   // change every copy, as saving them would. Only the editor's own fields can be set.
   function show(change) {
     if (typeof change.target !== "string") return;
     if (change.kind === "text") {
       var value = String(change.value);
-      var picked = selected.filter(function (el) { return el.getAttribute(SRC) === change.target; });
+      // The copy showing the text being replaced: a selected one first.
+      var showing = function (el) {
+        return el.getAttribute(SRC) === change.target && plainText(el) !== null && el.textContent === change.from;
+      };
+      var picked = selected.filter(showing).slice(0, 1);
       if (picked.length === 0) {
-        each(change.target, function (el) {
-          if (picked.length === 0 && plainText(el) !== null && el.textContent === change.from) picked.push(el);
-        });
+        each(change.target, function (el) { if (picked.length === 0 && showing(el)) picked.push(el); });
       }
       picked.forEach(function (el) { if (plainText(el) !== null) el.textContent = value; });
       return;
@@ -394,6 +405,19 @@ export function visualEditsScript(origins: string[], draft = ""): string {
     });
   }
 
+  // Rules for the styles the editor offers, so a new class shows before it is saved (the
+  // site's built CSS holds only the classes it already used). Plain CSS from the editor only.
+  function styles(css) {
+    if (typeof css !== "string" || css.length > 50000 || /<|@import|url\\(/i.test(css)) return;
+    var el = document.getElementById("locus-visual-edits-styles");
+    if (!el) {
+      el = document.createElement("style");
+      el.id = "locus-visual-edits-styles";
+      document.head.appendChild(el);
+    }
+    el.textContent = css;
+  }
+
   window.addEventListener("message", function (e) {
     if (e.source !== window.parent || ORIGINS.indexOf(e.origin) < 0) return;
     var data = e.data;
@@ -404,6 +428,7 @@ export function visualEditsScript(origins: string[], draft = ""): string {
     else if (data.type === "disable") disable();
     else if (data.type === "clear") { selected = []; report(); }
     else if (data.type === "show" && data.change) show(data.change);
+    else if (data.type === "styles") styles(data.css);
   });
 
   // Tell the framing window the script is here (nothing else), so an editor can say hello.
