@@ -2,6 +2,8 @@
 
 import { VISUAL_EDITS_MESSAGE } from "@locus/studio/visual-edits-protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { previewCss } from "./classes";
+import { differences, EditHistory, type Pending, readStored, sameAt, withEdit } from "./history";
 
 /** What the preview reports about one selected element. */
 export interface SelectedItem {
@@ -40,16 +42,6 @@ export interface SaveResult {
   draft: string;
 }
 
-/**
- * One pending change per element and attribute. Text is per copy as well: an element in a list
- * renders once per item, each with its own text (and its own place in the data), so two copies'
- * text changes stay two changes, told apart by the text each copy started with.
- */
-const keyOf = (edit: PendingEdit) =>
-  edit.kind === "text"
-    ? `${edit.target}|text|${edit.from}`
-    : `${edit.target}|${edit.kind}|${edit.kind === "attr" ? edit.name : ""}`;
-
 const MAX_TEXT = 10_000;
 const str = (v: unknown, max = MAX_TEXT): string | null =>
   typeof v === "string" ? v.slice(0, max) : null;
@@ -78,9 +70,41 @@ function readItem(raw: unknown): SelectedItem | null {
 const COLOR =
   /^(#[0-9a-f]{3,8}|(rgb|rgba|hsl|hsla|oklch|oklab|lab|lch|hwb)\([0-9a-z.,%\s/+-]*\))$/i;
 
-/** Whether an edit would change nothing (it was set back to what it was). */
-const unchanged = (edit: PendingEdit) =>
-  edit.kind === "newTab" ? edit.on === edit.from : edit.to === (edit.from ?? "");
+/** Where a site's unsaved changes wait in this browser tab, so closing the panel keeps them. */
+const storageKey = (siteId: string) => `locus:visual-edits:${siteId}`;
+
+function loadStored(siteId: string): Pending {
+  try {
+    return readStored(window.sessionStorage.getItem(storageKey(siteId)));
+  } catch {
+    return new Map();
+  }
+}
+
+/** Each site's undo history, kept while the page is open so closing the panel keeps it. */
+const histories = new Map<string, EditHistory>();
+function historyOf(siteId: string): EditHistory {
+  let history = histories.get(siteId);
+  if (!history) {
+    history = new EditHistory();
+    histories.set(siteId, history);
+  }
+  return history;
+}
+
+/** How many changes to a site wait unsaved in this browser tab. */
+export function storedCount(siteId: string): number {
+  return typeof window === "undefined" ? 0 : loadStored(siteId).size;
+}
+
+function store(siteId: string, pending: Pending) {
+  try {
+    if (pending.size === 0) window.sessionStorage.removeItem(storageKey(siteId));
+    else window.sessionStorage.setItem(storageKey(siteId), JSON.stringify([...pending.values()]));
+  } catch {
+    // Storage can be off (a private window); the changes still live while the page is open.
+  }
+}
 
 /**
  * Talks to the visual-edits script inside a site's preview frame: turns select mode on and
@@ -103,18 +127,24 @@ export function useVisualEdits({
   const [ready, setReady] = useState(false);
   const [path, setPath] = useState("/");
   const [theme, setTheme] = useState<Record<string, string>>({});
-  const [enabled, setEnabled] = useState(false);
+  // Opening Visual edits starts selecting at once, as in HighLevel's editor.
+  const [enabled, setEnabled] = useState(true);
   const [selection, setSelection] = useState<SelectedItem[]>([]);
-  const [pending, setPending] = useState<Map<string, PendingEdit>>(new Map());
+  // Changes not saved when the panel was closed (or the page reloaded) come back.
+  const [pending, setPending] = useState<Pending>(() => loadStored(siteId));
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [failures, setFailures] = useState<string[]>([]);
+  const history = historyOf(siteId);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   /** The draft the preview's page was made from, as its script reported it. */
   const draftRef = useRef("");
+  const savingRef = useRef(false);
+  /** Goes up on every undo and redo, so the panel's fields show the value they went back to. */
+  const [generation, setGeneration] = useState(0);
 
   const send = useCallback(
     (message: Record<string, unknown>) => {
@@ -124,26 +154,58 @@ export function useVisualEdits({
     [frame, origin],
   );
 
-  const record = useCallback((edit: PendingEdit) => {
-    setPending((current) => {
-      const next = new Map(current);
-      // A second change to text already changed continues that change: keep what the
-      // element had first, so the save can check it hasn't changed since.
-      const chained =
-        edit.kind === "text"
-          ? [...next.entries()].find(
-              ([, e]) => e.kind === "text" && e.target === edit.target && e.to === edit.from,
-            )
-          : undefined;
-      const key = chained ? chained[0] : keyOf(edit);
-      const earlier = next.get(key);
-      const merged = earlier ? ({ ...edit, from: earlier.from } as PendingEdit) : edit;
-      if (unchanged(merged)) next.delete(key);
-      else next.set(key, merged);
-      return next;
-    });
-    setFailures([]);
-  }, []);
+  /** Makes `next` the unsaved changes (the ref first, so changes in one event chain). */
+  const commit = useCallback(
+    (next: Pending) => {
+      pendingRef.current = next;
+      setPending(next);
+      store(siteId, next);
+    },
+    [siteId],
+  );
+
+  const record = useCallback(
+    (edit: PendingEdit) => {
+      const before = pendingRef.current;
+      const { next, key } = withEdit(before, edit);
+      if (sameAt(before, next, key)) return;
+      history.step(before, key);
+      commit(next);
+      setFailures([]);
+    },
+    [commit, history],
+  );
+
+  /** Goes back (or forward) to another set of unsaved changes and shows it in the page. */
+  const travel = useCallback(
+    (direction: "undo" | "redo") => {
+      // The save is sending these changes: going back now would change what it saves.
+      if (savingRef.current) return;
+      const current = pendingRef.current;
+      const to = direction === "undo" ? history.undo(current) : history.redo(current);
+      if (!to) return;
+      const changed = differences(current, to);
+      commit(to);
+      setFailures([]);
+      for (const edit of changed) send({ type: "show", change: shown(edit) });
+      // A text change is one copy's (the one showing its old text); attributes are every copy's.
+      setSelection((items) =>
+        items.map((item) =>
+          changed.reduce(
+            (it, edit) =>
+              edit.target === it.target && (edit.kind !== "text" || it.text === edit.from)
+                ? applied(it, edit)
+                : it,
+            item,
+          ),
+        ),
+      );
+      setGeneration((n) => n + 1);
+    },
+    [commit, history, send],
+  );
+  const undo = useCallback(() => travel("undo"), [travel]);
+  const redo = useCallback(() => travel("redo"), [travel]);
 
   // The page's script announces itself when it loads (again on every reload); the editor
   // answers with hello, the script replies ready, and the editor puts it back in its mode.
@@ -173,6 +235,8 @@ export function useVisualEdits({
             ),
           );
         }
+        // The styles the controls offer, so a change shows before it's saved.
+        send({ type: "styles", css: previewCss() });
         if (enabledRef.current) send({ type: "enable" });
         // Changes not saved yet are shown again on the reloaded page.
         for (const edit of pendingRef.current.values()) send({ type: "show", change: shown(edit) });
@@ -187,6 +251,9 @@ export function useVisualEdits({
         const from = str(data.from);
         const to = str(data.to);
         if (from !== null && to !== null) record({ kind: "text", target: data.target, from, to });
+      } else if (data.type === "undo" || data.type === "redo") {
+        // Ctrl+Z pressed while the page had the keyboard.
+        travel(data.type);
       }
     };
     window.addEventListener("message", onMessage);
@@ -197,7 +264,25 @@ export function useVisualEdits({
       window.removeEventListener("message", onMessage);
       frame.removeEventListener("load", onLoad);
     };
-  }, [frame, origin, send, record]);
+  }, [frame, origin, send, record, travel]);
+
+  // Closing the panel puts the page back to normal: links and buttons work again.
+  useEffect(() => () => send({ type: "disable" }), [send]);
+
+  // Ctrl+Z / Cmd+Z undoes, Shift+Ctrl+Z or Ctrl+Y redoes, unless a field has the keyboard
+  // (it undoes its own typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const key = undoKey(e);
+      if (!key) return;
+      const el = e.target as HTMLElement | null;
+      if (el?.closest?.("input, textarea, select, [contenteditable]")) return;
+      e.preventDefault();
+      travel(key);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [travel]);
 
   /** Records a change made in the panel and shows it in the page right away. */
   const change = useCallback(
@@ -226,17 +311,22 @@ export function useVisualEdits({
   }, [frame]);
 
   const discard = useCallback(() => {
-    setPending(new Map());
+    // Discard is a step like any other, so Undo brings the changes back.
+    const before = pendingRef.current;
+    if (before.size === 0) return;
+    history.step(before, "discard");
+    commit(new Map());
     setSelection([]);
     setFailures([]);
     reload();
-  }, [reload]);
+  }, [commit, history, reload]);
 
   /** Saves every unsaved change as a new version; null when it couldn't. */
   const save = useCallback(async (): Promise<SaveResult | null> => {
     const sent = [...pendingRef.current.entries()];
     const edits = sent.map(([, edit]) => toRequest(edit));
     if (edits.length === 0) return null;
+    savingRef.current = true;
     setSaving(true);
     setProblem(null);
     try {
@@ -257,13 +347,13 @@ export function useVisualEdits({
       // What wasn't saved stays pending (still shown in the page), to fix or discard, and so
       // does anything changed while the save was on its way.
       const failed = new Set(body.failed.map((f) => f.index));
-      setPending((current) => {
-        const next = new Map(current);
-        sent.forEach(([key, edit], i) => {
-          if (!failed.has(i) && next.get(key) === edit) next.delete(key);
-        });
-        return next;
+      const next = new Map(pendingRef.current);
+      sent.forEach(([key, edit], i) => {
+        if (!failed.has(i) && next.get(key) === edit) next.delete(key);
       });
+      commit(next);
+      // Saved changes are in the site's files now: undoing them is a change of its own.
+      history.clear();
       send({ type: "clear" });
       onSaved?.(body);
       return body;
@@ -271,9 +361,10 @@ export function useVisualEdits({
       setProblem("The changes couldn't be saved. Check your connection and try again.");
       return null;
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
-  }, [siteId, onSaved, send]);
+  }, [siteId, onSaved, send, commit, history]);
 
   return {
     ready,
@@ -290,10 +381,44 @@ export function useVisualEdits({
     save,
     discard,
     reload,
+    undo,
+    redo,
+    canUndo: history.canUndo,
+    canRedo: history.canRedo,
+    generation,
     saving,
     problem,
     failures,
   };
+}
+
+/** Whether a key press is undo or redo. */
+export function undoKey(e: {
+  key: string;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+  altKey: boolean;
+}): "undo" | "redo" | null {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  const key = e.key.toLowerCase();
+  if (key === "z") return e.shiftKey ? "redo" : "undo";
+  // Ctrl+Y only: Cmd+Y is the browser's history on a Mac.
+  if (key === "y" && e.ctrlKey && !e.metaKey && !e.shiftKey) return "redo";
+  return null;
+}
+
+/** Asks before the page is left while a site has unsaved changes. */
+export function useLeaveWarning(unsaved: boolean) {
+  useEffect(() => {
+    if (!unsaved) return;
+    const onLeave = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onLeave);
+    return () => window.removeEventListener("beforeunload", onLeave);
+  }, [unsaved]);
 }
 
 /** How the page shows an unsaved change. */
