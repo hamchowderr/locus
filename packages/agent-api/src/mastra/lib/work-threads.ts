@@ -164,6 +164,8 @@ type Tracked = {
   lastReply: string;
   /** What the thread waits on, while it does. */
   waitingOn: string | undefined;
+  /** Resolves once the status saves and reports already begun have finished. */
+  settled: () => Promise<void>;
 };
 
 /** The default Session for a work thread: one per thread, scope `work:<threadId>`. */
@@ -367,6 +369,7 @@ export function createWorkThreads(config: WorkThreadsConfig) {
       runMessages: [],
       lastReply: '',
       waitingOn: undefined,
+      settled: () => chain,
     };
     // Reports and saves happen in order, one after another.
     let chain: Promise<void> = Promise.resolve();
@@ -717,6 +720,48 @@ export function createWorkThreads(config: WorkThreadsConfig) {
   }
 
   /**
+   * Stops a work thread for the host, whatever it is doing: a queued one never starts, a running
+   * one is aborted, and an approval it waits on is declined and goes with its Session (so a
+   * later yes runs nothing). It is marked `stopped` with `latest` as the reason and is not
+   * reported to the main chat. A thread that has already ended is left as it is. Resolves to
+   * whether it was stopped.
+   */
+  function stop(threadId: string, resourceId: string, latest: string): Promise<boolean> {
+    // In the resource's turn, like `start` and `drain`: a queued thread a drain is starting has
+    // its Session by the time this looks, so it is aborted rather than left to start.
+    return inTurn(resourceId, () => stopNow(threadId, resourceId, latest));
+  }
+
+  async function stopNow(threadId: string, resourceId: string, latest: string): Promise<boolean> {
+    const info = await threadInfo(threadId);
+    if (!info || !['queued', 'working', 'needs_you'].includes(info.status)) return false;
+    clearTimeout(idleTimers.get(threadId));
+    idleTimers.delete(threadId);
+    queued.delete(threadId);
+    const tracked = await live.get(threadId)?.catch(() => undefined);
+    live.delete(threadId);
+    if (tracked) {
+      tracked.background = false;
+      tracked.pending = [];
+      // Nothing it does from here is followed: its end must not overwrite the reason.
+      tracked.unsubscribe();
+      try {
+        tracked.session.abort();
+      } catch {
+        // A Session with no run going has nothing to abort.
+      }
+      await tracked.settled();
+      await closeSession(await config.getController(), { resourceId, threadId }).catch(
+        () => undefined,
+      );
+    }
+    await setStatus(threadId, 'stopped', latest);
+    // Its slot is free.
+    void drain(resourceId).catch(() => undefined);
+    return true;
+  }
+
+  /**
    * Sends a work thread a message from the main chat, as `message_thread` does: an idle
    * thread runs on it now, a running one once the run in progress ends (the Session's
    * queue), each a run of its own with the caller's request context. That run is reported
@@ -833,5 +878,6 @@ export function createWorkThreads(config: WorkThreadsConfig) {
     recover,
     busy,
     forget,
+    stop,
   };
 }

@@ -131,6 +131,20 @@ export interface AgentApiConfig {
    * is answered 402 with this reason, which the chat shows. Reading the chat is never refused.
    */
   mayRun?: (member: AgentApiMember) => Promise<string | null>;
+  /**
+   * Why the member may not answer an approval in that thread now, or null when they may. Asked
+   * before a kit approval reaches the controller; a refusal is answered 409 with this reason.
+   */
+  mayApprove?: (member: AgentApiMember, threadId: string | undefined) => Promise<string | null>;
+  /**
+   * Called once the controller took a member's yes to a change in a thread (the kit's approve
+   * route answered ok), for the host's own record of who approved what. A failure here is the
+   * host's to log; the approval stands.
+   */
+  approved?: (
+    member: AgentApiMember,
+    input: { threadId: string | undefined; toolCallId: string },
+  ) => Promise<void>;
 }
 
 /** The kit's routes that start or resume a run. */
@@ -156,6 +170,8 @@ export function createAgentApi({
   controllerFor,
   requestContext,
   mayRun,
+  mayApprove,
+  approved,
 }: AgentApiConfig) {
   const base = `${prefix}/agent-controller/${CONTROLLER_ID}`;
   const refusal = async (member: AgentApiMember) => {
@@ -221,12 +237,21 @@ export function createAgentApi({
       if (refused) return refused;
     }
     let body: string | undefined;
+    let yes: { threadId: string | undefined; toolCallId: string } | undefined;
     if (BODY_METHODS.has(request.method)) {
       const sent = await readJson(request);
       if (sent === undefined) return deny(400, "bad request");
       // "Always allow" would let every later call of that kind run unasked.
       if (segments[0] === "approve" && sent.decision === "always_allow_category") {
         return deny(403, "decide each change");
+      }
+      if (segments[0] === "approve" && request.method === "POST") {
+        const threadId = typeof sent.threadId === "string" ? sent.threadId : undefined;
+        const refused = (await mayApprove?.(member, threadId)) ?? null;
+        if (refused !== null) return Response.json({ error: refused }, { status: 409 });
+        if (sent.decision === "approve" && typeof sent.toolCallId === "string") {
+          yes = { threadId, toolCallId: sent.toolCallId };
+        }
       }
       // The host sets a run's request context; none of it comes from the browser.
       const { requestContext: _ignored, ...rest } = sent;
@@ -245,7 +270,7 @@ export function createAgentApi({
       context: (await requestContext?.(request, member)) ?? {},
     };
     const app = await kitAppFor(member);
-    return asCaller(who, () =>
+    const response = await asCaller(who, () =>
       app.fetch(
         new Request(forwarded, {
           method: request.method,
@@ -255,6 +280,8 @@ export function createAgentApi({
         }),
       ),
     );
+    if (yes && response.ok && approved) await approved(member, yes);
+    return response;
   };
 
   const appFor = (member: AgentApiMember) => {

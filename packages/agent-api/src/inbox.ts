@@ -19,6 +19,11 @@
  *
  * What a draft thread keeps is the client's own, in its database: the agent's reply and its
  * one-line summary of what the contact wants, never the message as GHL sent it.
+ *
+ * Drafts stop when drafting does: the host calls `stopOpen` once drafting is turned off for the
+ * client, or the member drafts run as may no longer draft. Queued ones never start, running ones
+ * are aborted, and a reply waiting for a yes is dropped with its approval, so none of them
+ * spends more on the model or sends anything.
  */
 
 import type { RequestContext } from "@mastra/core/request-context";
@@ -30,6 +35,8 @@ import type { ThreadAgent, WorkThreads } from "./mastra/lib/work-threads.ts";
 export const INBOX_CONVERSATION_KEY = "inboxConversation";
 /** The thread-metadata key listing the GHL message ids a draft thread was started for. */
 export const INBOX_MESSAGES_KEY = "inboxMessages";
+/** The thread-metadata key naming the member a draft thread runs as (Locus's member id). */
+export const INBOX_DRAFTER_KEY = "inboxDrafter";
 
 /** Open drafts a client may have at once; more messages wait in GHL's inbox. */
 export const MAX_OPEN_DRAFTS = 10;
@@ -73,7 +80,22 @@ export interface InboxDrafts {
   draft(
     message: InboundMessage,
     requestContext: RequestContext,
+    /** The member the draft runs as, kept on the thread so `stopOpen` can tell drafts apart. */
+    drafter: string,
   ): Promise<{ threadId: string; started: boolean } | { skipped: "invalid" | "seen" | "busy" }>;
+  /**
+   * Stops the client's open drafts (queued, working or waiting for a yes), all of them or those
+   * whose drafter `stops` names, each marked stopped with `latest` as the reason. Resolves to
+   * how many were stopped.
+   */
+  stopOpen(input: {
+    latest: string;
+    stops?: (drafter: string | undefined) => boolean;
+  }): Promise<number>;
+  /** Whether the client has a draft thread still open, so the host knows to keep checking. */
+  hasOpen(): Promise<boolean>;
+  /** A draft thread's conversation and drafter, or undefined for any other thread. */
+  draftOf(threadId: string): Promise<{ conversationId: string; drafter?: string } | undefined>;
 }
 
 export function createInboxDrafts({
@@ -83,7 +105,7 @@ export function createInboxDrafts({
   agent,
 }: {
   storage: MastraStorage;
-  threads: Pick<WorkThreads, "start">;
+  threads: Pick<WorkThreads, "start" | "stop">;
   /** The client's memory resource (`clientResource`). */
   resourceId: string;
   /** The agent that drafts: the Conversations agent. */
@@ -103,16 +125,22 @@ export function createInboxDrafts({
     return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
   };
 
-  async function decide(message: InboundMessage, requestContext: RequestContext) {
-    const store = await memory();
-    const { threads: all } = await store.listThreads({ perPage: false, filter: { resourceId } });
-    if (all.some((t) => messagesOf(t).includes(message.messageId))) {
-      return { skipped: "seen" as const };
-    }
-    const drafts = all.filter((t) => {
+  /** The client's draft threads still open. */
+  const openDrafts = <T extends { metadata?: unknown }>(all: T[]) =>
+    all.filter((t) => {
       const info = workThreadOf(t);
       return info && OPEN.has(info.status) && typeof metaOf(t)[INBOX_CONVERSATION_KEY] === "string";
     });
+  const listAll = async () =>
+    (await (await memory()).listThreads({ perPage: false, filter: { resourceId } })).threads;
+
+  async function decide(message: InboundMessage, requestContext: RequestContext, drafter: string) {
+    const store = await memory();
+    const all = await listAll();
+    if (all.some((t) => messagesOf(t).includes(message.messageId))) {
+      return { skipped: "seen" as const };
+    }
+    const drafts = openDrafts(all);
     const open = drafts.find((t) => metaOf(t)[INBOX_CONVERSATION_KEY] === message.conversationId);
     if (open) {
       await store.updateThreadMetadata({
@@ -138,6 +166,7 @@ export function createInboxDrafts({
       update: () => ({
         [INBOX_CONVERSATION_KEY]: message.conversationId,
         [INBOX_MESSAGES_KEY]: [message.messageId],
+        [INBOX_DRAFTER_KEY]: drafter,
       }),
     });
     return { threadId: started.threadId, started: true };
@@ -153,13 +182,44 @@ export function createInboxDrafts({
     return id;
   }
 
+  /** Runs `step` after the decision before it, so a stop and a new draft never interleave. */
+  function inTurn<T>(step: () => Promise<T>): Promise<T> {
+    const run = turn.then(step, step);
+    turn = run.catch(() => undefined);
+    return run;
+  }
+
+  const drafterOf = (t: { metadata?: unknown }) => {
+    const id = metaOf(t)[INBOX_DRAFTER_KEY];
+    return typeof id === "string" ? id : undefined;
+  };
+
   return {
-    draft(message, requestContext) {
+    draft(message, requestContext, drafter) {
       if (!isInboundMessage(message)) return Promise.resolve({ skipped: "invalid" as const });
-      const step = () => decide(message, requestContext);
-      const run = turn.then(step, step);
-      turn = run.catch(() => undefined);
-      return run;
+      return inTurn(() => decide(message, requestContext, drafter));
+    },
+    stopOpen({ latest, stops = () => true }) {
+      return inTurn(async () => {
+        let stopped = 0;
+        for (const t of openDrafts(await listAll())) {
+          if (!stops(drafterOf(t))) continue;
+          if (await threads.stop(t.id, resourceId, latest)) stopped++;
+        }
+        return stopped;
+      });
+    },
+    hasOpen() {
+      // In turn, so a draft being started is counted once it exists.
+      return inTurn(async () => openDrafts(await listAll()).length > 0);
+    },
+    async draftOf(threadId) {
+      const thread = await (await memory()).getThreadById({ threadId });
+      if (!thread || thread.resourceId !== resourceId) return undefined;
+      const conversationId = metaOf(thread)[INBOX_CONVERSATION_KEY];
+      if (typeof conversationId !== "string") return undefined;
+      const drafter = drafterOf(thread);
+      return { conversationId, ...(drafter ? { drafter } : {}) };
     },
   };
 }
