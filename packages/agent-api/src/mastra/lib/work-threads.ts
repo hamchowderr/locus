@@ -128,10 +128,14 @@ export type WorkThreadsConfig = {
   /**
    * Asked before a queued thread starts, since nobody's request is behind that start: why the
    * resource may not run its agent now (a host's billing check, say), or null when it may. A
-   * refused thread is stopped with that reason and reported, rather than run; the person can
-   * start it again from the thread once they may. Unset: queued threads always start.
+   * refused thread stays queued, its brief kept and the reason as its latest line, and is
+   * asked about again every `mayStartRetryMs`; the person can also start it from the thread,
+   * which the host checks as any request. A check that throws counts as a refusal without a
+   * reason. Unset: queued threads always start.
    */
   mayStart?: (resourceId: string) => Promise<string | null>;
+  /** How long a queue `mayStart` held back waits before it is asked again. Default 60 s. */
+  mayStartRetryMs?: number;
   /**
    * Adds the host's values to the request context of each run the kit starts in a work
    * thread (its brief, a message from the main chat), from the thread's state: a host that
@@ -205,6 +209,7 @@ export function createWorkThreads(config: WorkThreadsConfig) {
   const live = new Map<string, Promise<Tracked>>();
   const idleTimers = new Map<string, ReturnType<typeof setTimeout>>();
   const idleMs = config.idleMs ?? 60_000;
+  const retryMs = config.mayStartRetryMs ?? 60_000;
   const closeSession = config.closeSession ?? closeWorkSession;
   const memory = async () => {
     const store = await config.storage.getStore('memory');
@@ -308,7 +313,7 @@ export function createWorkThreads(config: WorkThreadsConfig) {
   /** Saves a report into the main chat's thread, as the agent's own message. */
   async function report(
     threadId: string,
-    status: 'done' | 'needs_you' | 'failed' | 'stopped',
+    status: 'done' | 'needs_you' | 'failed',
     detail?: string,
     /** The reported run's messages, as the Session showed them. */
     runMessages: unknown[] = [],
@@ -317,11 +322,9 @@ export function createWorkThreads(config: WorkThreadsConfig) {
     const thread = await store.getThreadById({ threadId });
     const info = workThreadOf(thread);
     if (!thread || !info) return;
-    // A thread that never started reports the host's own reason (`mayStart`), not its words.
-    const hosts = status === 'stopped';
-    const words = hosts || (config.reportsWords?.({ threadId, thread: info, runMessages }) ?? true);
+    const words = config.reportsWords?.({ threadId, thread: info, runMessages }) ?? true;
     const kept = words ? detail : undefined;
-    const said = kept && !hosts && config.screenReport ? config.screenReport(kept, info) : kept;
+    const said = kept && config.screenReport ? config.screenReport(kept, info) : kept;
     const text = reportText(info.title || 'A thread', threadId, status, said);
     await store.saveMessages({
       messages: [
@@ -569,6 +572,19 @@ export function createWorkThreads(config: WorkThreadsConfig) {
     }
   }
 
+  /** Resources whose queued threads `mayStart` held back: asked again after a while. */
+  const retries = new Map<string, ReturnType<typeof setTimeout>>();
+  function retryDrain(resourceId: string) {
+    if (retries.has(resourceId)) return;
+    const timer = setTimeout(() => {
+      retries.delete(resourceId);
+      void drain(resourceId).catch(() => undefined);
+    }, retryMs);
+    // A held-back queue never keeps the process alive on its own.
+    (timer as { unref?: () => void }).unref?.();
+    retries.set(resourceId, timer);
+  }
+
   /**
    * Starts a resource's queued threads, oldest first, while it has free slots. A queued
    * thread no longer in the store (deleted) is dropped.
@@ -579,16 +595,29 @@ export function createWorkThreads(config: WorkThreadsConfig) {
       for (const { thread } of await threadsOf(resourceId)) {
         if (!queued.has(thread.id)) continue;
         if (!(await hasSlot(resourceId))) return;
-        const refused = (await config.mayStart?.(resourceId)) ?? null;
+        if (config.mayStart) {
+          let refused: string | null;
+          try {
+            refused = await config.mayStart(resourceId);
+          } catch {
+            // The check could not be made: start nothing, and ask again later.
+            refused = '';
+          }
+          if (refused !== null) {
+            // It stays queued with its brief, so it starts once the resource may run, or
+            // when the person starts it from the thread (a request the host checks).
+            const info = queued.has(thread.id) ? await threadInfo(thread.id) : undefined;
+            if (refused && info && info.latest !== refused) {
+              await save(thread.id, { latest: refused }).catch(() => undefined);
+            }
+            retryDrain(resourceId);
+            return;
+          }
+        }
         // Taken now, with no await before: the person may have started it meanwhile.
         const waiting = queued.get(thread.id);
         if (!waiting) continue;
         queued.delete(thread.id);
-        if (refused !== null) {
-          await setStatus(thread.id, 'stopped', refused);
-          await report(thread.id, 'stopped', refused).catch(() => undefined);
-          continue;
-        }
         await save(thread.id, { status: 'working', latest: undefined });
         await run(thread.id, resourceId, waiting.info, waiting.brief, waiting.requestContext);
       }

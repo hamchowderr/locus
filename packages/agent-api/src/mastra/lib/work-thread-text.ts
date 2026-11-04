@@ -13,7 +13,7 @@ export const REPORT_EXCERPT_CHARS = 600;
 export function reportText(
   title: string,
   threadId: string,
-  status: 'done' | 'needs_you' | 'failed' | 'stopped',
+  status: 'done' | 'needs_you' | 'failed',
   detail?: string,
 ): string {
   const link = threadLink(threadId, title);
@@ -21,7 +21,6 @@ export function reportText(
     return detail ? `${link} is done.\n\n${excerpt(detail)}` : `${link} is done.`;
   }
   if (status === 'needs_you') return `${link} needs you: ${detail ?? 'open it to continue.'}`;
-  if (status === 'stopped') return `${link} did not start${detail ? `: ${detail}` : '.'}`;
   return `${link} stopped with an error${detail ? `: ${excerpt(detail)}` : '.'}`;
 }
 
