@@ -147,6 +147,13 @@ const attached = new WeakMap<AgentController, WorkThreads>();
 export function clientWorkThreads(
   storage: MastraStorage,
   agents: readonly ThreadAgent[] = [OPERATOR_AGENT, CONVERSATIONS_AGENT],
+  options: {
+    /**
+     * Why the client may not run the model now (its agency's trial ended unpaid), or null.
+     * Asked before a queued thread starts, which no request of the person's is behind.
+     */
+    mayRun?: () => Promise<string | null>;
+  } = {},
 ) {
   let attach!: (controller: AgentController) => void;
   const controller = new Promise<AgentController>((resolve) => {
@@ -157,6 +164,7 @@ export function clientWorkThreads(
     storage,
     agents,
     maxWorking: MAX_WORKING_THREADS,
+    ...(options.mayRun ? { mayStart: options.mayRun } : {}),
     requireApproval: (context) => isTainted(context) || hasRefusedBrief(context),
     startsUntrusted: isTainted,
     // A suggestion refused for a tainted run keeps its briefs in the chat's history, so its
