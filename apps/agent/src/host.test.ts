@@ -25,6 +25,7 @@ import {
 } from "@locus/db";
 import {
   agencyTrial,
+  auditLog,
   session as authSession,
   location,
   member,
@@ -51,6 +52,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   connectorsOffIn,
   createHost,
+  DRAFTS_OFF_LINE,
   type HostDeps,
   PREFIX,
   reportFailure,
@@ -1269,7 +1271,7 @@ describe("new messages from GHL", () => {
   const sign = (body: string) =>
     cryptoSign(null, Buffer.from(body), keys.privateKey).toString("base64");
 
-  async function inboxHost() {
+  async function inboxHost({ draftCheckMs }: { draftCheckMs?: number } = {}) {
     const { connect, client, sessions } = await agency();
     const ghl = createFakeGhl({
       "GET /conversations/conv-9/messages": {
@@ -1298,6 +1300,7 @@ describe("new messages from GHL", () => {
       fetch: ghl.fetch,
       origin: "http://locus.test",
       ghlWebhookKey: publicKey,
+      ...(draftCheckMs ? { draftCheckMs } : {}),
     });
     const deliver = (event: Record<string, unknown>, signature?: string) => {
       const body = JSON.stringify(event);
@@ -1322,6 +1325,7 @@ describe("new messages from GHL", () => {
             id: string;
             parentThreadId?: string;
             status?: string;
+            latest?: string;
             agent?: { id: string };
           }[];
         }
@@ -1365,7 +1369,8 @@ describe("new messages from GHL", () => {
     expect(await threads()).toEqual([]);
   });
 
-  test("with drafting on, the Conversations agent drafts a reply that waits for a yes", async () => {
+  /** The model reads conv-9 and proposes a reply, which waits for a person's yes. */
+  function draftsAReply() {
     mock().llm.on(
       { userMessage: /new SMS message in conversation conv-9/, hasToolResult: false },
       {
@@ -1410,6 +1415,23 @@ describe("new messages from GHL", () => {
         ],
       },
     );
+  }
+
+  /** Waits until the first draft thread has `status`, and returns it. */
+  async function draftWith<T extends { status?: string }>(
+    threads: () => Promise<T[]>,
+    status: string,
+  ) {
+    let work = (await threads())[0];
+    for (let i = 0; i < 200 && work?.status !== status; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      work = (await threads())[0];
+    }
+    return work;
+  }
+
+  test("with drafting on, the Conversations agent drafts a reply that waits for a yes", async () => {
+    draftsAReply();
     const { host, ghl, deliver, threads, message, sessions, client } = await inboxHost();
     await setInboxDrafts(db, sessions.owner as SessionContext, client.id, true);
 
@@ -1456,6 +1478,19 @@ describe("new messages from GHL", () => {
     }
     const sent = ghl.requests.find((r) => r.url.pathname === "/conversations/messages");
     expect(sent?.body).toMatchObject({ type: "SMS", contactId: "contact-9" });
+    // Who said yes is recorded, by ids only: the send itself runs as the drafter.
+    const records = await db
+      .select()
+      .from(auditLog)
+      .where(eq(auditLog.action, "inbox.reply_approved"));
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ locationId: client.id, actorUserId: expect.any(String) });
+    expect(records[0]?.detail).toMatchObject({
+      threadId: work?.id,
+      toolCallId: "in-send",
+      conversationId: "conv-9",
+    });
+    expect(JSON.stringify(records[0]?.detail)).not.toContain("Sunday");
 
     // The same message again (a retry or a replay) starts nothing, even with the draft done.
     expect(await (await deliver(message)).json()).toEqual({ outcome: "off" });
@@ -1469,6 +1504,64 @@ describe("new messages from GHL", () => {
     expect(await (await deliver({ ...message, conversationId: "conv-10" })).json()).toEqual({
       outcome: "off",
     });
+  });
+
+  test("turning drafting off stops a draft waiting for a yes, and the yes then sends nothing", async () => {
+    draftsAReply();
+    const { host, ghl, deliver, threads, message, sessions, client } = await inboxHost({
+      draftCheckMs: 50,
+    });
+    await setInboxDrafts(db, sessions.owner as SessionContext, client.id, true);
+    expect(await (await deliver(message)).json()).toEqual({ outcome: "drafting" });
+    const work = await draftWith(threads, "needs_you");
+    expect(work?.status).toBe("needs_you");
+
+    await setInboxDrafts(db, sessions.owner as SessionContext, client.id, false);
+    const stopped = await draftWith(threads, "stopped");
+    expect(stopped).toMatchObject({ status: "stopped", latest: DRAFTS_OFF_LINE });
+
+    const approved = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "approve", toolCallId: "in-send", threadId: work?.id }),
+      }),
+    );
+    expect(approved.ok).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(ghl.requests.some((r) => r.url.pathname === "/conversations/messages")).toBe(false);
+    expect(
+      await db.select().from(auditLog).where(eq(auditLog.action, "inbox.reply_approved")),
+    ).toEqual([]);
+  });
+
+  test("a yes given after drafting was turned off is refused before the next check", async () => {
+    draftsAReply();
+    // The check would not come round during the test: the yes itself finds drafting off.
+    const { host, ghl, deliver, threads, message, sessions, client } = await inboxHost({
+      draftCheckMs: 60_000,
+    });
+    await setInboxDrafts(db, sessions.owner as SessionContext, client.id, true);
+    expect(await (await deliver(message)).json()).toEqual({ outcome: "drafting" });
+    const work = await draftWith(threads, "needs_you");
+    expect(work?.status).toBe("needs_you");
+
+    await setInboxDrafts(db, sessions.owner as SessionContext, client.id, false);
+    const approved = await host.fetch(
+      new Request(`http://agent.test${PREFIX}/kit/agent-controller/approve`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "approve", toolCallId: "in-send", threadId: work?.id }),
+      }),
+    );
+    expect(approved.status).toBe(409);
+    expect(((await approved.json()) as { error: string }).error).toMatch(/turned off/);
+    expect(await draftWith(threads, "stopped")).toMatchObject({
+      status: "stopped",
+      latest: DRAFTS_OFF_LINE,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(ghl.requests.some((r) => r.url.pathname === "/conversations/messages")).toBe(false);
   });
 });
 
