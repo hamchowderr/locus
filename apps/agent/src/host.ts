@@ -558,6 +558,8 @@ export function createHost({
         builder
           ? [OPERATOR_AGENT, CONVERSATIONS_AGENT, SITE_BUILDER_AGENT]
           : [OPERATOR_AGENT, CONVERSATIONS_AGENT],
+        // A queued thread starts when a slot frees, with no request through `mayRun` behind it.
+        { mayRun: () => trialRefusal(clientId) },
       );
       const controller = await createLocusController({
         model,

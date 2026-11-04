@@ -126,6 +126,13 @@ export type WorkThreadsConfig = {
    */
   maxWorking?: number;
   /**
+   * Asked before a queued thread starts, since nobody's request is behind that start: why the
+   * resource may not run its agent now (a host's billing check, say), or null when it may. A
+   * refused thread is stopped with that reason and reported, rather than run; the person can
+   * start it again from the thread once they may. Unset: queued threads always start.
+   */
+  mayStart?: (resourceId: string) => Promise<string | null>;
+  /**
    * Adds the host's values to the request context of each run the kit starts in a work
    * thread (its brief, a message from the main chat), from the thread's state: a host that
    * taints every run in an `untrusted` thread sets that here, as it does for runs the person
@@ -301,7 +308,7 @@ export function createWorkThreads(config: WorkThreadsConfig) {
   /** Saves a report into the main chat's thread, as the agent's own message. */
   async function report(
     threadId: string,
-    status: 'done' | 'needs_you' | 'failed',
+    status: 'done' | 'needs_you' | 'failed' | 'stopped',
     detail?: string,
     /** The reported run's messages, as the Session showed them. */
     runMessages: unknown[] = [],
@@ -310,9 +317,11 @@ export function createWorkThreads(config: WorkThreadsConfig) {
     const thread = await store.getThreadById({ threadId });
     const info = workThreadOf(thread);
     if (!thread || !info) return;
-    const words = config.reportsWords?.({ threadId, thread: info, runMessages }) ?? true;
+    // A thread that never started reports the host's own reason (`mayStart`), not its words.
+    const hosts = status === 'stopped';
+    const words = hosts || (config.reportsWords?.({ threadId, thread: info, runMessages }) ?? true);
     const kept = words ? detail : undefined;
-    const said = kept && config.screenReport ? config.screenReport(kept, info) : kept;
+    const said = kept && !hosts && config.screenReport ? config.screenReport(kept, info) : kept;
     const text = reportText(info.title || 'A thread', threadId, status, said);
     await store.saveMessages({
       messages: [
@@ -570,10 +579,16 @@ export function createWorkThreads(config: WorkThreadsConfig) {
       for (const { thread } of await threadsOf(resourceId)) {
         if (!queued.has(thread.id)) continue;
         if (!(await hasSlot(resourceId))) return;
+        const refused = (await config.mayStart?.(resourceId)) ?? null;
         // Taken now, with no await before: the person may have started it meanwhile.
         const waiting = queued.get(thread.id);
         if (!waiting) continue;
         queued.delete(thread.id);
+        if (refused !== null) {
+          await setStatus(thread.id, 'stopped', refused);
+          await report(thread.id, 'stopped', refused).catch(() => undefined);
+          continue;
+        }
         await save(thread.id, { status: 'working', latest: undefined });
         await run(thread.id, resourceId, waiting.info, waiting.brief, waiting.requestContext);
       }
