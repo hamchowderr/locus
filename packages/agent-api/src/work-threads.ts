@@ -153,6 +153,8 @@ export function clientWorkThreads(
      * Asked before a queued thread starts, which no request of the person's is behind.
      */
     mayRun?: () => Promise<string | null>;
+    /** How often a queue held back by `mayRun` is asked about again (tests shorten it). */
+    mayRunRetryMs?: number;
   } = {},
 ) {
   let attach!: (controller: AgentController) => void;
@@ -165,6 +167,7 @@ export function clientWorkThreads(
     agents,
     maxWorking: MAX_WORKING_THREADS,
     ...(options.mayRun ? { mayStart: options.mayRun } : {}),
+    ...(options.mayRunRetryMs ? { mayStartRetryMs: options.mayRunRetryMs } : {}),
     requireApproval: (context) => isTainted(context) || hasRefusedBrief(context),
     startsUntrusted: isTainted,
     // A suggestion refused for a tainted run keeps its briefs in the chat's history, so its

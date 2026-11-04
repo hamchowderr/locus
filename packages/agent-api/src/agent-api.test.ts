@@ -44,7 +44,11 @@ function apiFor(
       const storage = new LibSQLStore({ id: "client", url: ":memory:" });
       // Wired as the agent server wires it (apps/agent/src/host.ts).
       const work = workThreads
-        ? clientWorkThreads(storage, undefined, threadsMayRun ? { mayRun: threadsMayRun } : {})
+        ? clientWorkThreads(
+            storage,
+            undefined,
+            threadsMayRun ? { mayRun: threadsMayRun, mayRunRetryMs: 50 } : {},
+          )
         : undefined;
       controller = await createLocusController({
         model: { id: "anthropic/claude-test", url: `${mock().url}/v1`, apiKey: "test-key" },
@@ -667,7 +671,7 @@ describe("work threads, through the chat kit's routes", () => {
     expect(reopened.tasks).toHaveLength(3);
   }, 20_000);
 
-  test("a thread queued before the trial ended does not start when a slot frees", async () => {
+  test("a thread queued before the trial ended waits, and starts once a plan is chosen", async () => {
     const ENDED = "Your free trial has ended.";
     let refusal: string | null = null;
     // Each brief's run waits in this tool until released, so three threads hold every slot.
@@ -717,25 +721,36 @@ describe("work threads, through the chat kit's routes", () => {
     // The trial ends while it waits; then the working threads finish.
     refusal = ENDED;
     release();
-    const stopped = await workThreadReaching(api, "stopped");
-    expect(stopped.id).toBe(queued.id);
-    expect((stopped as Listed & { latest?: string }).latest).toBe(ENDED);
-    // Its brief never reached the model as a user's message.
-    const briefed = mock()
-      .llm.getRequests()
-      .flatMap(
-        (r) => (r.body as { messages?: { role: string; content: unknown }[] }).messages ?? [],
-      )
-      .filter((m) => m.role === "user" && JSON.stringify(m.content).includes("fourth tag job"));
-    expect(briefed).toEqual([]);
+    const deadline = Date.now() + 5_000;
+    let held: (Listed & { latest?: string }) | undefined;
+    while (Date.now() < deadline) {
+      const all = (await threads(api)) as (Listed & { latest?: string })[];
+      const done = all.filter((t) => t.parentThreadId && t.status === "done").length;
+      held = all.find((t) => t.id === queued.id);
+      if (done === 3 && held?.latest === ENDED) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    // It waits, its brief kept, saying why; the model never got it.
+    expect(held).toMatchObject({ status: "queued", latest: ENDED });
+    const briefed = () =>
+      mock()
+        .llm.getRequests()
+        .flatMap(
+          (r) => (r.body as { messages?: { role: string; content: unknown }[] }).messages ?? [],
+        )
+        .filter((m) => m.role === "user" && JSON.stringify(m.content).includes("fourth tag job"));
+    expect(briefed()).toEqual([]);
 
-    const mainThread = main.events.find((e) => e.type === "__thread__")?.threadId as string;
-    const res = await kit(api, `threads/${encodeURIComponent(mainThread)}/messages`);
-    const { messages } = (await res.json()) as {
-      messages: { parts: { type: string; text?: string }[] }[];
-    };
-    const texts = messages.flatMap((m) => m.parts).map((p) => p.text ?? "");
-    expect(texts.some((t) => t.includes("did not start") && t.includes(ENDED))).toBe(true);
+    // Once a plan is chosen, it starts on its own and does its job.
+    refusal = null;
+    const until = Date.now() + 5_000;
+    while (Date.now() < until) {
+      const t = (await threads(api)).find((x) => x.id === queued.id);
+      if (t?.status === "done") break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect((await threads(api)).find((x) => x.id === queued.id)?.status).toBe("done");
+    expect(briefed()).not.toEqual([]);
   }, 20_000);
 
   test("deleting a chat deletes the threads it started", async () => {
