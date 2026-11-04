@@ -726,7 +726,13 @@ export function createWorkThreads(config: WorkThreadsConfig) {
    * reported to the main chat. A thread that has already ended is left as it is. Resolves to
    * whether it was stopped.
    */
-  async function stop(threadId: string, resourceId: string, latest: string): Promise<boolean> {
+  function stop(threadId: string, resourceId: string, latest: string): Promise<boolean> {
+    // In the resource's turn, like `start` and `drain`: a queued thread a drain is starting has
+    // its Session by the time this looks, so it is aborted rather than left to start.
+    return inTurn(resourceId, () => stopNow(threadId, resourceId, latest));
+  }
+
+  async function stopNow(threadId: string, resourceId: string, latest: string): Promise<boolean> {
     const info = await threadInfo(threadId);
     if (!info || !['queued', 'working', 'needs_you'].includes(info.status)) return false;
     clearTimeout(idleTimers.get(threadId));

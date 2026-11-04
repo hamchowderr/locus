@@ -477,6 +477,8 @@ export function createHost({
    * yes that can no longer send.
    */
   const drafting = new Set<string>();
+  /** Drafts started per client, so a sweep never stops watching one started while it looked. */
+  const draftStarts = new Map<string, number>();
   let draftTimer: ReturnType<typeof setInterval> | undefined;
   let sweeping = false;
   const sweepDrafts = async () => {
@@ -485,7 +487,9 @@ export function createHost({
     try {
       for (const clientId of [...drafting]) {
         try {
-          if (!(await stopStaleDrafts(clientId))) drafting.delete(clientId);
+          const before = draftStarts.get(clientId) ?? 0;
+          const open = await stopStaleDrafts(clientId);
+          if (!open && (draftStarts.get(clientId) ?? 0) === before) drafting.delete(clientId);
         } catch (error) {
           logError("Checking a sub-account's drafted replies failed", error);
         }
@@ -499,6 +503,7 @@ export function createHost({
     }
   };
   const watchDrafts = (clientId: string) => {
+    draftStarts.set(clientId, (draftStarts.get(clientId) ?? 0) + 1);
     drafting.add(clientId);
     if (draftTimer) return;
     draftTimer = setInterval(() => void sweepDrafts(), draftCheckMs);
@@ -541,13 +546,17 @@ export function createHost({
         const draft = threadId ? await inboxes.get(clientId)?.draftOf(threadId) : undefined;
         if (!draft) return;
         const [approver] = await db
-          .select({ userId: schema.member.userId, organizationId: schema.member.organizationId })
+          .select({ userId: schema.member.userId })
           .from(schema.member)
           .where(eq(schema.member.id, memberId));
-        if (!approver) return;
+        const [where] = await db
+          .select({ organizationId: schema.location.organizationId })
+          .from(schema.location)
+          .where(eq(schema.location.id, clientId));
+        if (!approver || !where) return;
         await db.insert(schema.auditLog).values({
           id: globalThis.crypto.randomUUID(),
-          organizationId: approver.organizationId,
+          organizationId: where.organizationId,
           actorUserId: approver.userId,
           locationId: clientId,
           action: "inbox.reply_approved",

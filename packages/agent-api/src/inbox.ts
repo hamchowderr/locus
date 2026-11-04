@@ -209,8 +209,9 @@ export function createInboxDrafts({
         return stopped;
       });
     },
-    async hasOpen() {
-      return openDrafts(await listAll()).length > 0;
+    hasOpen() {
+      // In turn, so a draft being started is counted once it exists.
+      return inTurn(async () => openDrafts(await listAll()).length > 0);
     },
     async draftOf(threadId) {
       const thread = await (await memory()).getThreadById({ threadId });
