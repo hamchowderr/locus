@@ -14,9 +14,9 @@ on:
 
 concurrency:
   # A pull request's runs share a group and the newest cancels the rest. Every other run (a main push, a re-run, a
-  # manual run) gets its own group, so none can cancel another's publish; the newest-commit check below decides which
-  # one moves `latest` and the release branch.
-  group: image-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  # manual run) gets its own group, so none can cancel another's publish; the fast-forward-only release push below
+  # decides which commit the release branch ends on.
+  group: image-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -33,16 +33,9 @@ jobs:
       IMAGE: ghcr.io/${{ github.repository_owner }}/locus-agent
     steps:
       - uses: actions/checkout@v5
-      # Only main's newest commit may move `latest` and the release branch: a re-run of an older commit's workflow
-      # keeps that commit's SHA, and would otherwise roll the apps back. Every commit still gets its sha- image.
-      - name: Is this main's newest commit?
-        id: fresh
-        if: github.ref == 'refs/heads/main'
-        # bash with pipefail: a failed lookup fails the step instead of quietly skipping the release.
-        shell: bash
-        run: |
-          tip=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [ "$tip" = "$GITHUB_SHA" ]; then echo "newest=true" >> "$GITHUB_OUTPUT"; else echo "newest=false" >> "$GITHUB_OUTPUT"; echo "main is at $tip; not moving latest or the release branch"; fi
+        with:
+          # Full history, so the release push below can fast-forward the release branch to this commit.
+          fetch-depth: 0
       - uses: docker/setup-buildx-action@v4
       - name: Build
         uses: docker/build-push-action@v7
@@ -68,19 +61,19 @@ jobs:
           context: .
           file: apps/agent/Dockerfile
           push: true
-          # `latest` is main's newest commit; any other run publishes only its commit's tag.
-          tags: |
-            ${{ env.IMAGE }}:sha-${{ github.sha }}
-            ${{ steps.fresh.outputs.newest == 'true' && format('{0}:latest', env.IMAGE) || '' }}
+          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=locus-agent
       # Coolify deploys from this branch (release/locus-agent.Dockerfile), so it only ever picks up a commit whose image
-      # is already published.
+      # is already published. The push is never forced: GitHub accepts it only when it moves the branch forward, so a
+      # re-run of an older commit cannot roll the apps back, and a later commit (docs-only or not) never blocks one.
       - name: Release
-        if: github.event_name != 'pull_request' && steps.fresh.outputs.newest == 'true'
-        # Checked again here: runs for two main commits can overlap, and the older one may finish last.
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         shell: bash
+        env:
+          BRANCH: release/locus-agent
         run: |
-          tip=$(git ls-remote origin refs/heads/main | cut -f1)
-          if [ "$tip" != "$GITHUB_SHA" ]; then echo "main moved on to $tip; leaving the release branch to its run"; exit 0; fi
-          git push --force origin HEAD:refs/heads/release/locus-agent
+          if out=$(git push origin "HEAD:refs/heads/$BRANCH" 2>&1); then echo "$out"; exit 0; fi
+          echo "$out"
+          if grep -qE 'non-fast-forward' <<<"$out"; then echo "$BRANCH already holds a newer commit; leaving it there"; exit 0; fi
+          exit 1
