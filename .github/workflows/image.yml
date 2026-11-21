@@ -1,0 +1,86 @@
+# Builds the agent server's Docker image (apps/agent/Dockerfile) here instead of on the server that runs it
+# (release/README.md). Two Coolify apps deploy it: locus-agent and locus-agent-staging. A pull request only builds the
+# image; main also publishes it to GHCR (private) and moves the release branch, which Coolify deploys from, so the
+# server only downloads an image that already exists.
+name: Image
+
+on:
+  pull_request:
+    paths-ignore: ['**/*.md', 'docs/**']
+  push:
+    branches: [main]
+    paths-ignore: ['**/*.md', 'docs/**']
+  workflow_dispatch:
+
+concurrency:
+  # A pull request's runs share a group and the newest cancels the rest. Every other run (a main push, a re-run, a
+  # manual run) gets its own group, so none can cancel another's publish; the newest-commit check below decides which
+  # one moves `latest` and the release branch.
+  group: image-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/locus-agent
+    steps:
+      - uses: actions/checkout@v5
+      # Only main's newest commit may move `latest` and the release branch: a re-run of an older commit's workflow
+      # keeps that commit's SHA, and would otherwise roll the apps back. Every commit still gets its sha- image.
+      - name: Is this main's newest commit?
+        id: fresh
+        if: github.ref == 'refs/heads/main'
+        # bash with pipefail: a failed lookup fails the step instead of quietly skipping the release.
+        shell: bash
+        run: |
+          tip=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$tip" = "$GITHUB_SHA" ]; then echo "newest=true" >> "$GITHUB_OUTPUT"; else echo "newest=false" >> "$GITHUB_OUTPUT"; echo "main is at $tip; not moving latest or the release branch"; fi
+      - uses: docker/setup-buildx-action@v4
+      - name: Build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/agent/Dockerfile
+          load: true
+          tags: locus-agent:check
+          cache-from: type=gha,scope=locus-agent
+          cache-to: type=gha,scope=locus-agent,mode=max
+      - name: Image size
+        run: docker image inspect locus-agent:check --format '{{.Size}}' | awk '{ printf "%.0f MB\n", $1 / 1000000 }'
+      - if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/agent/Dockerfile
+          push: true
+          # `latest` is main's newest commit; any other run publishes only its commit's tag.
+          tags: |
+            ${{ env.IMAGE }}:sha-${{ github.sha }}
+            ${{ steps.fresh.outputs.newest == 'true' && format('{0}:latest', env.IMAGE) || '' }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha,scope=locus-agent
+      # Coolify deploys from this branch (release/locus-agent.Dockerfile), so it only ever picks up a commit whose image
+      # is already published.
+      - name: Release
+        if: github.event_name != 'pull_request' && steps.fresh.outputs.newest == 'true'
+        # Checked again here: runs for two main commits can overlap, and the older one may finish last.
+        shell: bash
+        run: |
+          tip=$(git ls-remote origin refs/heads/main | cut -f1)
+          if [ "$tip" != "$GITHUB_SHA" ]; then echo "main moved on to $tip; leaving the release branch to its run"; exit 0; fi
+          git push --force origin HEAD:refs/heads/release/locus-agent
