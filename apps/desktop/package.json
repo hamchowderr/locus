@@ -11,7 +11,7 @@
   },
   "devDependencies": {
     "@types/node": "22.20.5",
-    "electron": "44.7.0",
+    "electron": "44.9.1",
     "electron-vite": "5.0.0",
     "vite": "7.3.7"
   }
