@@ -15,7 +15,7 @@
     "@mastra/core": "1.75.0",
     "@mastra/hono": "1.7.17",
     "@mastra/server": "1.75.0",
-    "hono": "4.13.13",
+    "hono": "4.13.16",
     "zod": "4.6.5"
   },
   "devDependencies": {
