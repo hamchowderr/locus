@@ -176,6 +176,8 @@ export interface HostDeps {
    * default, leaves the route out, and no reply is ever drafted.
    */
   ghlWebhookKey?: string | null;
+  /** How often open drafted replies are checked against the client's drafting switch; tests shorten it. */
+  draftCheckMs?: number;
 }
 
 /** On Vercel Sandbox the agent holds no sandbox credentials: every sandbox goes through the web app. */
@@ -344,6 +346,12 @@ export function connectorsOffIn(requestContext?: {
 /** An open event stream re-checks access at least this often, and before events after a gap. */
 const STREAM_CHECK_MS = 5_000;
 
+/** Open drafted replies are checked against the client's drafting switch this often. */
+const DRAFT_CHECK_MS = 10_000;
+
+/** Why a draft thread stopped when drafting was turned off, or its drafter may no longer draft. */
+export const DRAFTS_OFF_LINE = "Stopped: drafted replies were turned off for this sub-account";
+
 export function createHost({
   db,
   session,
@@ -359,6 +367,7 @@ export function createHost({
   apps = null,
   siteUploads: uploadDeps = null,
   ghlWebhookKey = null,
+  draftCheckMs = DRAFT_CHECK_MS,
 }: HostDeps) {
   const uploads = uploadDeps ? siteUploads(uploadDeps, logError) : null;
   // Per client, the sessions that opened it, newest last: its database token is the client's,
@@ -430,6 +439,77 @@ export function createHost({
   /** Each client's drafted replies, set up with its controller. */
   const inboxes = new Map<string, InboxDrafts>();
 
+  /**
+   * The member a client's drafts may run as now, or null when it may draft nothing: drafting is
+   * off, its trial ended unpaid, or that member may no longer act on it.
+   */
+  const draftingAs = async (clientId: string): Promise<string | null> => {
+    const memberId = await inboxDraftsFor(db, clientId);
+    if (!memberId || (await trialRefusal(clientId))) return null;
+    try {
+      await drafterFor(memberId, clientId);
+    } catch (error) {
+      if (error instanceof ClientAccessDenied) return null;
+      throw error;
+    }
+    return memberId;
+  };
+
+  /**
+   * Stops a client's open drafts that may no longer run: all of them once it may draft nothing,
+   * else those started as another member. Resolves to whether any is still open.
+   */
+  const stopStaleDrafts = async (clientId: string): Promise<boolean> => {
+    const inbox = inboxes.get(clientId);
+    if (!inbox) return false;
+    const as = await draftingAs(clientId);
+    await inbox.stopOpen({
+      latest: DRAFTS_OFF_LINE,
+      stops: (drafter) => as === null || drafter !== as,
+    });
+    return inbox.hasOpen();
+  };
+
+  /**
+   * Clients that started a draft in this process, so may have one open (a restart stops every
+   * open thread). While any is left they are checked every `draftCheckMs`, so turning drafting
+   * off stops its drafts within about that, and none keeps spending on the model or waits for a
+   * yes that can no longer send.
+   */
+  const drafting = new Set<string>();
+  /** Drafts started per client, so a sweep never stops watching one started while it looked. */
+  const draftStarts = new Map<string, number>();
+  let draftTimer: ReturnType<typeof setInterval> | undefined;
+  let sweeping = false;
+  const sweepDrafts = async () => {
+    if (sweeping) return;
+    sweeping = true;
+    try {
+      for (const clientId of [...drafting]) {
+        try {
+          const before = draftStarts.get(clientId) ?? 0;
+          const open = await stopStaleDrafts(clientId);
+          if (!open && (draftStarts.get(clientId) ?? 0) === before) drafting.delete(clientId);
+        } catch (error) {
+          logError("Checking a sub-account's drafted replies failed", error);
+        }
+      }
+    } finally {
+      sweeping = false;
+      if (drafting.size === 0 && draftTimer) {
+        clearInterval(draftTimer);
+        draftTimer = undefined;
+      }
+    }
+  };
+  const watchDrafts = (clientId: string) => {
+    draftStarts.set(clientId, (draftStarts.get(clientId) ?? 0) + 1);
+    drafting.add(clientId);
+    if (draftTimer) return;
+    draftTimer = setInterval(() => void sweepDrafts(), draftCheckMs);
+    draftTimer.unref?.();
+  };
+
   const api = createAgentApi({
     prefix: PREFIX,
     authorize: async (request) => {
@@ -450,6 +530,49 @@ export function createHost({
       return { memberId: client.memberId, locationId: client.location.ghlLocationId, clientId };
     },
     mayRun: ({ clientId }) => trialRefusal(clientId),
+    // A drafted reply is sent only while the client still drafts as the member it ran as: once
+    // drafting is off, its drafts stop at once rather than at the next check.
+    mayApprove: async ({ clientId }, threadId) => {
+      const draft = threadId ? await inboxes.get(clientId)?.draftOf(threadId) : undefined;
+      if (!draft) return null;
+      const as = await draftingAs(clientId);
+      if (as !== null && draft.drafter === as) return null;
+      await stopStaleDrafts(clientId);
+      return "Drafted replies were turned off for this sub-account, so this reply was not sent.";
+    },
+    // The send runs as the member drafts run as; who said yes to it is kept in the audit log.
+    approved: async ({ clientId, memberId }, { threadId, toolCallId }) => {
+      try {
+        const draft = threadId ? await inboxes.get(clientId)?.draftOf(threadId) : undefined;
+        if (!draft) return;
+        const [approver] = await db
+          .select({ userId: schema.member.userId })
+          .from(schema.member)
+          .where(eq(schema.member.id, memberId));
+        const [where] = await db
+          .select({ organizationId: schema.location.organizationId })
+          .from(schema.location)
+          .where(eq(schema.location.id, clientId));
+        if (!approver || !where) return;
+        await db.insert(schema.auditLog).values({
+          id: globalThis.crypto.randomUUID(),
+          organizationId: where.organizationId,
+          actorUserId: approver.userId,
+          locationId: clientId,
+          action: "inbox.reply_approved",
+          // Ids only, never the message.
+          detail: {
+            threadId,
+            toolCallId,
+            conversationId: draft.conversationId,
+            approverMemberId: memberId,
+            drafterMemberId: draft.drafter ?? null,
+          },
+        });
+      } catch (error) {
+        logError("Recording who approved a drafted reply failed", error);
+      }
+    },
     // Each run carries the session it acts for, so its GHL calls are checked against that
     // member, not whoever used the client last.
     requestContext: async (request) => {
@@ -676,8 +799,11 @@ export function createHost({
       const context = new RequestContext();
       context.set(RUN_MEMBER_KEY, memberId);
       context.set(TAINT_KEY, true);
-      const result = await inbox.draft(message, context);
-      if ("threadId" in result) drafted = true;
+      const result = await inbox.draft(message, context, memberId);
+      if ("threadId" in result) {
+        drafted = true;
+        watchDrafts(clientId);
+      }
     }
     return drafted;
   };

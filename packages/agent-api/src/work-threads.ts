@@ -196,6 +196,8 @@ export function clientWorkThreads(
     ],
     /** Starts a thread without a tool call (a drafted reply to a new message, `inbox.ts`). */
     start: threads.start,
+    /** Stops a thread for the host (drafts once drafting is turned off, `inbox.ts`). */
+    stop: threads.stop,
     /** Binds the work threads to the controller made with `tool`. */
     attach(made: AgentController) {
       attached.set(made, threads);
