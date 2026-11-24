@@ -11,7 +11,7 @@
   },
   "dependencies": {
     "@copilotkit/aimock": "1.44.0",
-    "@hono/node-server": "1.19.17",
+    "@hono/node-server": "2.1.6",
     "@libsql/client": "0.18.0",
     "@locus/agent-api": "workspace:*",
     "@locus/auth": "workspace:*",
