@@ -81,5 +81,11 @@ bd.db
 # Config files (metadata.json, config.yaml) are tracked by git by default
 # since no pattern above ignores them.
 
-# Issues live in the DoltHub database (sync.remote), not in git
+# Local-only files bd and its tooling write (not part of bd init's template)
+dolt-backup*.json
+.~issues.jsonl.*
+.auto-import-issues.jsonl
+cc-task-map.json
+interactions.jsonl.lock
+# Repo-specific entries kept from the previous file
 issues.jsonl
